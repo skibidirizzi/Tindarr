@@ -52,6 +52,32 @@ export default function SwipeDeckPage() {
     }
   }, []);
 
+  const handleSwipe = useCallback(
+    async (action: SwipeAction) => {
+      if (!activeCard) return;
+      try {
+        await sendSwipe(activeCard.tmdbId, action);
+        setLastAction(action);
+        setCards((prev: SwipeCard[]) => prev.slice(1));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to send swipe");
+      }
+    },
+    [activeCard]
+  );
+
+  const handleUndo = useCallback(async () => {
+    try {
+      const response = (await undoSwipe()) as { undone: boolean };
+      if (response.undone) {
+        await loadDeck();
+        setLastAction(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to undo swipe");
+    }
+  }, [loadDeck]);
+
   useEffect(() => {
     loadDeck();
   }, [loadDeck]);
@@ -84,30 +110,7 @@ export default function SwipeDeckPage() {
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [activeCard]);
-
-  async function handleSwipe(action: SwipeAction) {
-    if (!activeCard) return;
-    try {
-      await sendSwipe(activeCard.tmdbId, action);
-      setLastAction(action);
-      setCards((prev: SwipeCard[]) => prev.slice(1));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to send swipe");
-    }
-  }
-
-  async function handleUndo() {
-    try {
-      const response = (await undoSwipe()) as { undone: boolean };
-      if (response.undone) {
-        await loadDeck();
-        setLastAction(null);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to undo swipe");
-    }
-  }
+  }, [activeCard, handleSwipe, handleUndo]);
 
   const actionButtons = useMemo(
     () => [

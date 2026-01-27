@@ -16,6 +16,11 @@ public sealed class MemoryOrDbTmdbCache(IMemoryCache memoryCache, string sqliteD
 	private readonly SemaphoreSlim _initLock = new(1, 1);
 	private bool _initialized;
 
+	private readonly SemaphoreSlim _maintenanceLock = new(1, 1);
+	private DateTimeOffset _lastMaintenanceUtc = DateTimeOffset.MinValue;
+	private static readonly TimeSpan MaintenanceInterval = TimeSpan.FromMinutes(10);
+	private const int MaxCacheRowCount = 5000;
+
 	public async ValueTask<T?> GetAsync<T>(string key, CancellationToken cancellationToken)
 	{
 		if (memoryCache.TryGetValue(key, out T? value))
@@ -27,6 +32,7 @@ public sealed class MemoryOrDbTmdbCache(IMemoryCache memoryCache, string sqliteD
 
 		await using var conn = CreateConnection();
 		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await MaybeRunMaintenanceAsync(conn, cancellationToken).ConfigureAwait(false);
 
 		var cmd = conn.CreateCommand();
 		cmd.CommandText = """
@@ -108,6 +114,7 @@ public sealed class MemoryOrDbTmdbCache(IMemoryCache memoryCache, string sqliteD
 
 		await using var conn = CreateConnection();
 		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await MaybeRunMaintenanceAsync(conn, cancellationToken).ConfigureAwait(false);
 
 		var cmd = conn.CreateCommand();
 		cmd.CommandText = """
@@ -184,6 +191,65 @@ public sealed class MemoryOrDbTmdbCache(IMemoryCache memoryCache, string sqliteD
 		finally
 		{
 			_initLock.Release();
+		}
+	}
+
+	private async Task MaybeRunMaintenanceAsync(SqliteConnection conn, CancellationToken cancellationToken)
+	{
+		var now = DateTimeOffset.UtcNow;
+		if (now - _lastMaintenanceUtc < MaintenanceInterval)
+		{
+			return;
+		}
+
+		await _maintenanceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			// Re-check under lock in case another request already cleaned up.
+			now = DateTimeOffset.UtcNow;
+			if (now - _lastMaintenanceUtc < MaintenanceInterval)
+			{
+				return;
+			}
+
+			// Keep the DB bounded over time (prune expired entries + cap total rows).
+			try
+			{
+				{
+					var deleteExpiredCmd = conn.CreateCommand();
+					deleteExpiredCmd.CommandText = """
+						DELETE FROM tmdb_cache
+						WHERE expires_at_utc < $now;
+						""";
+					deleteExpiredCmd.Parameters.AddWithValue("$now", now.ToString("O"));
+					await deleteExpiredCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+				}
+
+				{
+					var trimCmd = conn.CreateCommand();
+					trimCmd.CommandText = """
+						DELETE FROM tmdb_cache
+						WHERE rowid IN (
+							SELECT rowid
+							FROM tmdb_cache
+							ORDER BY expires_at_utc DESC
+							LIMIT -1 OFFSET $maxRows
+						);
+						""";
+					trimCmd.Parameters.AddWithValue("$maxRows", MaxCacheRowCount);
+					await trimCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+				}
+			}
+			catch
+			{
+				// Best-effort maintenance only; never fail caller operations due to cleanup.
+			}
+
+			_lastMaintenanceUtc = now;
+		}
+		finally
+		{
+			_maintenanceLock.Release();
 		}
 	}
 }

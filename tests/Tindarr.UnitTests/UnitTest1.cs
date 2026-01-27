@@ -39,4 +39,34 @@ public sealed class PasswordHasherTests
 		Assert.NotEqual(Convert.ToBase64String(a.Salt), Convert.ToBase64String(b.Salt));
 		Assert.NotEqual(Convert.ToBase64String(a.Hash), Convert.ToBase64String(b.Hash));
 	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData("")]
+	public void Hash_with_null_or_empty_password_throws(string? password)
+	{
+		var hasher = new Pbkdf2PasswordHasher();
+		Assert.Throws<ArgumentException>(() => hasher.Hash(password!, iterations: 50_000));
+	}
+
+	[Theory]
+	[InlineData(0)]
+	[InlineData(-1)]
+	public void Hash_with_non_positive_iterations_throws(int iterations)
+	{
+		var hasher = new Pbkdf2PasswordHasher();
+		Assert.Throws<ArgumentOutOfRangeException>(() => hasher.Hash("p@ssw0rd", iterations));
+	}
+
+	[Fact]
+	public void Verify_with_invalid_arguments_returns_false_and_does_not_throw()
+	{
+		var hasher = new Pbkdf2PasswordHasher();
+
+		Assert.False(hasher.Verify("", hash: [1, 2, 3], salt: [4, 5, 6], iterations: 1));
+		Assert.False(hasher.Verify("p@ssw0rd", hash: null!, salt: [4, 5, 6], iterations: 1));
+		Assert.False(hasher.Verify("p@ssw0rd", hash: [1, 2, 3], salt: null!, iterations: 1));
+		Assert.False(hasher.Verify("p@ssw0rd", hash: [1, 2, 3], salt: [4, 5, 6], iterations: 0));
+		Assert.False(hasher.Verify("p@ssw0rd", hash: [1, 2, 3], salt: [4, 5, 6], iterations: -1));
+	}
 }

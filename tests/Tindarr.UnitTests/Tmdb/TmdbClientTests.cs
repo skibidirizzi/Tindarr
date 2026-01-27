@@ -10,6 +10,32 @@ namespace Tindarr.UnitTests.Tmdb;
 
 public sealed class TmdbClientTests
 {
+	private static readonly UserPreferencesRecord DummyPreferences = new(
+		IncludeAdult: false,
+		MinReleaseYear: null,
+		MaxReleaseYear: null,
+		MinRating: null,
+		MaxRating: null,
+		PreferredGenres: [],
+		ExcludedGenres: [],
+		PreferredOriginalLanguages: [],
+		PreferredRegions: [],
+		SortBy: "popularity.desc",
+		UpdatedAtUtc: DateTimeOffset.UtcNow);
+
+	private static TmdbClient CreateClient(HttpMessageHandler handler, string? apiKey = "KEY", string? readAccessToken = "")
+	{
+		var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.themoviedb.org/3/") };
+		return new TmdbClient(http, Options.Create(new TmdbOptions
+		{
+			ApiKey = apiKey ?? "",
+			ReadAccessToken = readAccessToken ?? "",
+			ImageBaseUrl = "https://image.tmdb.org/t/p/",
+			PosterSize = "w500",
+			BackdropSize = "w780"
+		}), NullLogger<TmdbClient>.Instance);
+	}
+
 	[Fact]
 	public async Task DiscoverAsync_IncludesPreferencesInQuery_AndMapsSwipeCards()
 	{
@@ -80,6 +106,124 @@ public sealed class TmdbClientTests
 	}
 
 	[Fact]
+	public async Task DiscoverAsync_WhenHasNoCredentials_DoesNotCallHttpClient_AndReturnsEmpty()
+	{
+		var handler = new StubHandler(_ =>
+		{
+			throw new Xunit.Sdk.XunitException("HTTP should not be called when HasCredentials is false.");
+		});
+
+		var tmdb = CreateClient(handler, apiKey: "", readAccessToken: "");
+		var results = await tmdb.DiscoverAsync(DummyPreferences, page: 1, limit: 10, CancellationToken.None);
+
+		Assert.NotNull(results);
+		Assert.Empty(results);
+	}
+
+	[Fact]
+	public async Task GetMovieDetailsAsync_WhenHasNoCredentials_DoesNotCallHttpClient_AndReturnsNull()
+	{
+		var handler = new StubHandler(_ =>
+		{
+			throw new Xunit.Sdk.XunitException("HTTP should not be called when HasCredentials is false.");
+		});
+
+		var tmdb = CreateClient(handler, apiKey: "", readAccessToken: "");
+		var details = await tmdb.GetMovieDetailsAsync(123, CancellationToken.None);
+		Assert.Null(details);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.TooManyRequests)]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	public async Task DiscoverAsync_WhenNonSuccessNonNotFoundStatus_ReturnsEmptyAndDoesNotThrow(HttpStatusCode statusCode)
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(statusCode)
+		{
+			Content = new StringContent(string.Empty, Encoding.UTF8, "application/json")
+		});
+
+		var tmdb = CreateClient(handler);
+		var results = await tmdb.DiscoverAsync(DummyPreferences, page: 1, limit: 10, CancellationToken.None);
+
+		Assert.NotNull(results);
+		Assert.Empty(results);
+	}
+
+	[Theory]
+	[InlineData(HttpStatusCode.TooManyRequests)]
+	[InlineData(HttpStatusCode.InternalServerError)]
+	public async Task GetMovieDetailsAsync_WhenNonSuccessNonNotFoundStatus_ReturnsNullAndDoesNotThrow(HttpStatusCode statusCode)
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(statusCode)
+		{
+			Content = new StringContent(string.Empty, Encoding.UTF8, "application/json")
+		});
+
+		var tmdb = CreateClient(handler);
+		var details = await tmdb.GetMovieDetailsAsync(123, CancellationToken.None);
+		Assert.Null(details);
+	}
+
+	[Fact]
+	public async Task DiscoverAsync_WhenResponseJsonIsMalformed_ReturnsEmptyAndDoesNotThrow()
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = new StringContent("this is not valid json", Encoding.UTF8, "application/json")
+		});
+
+		var tmdb = CreateClient(handler);
+		var results = await tmdb.DiscoverAsync(DummyPreferences, page: 1, limit: 10, CancellationToken.None);
+
+		Assert.NotNull(results);
+		Assert.Empty(results);
+	}
+
+	[Fact]
+	public async Task GetMovieDetailsAsync_WhenResponseJsonIsMalformed_ReturnsNullAndDoesNotThrow()
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = new StringContent("{ invalid json", Encoding.UTF8, "application/json")
+		});
+
+		var tmdb = CreateClient(handler);
+		var details = await tmdb.GetMovieDetailsAsync(123, CancellationToken.None);
+		Assert.Null(details);
+	}
+
+	[Fact]
+	public async Task DiscoverAsync_Paginates_ClampsPageAndLimit_AndStopsAtTotalPages()
+	{
+		var observedPages = new List<int>();
+
+		var handler = new StubHandler(req =>
+		{
+			var query = ParseQuery(req.RequestUri!);
+			var page = int.Parse(query["page"]);
+			observedPages.Add(page);
+
+			// Simulate 3 pages, 1 result per page.
+			var json = $$"""
+			{"page":{{page}},"total_pages":3,"results":[{"id":{{page}},"title":"Movie {{page}}","original_title":"Movie {{page}}","overview":"","poster_path":"/p.jpg","backdrop_path":"/b.jpg","release_date":"2001-01-01","vote_average":8.0}]}
+			""";
+
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(json, Encoding.UTF8, "application/json")
+			};
+		});
+
+		var tmdb = CreateClient(handler);
+		var results = await tmdb.DiscoverAsync(DummyPreferences, page: -5, limit: 10, CancellationToken.None);
+
+		Assert.Equal([1, 2, 3], observedPages);
+		Assert.Equal(3, results.Count);
+		Assert.Equal([1, 2, 3], results.Select(r => r.TmdbId).ToArray());
+	}
+
+	[Fact]
 	public async Task GetMovieDetailsAsync_MapsNormalizedDto()
 	{
 		var handler = new StubHandler(req =>
@@ -123,6 +267,73 @@ public sealed class TmdbClientTests
 		Assert.Equal("PG-13", details.MpaaRating);
 		Assert.Equal("https://image.tmdb.org/t/p/w500/p.jpg", details.PosterUrl);
 		Assert.Equal("https://image.tmdb.org/t/p/w780/b.jpg", details.BackdropUrl);
+	}
+
+	[Fact]
+	public async Task GetMovieDetailsAsync_ExtractsMpaaRating_PrefersTheatrical_AndSkipsEmptyCertifications()
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = new StringContent(
+				"""
+				{
+				  "id": 123,
+				  "title": "M",
+				  "poster_path": "/p.jpg",
+				  "backdrop_path": "/b.jpg",
+				  "release_date": "1999-03-31",
+				  "vote_average": 8.2,
+				  "release_dates": {
+				    "results": [
+				      {
+				        "iso_3166_1": "US",
+				        "release_dates": [
+				          { "certification": "  ", "type": 3, "release_date": "1999-03-31T00:00:00.000Z" },
+				          { "certification": "PG-13", "type": 4, "release_date": "1999-04-01T00:00:00.000Z" },
+				          { "certification": "R", "type": 3, "release_date": "1999-04-02T00:00:00.000Z" }
+				        ]
+				      }
+				    ]
+				  }
+				}
+				""",
+				Encoding.UTF8,
+				"application/json")
+		});
+
+		var tmdb = CreateClient(handler);
+		var details = await tmdb.GetMovieDetailsAsync(123, CancellationToken.None);
+
+		Assert.NotNull(details);
+		Assert.Equal("R", details!.MpaaRating);
+	}
+
+	[Fact]
+	public async Task DiscoverAsync_BuildImageUrl_NormalizesBaseSizeAndPath()
+	{
+		var handler = new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = new StringContent(
+				"""
+				{"page":1,"total_pages":1,"results":[{"id":42,"title":"Test","original_title":"Test","overview":"","poster_path":"p.jpg","backdrop_path":"b.jpg","release_date":"2001-02-03","vote_average":8.1}]}
+				""",
+				Encoding.UTF8,
+				"application/json")
+		});
+
+		var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.themoviedb.org/3/") };
+		var tmdb = new TmdbClient(http, Options.Create(new TmdbOptions
+		{
+			ApiKey = "KEY",
+			ImageBaseUrl = "https://image.tmdb.org/t/p///",
+			PosterSize = "/w500/",
+			BackdropSize = "/w780/"
+		}), NullLogger<TmdbClient>.Instance);
+
+		var results = await tmdb.DiscoverAsync(DummyPreferences, page: 1, limit: 1, CancellationToken.None);
+		Assert.Single(results);
+		Assert.Equal("https://image.tmdb.org/t/p/w500/p.jpg", results[0].PosterUrl);
+		Assert.Equal("https://image.tmdb.org/t/p/w780/b.jpg", results[0].BackdropUrl);
 	}
 
 	private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
