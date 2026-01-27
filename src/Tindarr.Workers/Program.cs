@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting.WindowsServices;
 using Tindarr.Application.Interfaces.Ops;
 using Tindarr.Application.Options;
 using Tindarr.Application.Services;
+using Tindarr.Infrastructure.Persistence;
 using Tindarr.Workers.Jobs;
 
 var isWindowsService = OperatingSystem.IsWindows() && !Environment.UserInteractive;
@@ -26,11 +27,18 @@ builder.Services.AddOptions<BaseUrlOptions>()
 	.Validate(o => o.IsValid(), "Invalid BaseUrl configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<DatabaseOptions>()
+	.BindConfiguration(DatabaseOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Database configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 {
 	var options = sp.GetRequiredService<IOptions<BaseUrlOptions>>().Value;
 	return new BaseUrlResolver(options);
 });
+
+builder.Services.AddTindarrPersistence(builder.Configuration);
 
 // Core-only worker stubs (periodic background services).
 builder.Services.AddHostedService<OutboxWorker>();

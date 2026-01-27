@@ -11,9 +11,11 @@ using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Interactions;
+using Tindarr.Infrastructure.Persistence;
 
 var isWindowsService = WindowsServiceHostSetup.IsRunningAsWindowsService();
 var contentRoot = isWindowsService ? AppContext.BaseDirectory : null;
+string? dataDirOverride = null;
 
 // WebRoot must be configured at builder creation time (cannot be changed later).
 string? webRoot = null;
@@ -30,6 +32,7 @@ if (isWindowsService)
 	var wsOpts = preConfig.GetSection(WindowsServiceOptions.SectionName).Get<WindowsServiceOptions>() ?? new WindowsServiceOptions();
 	var dataDir = WindowsServiceHostSetup.ResolveDataDir(wsOpts);
 	Directory.CreateDirectory(dataDir);
+	dataDirOverride = dataDir;
 
 	if (wsOpts.UseDataDirWebRoot)
 	{
@@ -56,6 +59,11 @@ builder.Services.AddControllers();
 builder.Services.AddOptions<BaseUrlOptions>()
 	.BindConfiguration(BaseUrlOptions.SectionName)
 	.Validate(o => o.IsValid(), "Invalid BaseUrl configuration.")
+	.ValidateOnStart();
+
+builder.Services.AddOptions<DatabaseOptions>()
+	.BindConfiguration(DatabaseOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Database configuration.")
 	.ValidateOnStart();
 
 builder.Services.AddOptions<WindowsServiceOptions>()
@@ -88,10 +96,12 @@ builder.Services.AddCors(options =>
 	});
 });
 
-builder.Services.AddSingleton<IInteractionStore, InMemoryInteractionStore>();
+builder.Services.AddScoped<IInteractionStore, EfCoreInteractionStore>();
 builder.Services.AddSingleton<ISwipeDeckSource, InMemorySwipeDeckSource>();
 builder.Services.AddScoped<IInteractionService, InteractionService>();
 builder.Services.AddScoped<ISwipeDeckService, SwipeDeckService>();
+
+builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: dataDirOverride);
 
 var app = builder.Build();
 
