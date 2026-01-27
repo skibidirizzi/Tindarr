@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX Toolset v4 single-file MSI definition.
+
+  Build example (from repo root, after publishing the API):
+
+    dotnet publish "src\Tindarr.Api\Tindarr.Api.csproj" -c Release -r win-x64 /p:SelfContained=true ^
+      /p:PublishSingleFile=true /p:PublishTrimmed=false /p:DebugType=None /p:DebugSymbols=false ^
+      -o "artifacts\publish\api"
+
+    wix build installer\windows\wix\Tindarr.wxs ^
+      -arch x64 ^
+      -d PublishDir="artifacts\publish\api" ^
+      -o artifacts\Tindarr.msi
+
+  Optional Windows Service install:
+    msiexec /i artifacts\Tindarr.msi INSTALLSERVICE=1
+
+  Default (no service):
+    msiexec /i artifacts\Tindarr.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+
+  <Package
+    Name="Tindarr"
+    Manufacturer="Tindarr"
+    Version="0.1.0"
+    UpgradeCode="{B4D70D8A-6D1B-4A2F-A91D-7A3B8A3F3F1B}"
+    InstallerVersion="500"
+    Compressed="yes"
+    Scope="perMachine"
+    ShortNames="no">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <!-- INSTALLSERVICE=1 installs the API as a Windows Service -->
+    <Property Id="INSTALLSERVICE" Value="0" />
+
+    <!-- Optional UI can be added later via WixToolset.UI.wixext. -->
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Install 64-bit package into Program Files (not x86). -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Tindarr" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramsFolder" Name="Tindarr" />
+    </StandardDirectory>
+
+    <!-- Main published files (everything except the service executable, which is handled below). -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**\*">
+        <Exclude Files="$(var.PublishDir)\Tindarr.Api.exe" />
+        <Exclude Files="$(var.PublishDir)\**\*.pdb" />
+        <Exclude Files="$(var.PublishDir)\**\*.xml" />
+      </Files>
+    </ComponentGroup>
+
+    <!-- EXE as a normal app (default) -->
+    <Component Id="ApiExe_AsApp" Directory="INSTALLFOLDER" Guid="{C6B1E2A0-7F6A-4C10-9D5C-6C2F1B7A0A11}" Condition="INSTALLSERVICE &lt;&gt; 1">
+      <File Id="TindarrApiExe_App" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
+
+      <Shortcut Id="StartMenu_Tindarr"
+                Directory="AppProgramsFolder"
+                Name="Tindarr"
+                Description="Start Tindarr"
+                WorkingDirectory="INSTALLFOLDER"
+                Advertise="no"
+                Target="[INSTALLFOLDER]Tindarr.Api.exe" />
+
+      <RemoveFolder Id="Remove_AppProgramsFolder" Directory="AppProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
+    </Component>
+
+    <!-- EXE as a Windows Service (opt-in). Note: ServiceInstall requires the EXE to be the component KeyPath. -->
+    <Component Id="ApiExe_AsService" Directory="INSTALLFOLDER" Guid="{7F9E6B9B-EDB2-4A37-9F2C-9ED6E0C27B34}" Condition="INSTALLSERVICE = 1">
+      <File Id="TindarrApiExe_Service" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
+
+      <ServiceInstall
+        Id="TindarrApiServiceInstall"
+        Name="Tindarr.Api"
+        DisplayName="Tindarr API"
+        Description="Tindarr API host"
+        Type="ownProcess"
+        Start="auto"
+        ErrorControl="normal"
+        Vital="yes"
+        Account="LocalSystem" />
+
+      <ServiceControl
+        Id="TindarrApiServiceControl"
+        Name="Tindarr.Api"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+
+      <Shortcut Id="StartMenu_Tindarr_ServiceConsole"
+                Directory="AppProgramsFolder"
+                Name="Tindarr (Console)"
+                Description="Run Tindarr in console mode"
+                WorkingDirectory="INSTALLFOLDER"
+                Advertise="no"
+                Target="[INSTALLFOLDER]Tindarr.Api.exe" />
+
+      <RemoveFolder Id="Remove_AppProgramsFolder_Service" Directory="AppProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="Tindarr" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="ApiExe_AsApp" />
+      <ComponentRef Id="ApiExe_AsService" />
+    </Feature>
+
+  </Package>
+</Wix>
+

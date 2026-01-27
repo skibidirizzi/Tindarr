@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tindarr.Application\Tindarr.Application.csproj" />
+    <ProjectReference Include="..\Tindarr.Infrastructure\Tindarr.Infrastructure.csproj" />
+    <ProjectReference Include="..\Tindarr.Contracts\Tindarr.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.2" />
+  </ItemGroup>
+</Project>
