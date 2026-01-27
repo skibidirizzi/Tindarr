@@ -116,3 +116,7 @@
 - Jellyfin/Emby playback providers MAY be stubs initially, but:
   - their interfaces/DTO shapes MUST match final intended gateway behavior
   - they MUST NOT leak provider URLs or tokens to clients
+
+## INV-0019 — Case sensitivity mitigation for backend
+- references to services, workers, applications, controllers, pages, files in the backend, all must follow common naming and capitalization convention.
+- When referencing any services, workers, applications, controllers, pages, or files not explicitly defined in this invariants doc, you must use all lowercase letters.

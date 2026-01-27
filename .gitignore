@@ -1,0 +1,50 @@
+Reference/0
+Reference/0/
+.cursor/
+
+# .NET build output
+**/bin/
+**/obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Node / Vite
+**/node_modules/
+ui/dist/
+ui/.vite/
+ui/.turbo/
+
+# Build artifacts (local publish, MSI outputs, logs)
+artifacts/
+
+# WiX build outputs
+**/*.wixobj
+**/*.wixpdb
+**/*.wixmst
+**/*.cab
+
+# Test outputs
+TestResults/
+**/*.trx
+**/*.coverage
+**/*.coveragexml
+
+# Editor / OS noise
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
+
+# Local environment files (keep .env.example committed if you add one)
+.env
+.env.*
+
+# Logs
+*.log
+
+# Local sqlite DB files (dev/runtime)
+src/Tindarr.Api/tindarr.db*
+src/Tindarr.Api/tmdbmetadata.db*

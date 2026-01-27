@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WiX Toolset v4 single-file MSI definition.
+
+  Build example (from repo root, after publishing the API):
+
+    dotnet publish "src\Tindarr.Api\Tindarr.Api.csproj" -c Release -r win-x64 /p:SelfContained=true ^
+      /p:PublishSingleFile=true /p:PublishTrimmed=false /p:DebugType=None /p:DebugSymbols=false ^
+      -o "artifacts\publish\api"
+
+    wix build installer\windows\wix\Tindarr.wxs ^
+      -arch x64 ^
+      -d PublishDir="artifacts\publish\api" ^
+      -o artifacts\Tindarr.msi
+
+  Optional Windows Service install:
+    msiexec /i artifacts\Tindarr.msi INSTALLSERVICE=1
+
+  Default (no service):
+    msiexec /i artifacts\Tindarr.msi
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package
+    Name="Tindarr"
+    Manufacturer="Tindarr"
+    Version="0.1.0"
+    UpgradeCode="{B4D70D8A-6D1B-4A2F-A91D-7A3B8A3F3F1B}"
+    InstallerVersion="500"
+    Compressed="yes"
+    Scope="perMachine"
+    ShortNames="no">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <!-- INSTALLSERVICE=1 installs the API as a Windows Service -->
+    <Property Id="INSTALLSERVICE" Value="0" />
+
+    <!-- TMDB API key:
+         - Prefill from persistent environment variables (HKLM/HKCU) if present.
+         - Otherwise, prompt the user (masked).
+         - Hidden to reduce risk of leaking into MSI logs. -->
+    <Property Id="TMDBAPIKEY" Secure="yes" Hidden="yes">
+      <!-- System env vars -->
+      <RegistrySearch Root="HKLM"
+                      Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                      Name="TMDB_API_KEY"
+                      Type="raw" />
+      <RegistrySearch Root="HKLM"
+                      Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                      Name="Tmdb__ApiKey"
+                      Type="raw" />
+      <!-- User env vars (preferred if both exist) -->
+      <RegistrySearch Root="HKCU" Key="Environment" Name="TMDB_API_KEY" Type="raw" />
+      <RegistrySearch Root="HKCU" Key="Environment" Name="Tmdb__ApiKey" Type="raw" />
+    </Property>
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Standard Wix UI (InstallDir + common dialogs). -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <!-- Insert our TMDB key dialog into the standard flow. -->
+    <UI>
+      <Dialog Id="TmdbKeyDlg" Width="370" Height="270" Title="[ProductName] Setup">
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="TMDB Configuration" />
+        <Control Id="Description" Type="Text" X="15" Y="24" Width="340" Height="40" Transparent="yes" NoPrefix="yes"
+                 Text="Enter your TMDB API key to enable discovery and movie details. If you leave this blank, Tindarr will run in limited mode until you configure it later." />
+
+        <Control Id="KeyLabel" Type="Text" X="15" Y="78" Width="340" Height="12" Text="TMDB API key:" />
+        <Control Id="KeyEdit" Type="Edit" X="15" Y="92" Width="340" Height="18" Property="TMDBAPIKEY" Password="yes" />
+
+        <Control Id="Hint" Type="Text" X="15" Y="118" Width="340" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="Tip: you can also set an environment variable named TMDB_API_KEY before install to prefill this field." />
+
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
+          <Publish Event="NewDialog" Value="InstallDirDlg" />
+        </Control>
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next"
+                 DisableCondition="TMDBAPIKEY = &quot;&quot;"
+                 EnableCondition="TMDBAPIKEY &lt;&gt; &quot;&quot;">
+          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- After InstallDirDlg:
+           - If we already found a key from env vars, skip the prompt.
+           - Otherwise, show the prompt (required to continue). -->
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="TmdbKeyDlg" Condition="TMDBAPIKEY = &quot;&quot;" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="TMDBAPIKEY &lt;&gt; &quot;&quot;" Order="2" />
+    </UI>
+
+    <!-- Install 64-bit package into Program Files (not x86). -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Tindarr" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramsFolder" Name="Tindarr" />
+    </StandardDirectory>
+
+    <!-- Main published files (everything except the service executable, which is handled below). -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**\*">
+        <Exclude Files="$(var.PublishDir)\Tindarr.Api.exe" />
+        <Exclude Files="$(var.PublishDir)\**\*.pdb" />
+        <Exclude Files="$(var.PublishDir)\**\*.xml" />
+      </Files>
+    </ComponentGroup>
+
+    <!-- EXE as a normal app (default) -->
+    <Component Id="ApiExe_AsApp" Directory="INSTALLFOLDER" Guid="{C6B1E2A0-7F6A-4C10-9D5C-6C2F1B7A0A11}" Condition="INSTALLSERVICE &lt;&gt; 1">
+      <File Id="TindarrApiExe_App" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
+
+      <Shortcut Id="StartMenu_Tindarr"
+                Directory="AppProgramsFolder"
+                Name="Tindarr"
+                Description="Start Tindarr"
+                WorkingDirectory="INSTALLFOLDER"
+                Advertise="no"
+                Target="[INSTALLFOLDER]Tindarr.Api.exe" />
+
+      <RemoveFolder Id="Remove_AppProgramsFolder" Directory="AppProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
+    </Component>
+
+    <!-- EXE as a Windows Service (opt-in). Note: ServiceInstall requires the EXE to be the component KeyPath. -->
+    <Component Id="ApiExe_AsService" Directory="INSTALLFOLDER" Guid="{7F9E6B9B-EDB2-4A37-9F2C-9ED6E0C27B34}" Condition="INSTALLSERVICE = 1">
+      <File Id="TindarrApiExe_Service" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
+
+      <ServiceInstall
+        Id="TindarrApiServiceInstall"
+        Name="Tindarr.Api"
+        DisplayName="Tindarr API"
+        Description="Tindarr API host"
+        Type="ownProcess"
+        Start="auto"
+        ErrorControl="normal"
+        Vital="yes"
+        Account="LocalSystem" />
+
+      <ServiceControl
+        Id="TindarrApiServiceControl"
+        Name="Tindarr.Api"
+        Stop="both"
+        Remove="uninstall"
+        Wait="yes" />
+
+      <Shortcut Id="StartMenu_Tindarr_ServiceConsole"
+                Directory="AppProgramsFolder"
+                Name="Tindarr (Console)"
+                Description="Run Tindarr in console mode"
+                WorkingDirectory="INSTALLFOLDER"
+                Advertise="no"
+                Target="[INSTALLFOLDER]Tindarr.Api.exe" />
+
+      <RemoveFolder Id="Remove_AppProgramsFolder_Service" Directory="AppProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
+    </Component>
+
+    <!-- Optional: if installing as a service AND a key was provided, store it as a per-service env var. -->
+    <Component Id="TmdbServiceEnv" Directory="INSTALLFOLDER" Guid="{A2A5E8E5-4A45-4C6A-A5E0-5F6B35B4D6F1}"
+               Condition="INSTALLSERVICE = 1 AND TMDBAPIKEY &lt;&gt; &quot;&quot;">
+      <RegistryValue Root="HKLM"
+                     Key="SYSTEM\CurrentControlSet\Services\Tindarr.Api"
+                     Name="Environment"
+                     Type="multiString"
+                     KeyPath="yes">
+        <MultiStringValue Value="TMDB_API_KEY=[TMDBAPIKEY]" />
+      </RegistryValue>
+    </Component>
+
+    <Feature Id="MainFeature" Title="Tindarr" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="ApiExe_AsApp" />
+      <ComponentRef Id="ApiExe_AsService" />
+      <ComponentRef Id="TmdbServiceEnv" />
+    </Feature>
+
+  </Package>
+</Wix>
+
