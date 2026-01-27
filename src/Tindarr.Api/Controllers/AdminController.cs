@@ -37,7 +37,16 @@ public sealed class AdminController(
 	[HttpGet("users/{userId}")]
 	public async Task<ActionResult<UserDto>> GetUser([FromRoute] string userId, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(userId);
+		string id;
+		try
+		{
+			id = NormalizeUserId(userId);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+
 		var user = await users.FindByIdAsync(id, cancellationToken);
 		if (user is null)
 		{
@@ -51,8 +60,17 @@ public sealed class AdminController(
 	[HttpPost("users")]
 	public async Task<ActionResult<UserDto>> CreateUser([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(request.UserId);
-		var displayName = NormalizeDisplayName(request.DisplayName);
+		string id;
+		string displayName;
+		try
+		{
+			id = NormalizeUserId(request.UserId);
+			displayName = NormalizeDisplayName(request.DisplayName);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
 
 		if (await users.UserExistsAsync(id, cancellationToken))
 		{
@@ -79,8 +97,17 @@ public sealed class AdminController(
 	[HttpPut("users/{userId}")]
 	public async Task<IActionResult> UpdateUser([FromRoute] string userId, [FromBody] UpdateUserRequest request, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(userId);
-		var displayName = NormalizeDisplayName(request.DisplayName);
+		string id;
+		string displayName;
+		try
+		{
+			id = NormalizeUserId(userId);
+			displayName = NormalizeDisplayName(request.DisplayName);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
 
 		await users.UpdateDisplayNameAsync(id, displayName, cancellationToken);
 		return NoContent();
@@ -89,7 +116,16 @@ public sealed class AdminController(
 	[HttpDelete("users/{userId}")]
 	public async Task<IActionResult> DeleteUser([FromRoute] string userId, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(userId);
+		string id;
+		try
+		{
+			id = NormalizeUserId(userId);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+
 		await users.DeleteAsync(id, cancellationToken);
 		return NoContent();
 	}
@@ -97,7 +133,16 @@ public sealed class AdminController(
 	[HttpPost("users/{userId}/roles")]
 	public async Task<IActionResult> SetUserRoles([FromRoute] string userId, [FromBody] SetUserRolesRequest request, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(userId);
+		string id;
+		try
+		{
+			id = NormalizeUserId(userId);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+
 		await users.SetRolesAsync(id, request.Roles ?? [], cancellationToken);
 		return NoContent();
 	}
@@ -105,7 +150,16 @@ public sealed class AdminController(
 	[HttpPost("users/{userId}/set-password")]
 	public async Task<IActionResult> AdminSetPassword([FromRoute] string userId, [FromBody] AdminSetPasswordRequest request, CancellationToken cancellationToken)
 	{
-		var id = NormalizeUserId(userId);
+		string id;
+		try
+		{
+			id = NormalizeUserId(userId);
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+
 		var hashed = passwordHasher.Hash(request.NewPassword, registration.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 		return NoContent();
