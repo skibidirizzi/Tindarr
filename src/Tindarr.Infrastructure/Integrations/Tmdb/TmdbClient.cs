@@ -104,7 +104,11 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			return null;
 		}
 
-		var uri = AppendCredentials($"movie/{tmdbId}");
+		// Include release dates so we can extract MPAA/US certification.
+		var uri = AppendCredentials($"movie/{tmdbId}", new Dictionary<string, string?>(StringComparer.Ordinal)
+		{
+			["append_to_response"] = "release_dates"
+		});
 		using var response = await httpClient.GetAsync(uri, cancellationToken).ConfigureAwait(false);
 		if (response.StatusCode == HttpStatusCode.NotFound)
 		{
@@ -142,6 +146,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		}
 
 		var releaseYear = TryParseYear(parsed.ReleaseDate);
+		var mpaa = ExtractUsCertification(parsed.ReleaseDates);
 
 		return new MovieDetailsDto(
 			TmdbId: parsed.Id,
@@ -151,11 +156,42 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			BackdropUrl: BuildImageUrl(parsed.BackdropPath, _tmdb.BackdropSize),
 			ReleaseDate: parsed.ReleaseDate,
 			ReleaseYear: releaseYear,
+			MpaaRating: mpaa,
 			Rating: parsed.VoteAverage,
 			VoteCount: parsed.VoteCount,
 			Genres: parsed.Genres?.Where(g => !string.IsNullOrWhiteSpace(g.Name)).Select(g => g.Name!).ToList() ?? [],
 			OriginalLanguage: parsed.OriginalLanguage,
 			RuntimeMinutes: parsed.Runtime);
+	}
+
+	private static string? ExtractUsCertification(TmdbReleaseDatesContainer? releaseDates)
+	{
+		var us = releaseDates?.Results?
+			.FirstOrDefault(x => string.Equals(x.Iso3166_1, "US", StringComparison.OrdinalIgnoreCase));
+		if (us?.ReleaseDates is null || us.ReleaseDates.Count == 0)
+		{
+			return null;
+		}
+
+		// Prefer theatrical certification if available; fall back to any non-empty certification.
+		static int Preference(int? type) => type switch
+		{
+			3 => 0, // Theatrical
+			2 => 1, // Theatrical (limited)
+			4 => 2, // Digital
+			5 => 3, // Physical
+			6 => 4, // TV
+			1 => 5, // Premiere
+			_ => 99
+		};
+
+		var best = us.ReleaseDates
+			.Where(x => !string.IsNullOrWhiteSpace(x.Certification))
+			.OrderBy(x => Preference(x.Type))
+			.ThenByDescending(x => x.ReleaseDate) // most recent if multiple
+			.FirstOrDefault();
+
+		return best?.Certification?.Trim();
 	}
 
 	private string BuildDiscoverUri(UserPreferencesRecord preferences, int page)
@@ -343,7 +379,20 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		[property: JsonPropertyName("vote_count")] int? VoteCount,
 		[property: JsonPropertyName("original_language")] string? OriginalLanguage,
 		[property: JsonPropertyName("runtime")] int? Runtime,
-		[property: JsonPropertyName("genres")] List<TmdbGenre>? Genres);
+		[property: JsonPropertyName("genres")] List<TmdbGenre>? Genres,
+		[property: JsonPropertyName("release_dates")] TmdbReleaseDatesContainer? ReleaseDates);
+
+	private sealed record TmdbReleaseDatesContainer(
+		[property: JsonPropertyName("results")] List<TmdbReleaseDatesResult>? Results);
+
+	private sealed record TmdbReleaseDatesResult(
+		[property: JsonPropertyName("iso_3166_1")] string? Iso3166_1,
+		[property: JsonPropertyName("release_dates")] List<TmdbReleaseDate>? ReleaseDates);
+
+	private sealed record TmdbReleaseDate(
+		[property: JsonPropertyName("certification")] string? Certification,
+		[property: JsonPropertyName("type")] int? Type,
+		[property: JsonPropertyName("release_date")] DateTimeOffset? ReleaseDate);
 
 	private sealed record TmdbGenre(
 		[property: JsonPropertyName("id")] int Id,

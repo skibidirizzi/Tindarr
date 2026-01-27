@@ -153,6 +153,9 @@ export default function PreferencesPage() {
       });
       setPrefs(updated);
       setForm(toForm(updated));
+
+      // Let the background swipedeck refresh immediately after a successful save.
+      window.dispatchEvent(new Event("tindarr:preferencesUpdated"));
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);

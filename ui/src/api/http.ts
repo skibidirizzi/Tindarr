@@ -91,7 +91,8 @@ export async function apiRequest<T>(options: ApiRequestOptions): Promise<T> {
   const response = await fetch(buildUrl(options.path, options.query), {
     method: options.method ?? "GET",
     headers,
-    body
+    body,
+    cache: "no-store"
   });
 
   const payload = await tryReadBody(response);

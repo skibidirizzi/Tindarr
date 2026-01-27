@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import SwipeCardComponent from "../components/SwipeCard";
 import { fetchSwipeDeck, sendSwipe, undoSwipe } from "../api/client";
@@ -12,6 +12,10 @@ const ACTION_LABELS: Record<SwipeAction, string> = {
   Superlike: "Superlike"
 };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function SwipeDeckPage() {
   const [cards, setCards] = useState<SwipeCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,12 +24,23 @@ export default function SwipeDeckPage() {
 
   const activeCard = cards[0];
 
-  async function loadDeck() {
+  const loadDeck = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetchSwipeDeck();
-      setCards(response.items);
+      const maxEmptyRetries = 2; // "refresh twice" when we get 0 items
+
+      for (let attempt = 0; attempt <= maxEmptyRetries; attempt++) {
+        const response = await fetchSwipeDeck();
+
+        if (response.items.length > 0 || attempt === maxEmptyRetries) {
+          setCards(response.items);
+          break;
+        }
+
+        // Short backoff before retrying an empty deck.
+        await sleep(250 * (attempt + 1));
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError("You’re not logged in. Please login and try again.");
@@ -35,11 +50,21 @@ export default function SwipeDeckPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     loadDeck();
-  }, []);
+  }, [loadDeck]);
+
+  // Live-reload swipedeck when preferences are saved (Preferences modal dispatches this).
+  useEffect(() => {
+    function handlePreferencesUpdated() {
+      void loadDeck();
+    }
+
+    window.addEventListener("tindarr:preferencesUpdated", handlePreferencesUpdated);
+    return () => window.removeEventListener("tindarr:preferencesUpdated", handlePreferencesUpdated);
+  }, [loadDeck]);
 
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {

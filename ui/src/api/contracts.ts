@@ -57,3 +57,41 @@ export type UndoResponse = {
   createdAtUtc: string | null;
 };
 
+export type InteractionDto = {
+  tmdbId: number;
+  action: "Like" | "Nope" | "Skip" | "Superlike";
+  createdAtUtc: string;
+};
+
+export type InteractionListResponse = {
+  serviceType: string;
+  serverId: string;
+  items: InteractionDto[];
+};
+
+export type MatchDto = {
+  tmdbId: number;
+};
+
+export type MatchesResponse = {
+  serviceType: string;
+  serverId: string;
+  items: MatchDto[];
+};
+
+export type MovieDetailsDto = {
+  tmdbId: number;
+  title: string;
+  overview: string | null;
+  posterUrl: string | null;
+  backdropUrl: string | null;
+  releaseDate: string | null;
+  releaseYear: number | null;
+  mpaaRating: string | null;
+  rating: number | null;
+  voteCount: number | null;
+  genres: string[];
+  originalLanguage: string | null;
+  runtimeMinutes: number | null;
+};
+

@@ -1,14 +1,18 @@
 import type { SwipeAction, SwipeDeckResponse } from "../types";
 import type {
   AuthResponse,
+  InteractionListResponse,
   LoginRequest,
   MeResponse,
+  MatchesResponse,
+  MovieDetailsDto,
   RegisterRequest,
   UndoResponse,
   UpdateUserPreferencesRequest,
   UserPreferencesDto
 } from "./contracts";
 import { apiRequest } from "./http";
+import { getCachedJson, setCachedJson } from "./localCache";
 
 const DEFAULT_SERVICE_TYPE = "tmdb";
 const DEFAULT_SERVER_ID = "tmdb";
@@ -84,4 +88,56 @@ export async function updatePreferences(request: UpdateUserPreferencesRequest) {
     method: "PUT",
     body: request
   });
+}
+
+export async function listInteractions(
+  {
+    action,
+    tmdbId,
+    limit = 500
+  }: { action?: SwipeAction; tmdbId?: number; limit?: number } = {},
+  serviceType = DEFAULT_SERVICE_TYPE,
+  serverId = DEFAULT_SERVER_ID
+): Promise<InteractionListResponse> {
+  return apiRequest<InteractionListResponse>({
+    path: "/api/v1/interactions",
+    query: {
+      serviceType,
+      serverId,
+      action,
+      tmdbId,
+      limit
+    }
+  });
+}
+
+export async function fetchMatches(
+  {
+    minUsers = 2,
+    interactionLimit = 20000
+  }: { minUsers?: number; interactionLimit?: number } = {},
+  serviceType = DEFAULT_SERVICE_TYPE,
+  serverId = DEFAULT_SERVER_ID
+): Promise<MatchesResponse> {
+  return apiRequest<MatchesResponse>({
+    path: "/api/v1/matches",
+    query: { serviceType, serverId, minUsers, interactionLimit }
+  });
+}
+
+export async function fetchMovieDetails(tmdbId: number): Promise<MovieDetailsDto> {
+  const cacheKey = `tindarr:movieDetails:v1:${tmdbId}`;
+  const cached = getCachedJson<MovieDetailsDto>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const fresh = await apiRequest<MovieDetailsDto>({
+    path: `/api/v1/tmdb/movies/${tmdbId}`
+  });
+
+  // Movie metadata changes rarely; keep this fairly long to avoid constant refetching.
+  // If you want “instant updates”, reduce this TTL.
+  setCachedJson(cacheKey, fresh, 7 * 24 * 60 * 60 * 1000);
+  return fresh;
 }

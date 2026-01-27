@@ -2,6 +2,8 @@ import { Navigate, NavLink, Outlet, Route, Routes, useLocation, type Location } 
 import SwipeDeckPage from "./pages/SwipeDeckPage";
 import LoginPage from "./pages/LoginPage";
 import PreferencesPage from "./pages/PreferencesPage";
+import MyLikedMoviesPage from "./pages/MyLikedMoviesPage";
+import MatchListPage from "./pages/MatchListPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import { useAuth } from "./auth/AuthContext";
 
@@ -17,6 +19,8 @@ export default function App() {
           <Route index element={<Navigate to="/swipe" replace />} />
           <Route path="/swipe" element={<SwipeDeckPage />} />
           <Route path="/preferences" element={<PreferencesPage />} />
+          <Route path="/liked" element={<MyLikedMoviesPage />} />
+          <Route path="/matches" element={<MatchListPage />} />
         </Route>
 
         <Route path="/login" element={<LoginPage />} />
@@ -26,6 +30,8 @@ export default function App() {
       {backgroundLocation ? (
         <Routes>
           <Route path="/preferences" element={<PreferencesPage />} />
+          <Route path="/liked" element={<MyLikedMoviesPage />} />
+          <Route path="/matches" element={<MatchListPage />} />
         </Routes>
       ) : null}
     </>
@@ -46,6 +52,20 @@ function AppLayout() {
           <nav className="app__nav">
             <NavLink to="/swipe" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
               Swipe
+            </NavLink>
+            <NavLink
+              to="/liked"
+              state={{ backgroundLocation: location }}
+              className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}
+            >
+              My Likes
+            </NavLink>
+            <NavLink
+              to="/matches"
+              state={{ backgroundLocation: location }}
+              className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}
+            >
+              Matches
             </NavLink>
             <NavLink
               to="/preferences"

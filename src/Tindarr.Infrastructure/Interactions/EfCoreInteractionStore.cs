@@ -29,8 +29,8 @@ public sealed class EfCoreInteractionStore(TindarrDbContext db) : IInteractionSt
 	{
 		var last = await db.Interactions
 			.Where(x => x.UserId == userId && x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId)
-			.OrderByDescending(x => x.CreatedAtUtc)
-			.ThenByDescending(x => x.Id)
+			// SQLite (EF Core) cannot translate DateTimeOffset ordering reliably; Id is monotonically increasing.
+			.OrderByDescending(x => x.Id)
 			.FirstOrDefaultAsync(cancellationToken);
 
 		if (last is null)
@@ -83,10 +83,9 @@ public sealed class EfCoreInteractionStore(TindarrDbContext db) : IInteractionSt
 			query = query.Where(x => x.TmdbId == tmdbId.Value);
 		}
 
-		// Newest first.
+		// Newest first. Use Id ordering for SQLite compatibility (CreatedAtUtc is DateTimeOffset).
 		var rows = await query
-			.OrderByDescending(x => x.CreatedAtUtc)
-			.ThenByDescending(x => x.Id)
+			.OrderByDescending(x => x.Id)
 			.Take(Math.Max(1, limit))
 			.ToListAsync(cancellationToken);
 
@@ -115,10 +114,9 @@ public sealed class EfCoreInteractionStore(TindarrDbContext db) : IInteractionSt
 			query = query.Where(x => x.TmdbId == tmdbId.Value);
 		}
 
-		// Newest first.
+		// Newest first. Use Id ordering for SQLite compatibility (CreatedAtUtc is DateTimeOffset).
 		var rows = await query
-			.OrderByDescending(x => x.CreatedAtUtc)
-			.ThenByDescending(x => x.Id)
+			.OrderByDescending(x => x.Id)
 			.Take(Math.Max(1, limit))
 			.ToListAsync(cancellationToken);
 

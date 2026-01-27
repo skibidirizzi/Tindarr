@@ -85,12 +85,13 @@ public sealed class TmdbClientTests
 		var handler = new StubHandler(req =>
 		{
 			Assert.Contains("movie/123?", req.RequestUri!.ToString());
+			Assert.Contains("append_to_response=release_dates", req.RequestUri!.ToString());
 
 			return new HttpResponseMessage(HttpStatusCode.OK)
 			{
 				Content = new StringContent(
 					"""
-					{"id":123,"title":"M","original_title":"M","overview":"O","poster_path":"/p.jpg","backdrop_path":"/b.jpg","release_date":"1999-03-31","vote_average":8.2,"vote_count":1000,"original_language":"en","runtime":136,"genres":[{"id":1,"name":"Action"},{"id":2,"name":"Sci-Fi"}]}
+					{"id":123,"title":"M","original_title":"M","overview":"O","poster_path":"/p.jpg","backdrop_path":"/b.jpg","release_date":"1999-03-31","vote_average":8.2,"vote_count":1000,"original_language":"en","runtime":136,"genres":[{"id":1,"name":"Action"},{"id":2,"name":"Sci-Fi"}],"release_dates":{"results":[{"iso_3166_1":"US","release_dates":[{"certification":"PG-13","type":3,"release_date":"1999-03-31T00:00:00.000Z"}]}]}}
 					""",
 					Encoding.UTF8,
 					"application/json")
@@ -119,6 +120,7 @@ public sealed class TmdbClientTests
 		Assert.Equal("en", details.OriginalLanguage);
 		Assert.Equal(136, details.RuntimeMinutes);
 		Assert.Equal(["Action", "Sci-Fi"], details.Genres);
+		Assert.Equal("PG-13", details.MpaaRating);
 		Assert.Equal("https://image.tmdb.org/t/p/w500/p.jpg", details.PosterUrl);
 		Assert.Equal("https://image.tmdb.org/t/p/w780/b.jpg", details.BackdropUrl);
 	}

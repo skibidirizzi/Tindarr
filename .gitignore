@@ -47,3 +47,4 @@ Desktop.ini
 
 # Local sqlite DB files (dev/runtime)
 src/Tindarr.Api/tindarr.db*
+src/Tindarr.Api/tmdbmetadata.db*

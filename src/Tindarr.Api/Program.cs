@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using Tindarr.Api.Auth;
 using Tindarr.Api.Hosting.WindowsService;
@@ -193,7 +194,12 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddScoped<IInteractionStore, EfCoreInteractionStore>();
 builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<ITmdbCache, MemoryOrDbTmdbCache>();
+
+// Persist TMDB metadata separately from the main tindarr.db.
+// This avoids repeated upstream TMDB calls across restarts.
+var tmdbMetadataDbPath = Path.Combine(dataDirOverride ?? builder.Environment.ContentRootPath, "tmdbmetadata.db");
+builder.Services.AddSingleton<ITmdbCache>(sp =>
+	new MemoryOrDbTmdbCache(sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(), tmdbMetadataDbPath));
 builder.Services.AddSingleton<ITmdbRateLimiter, TokenBucketRateLimiter>();
 builder.Services.AddTransient<TmdbCachingHandler>();
 builder.Services.AddTransient<TmdbRateLimitingHandler>();
@@ -224,6 +230,20 @@ builder.Services.AddScoped<IMatchingEngine, MatchingEngine>();
 builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: dataDirOverride ?? builder.Environment.ContentRootPath);
 
 var app = builder.Build();
+
+// Ensure the main app database schema exists on startup.
+// Without this, a fresh `tindarr.db` will cause runtime 500s (e.g., login) due to missing tables.
+using (var scope = app.Services.CreateScope())
+{
+	var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
+	var db = scope.ServiceProvider.GetRequiredService<TindarrDbContext>();
+
+	// Safe to run repeatedly; in prod environments you may choose to disable if desired.
+	if (env.IsDevelopment() || isWindowsService)
+	{
+		db.Database.Migrate();
+	}
+}
 
 if (isWindowsService)
 {

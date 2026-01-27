@@ -8,6 +8,7 @@ public sealed record MovieDetailsDto(
 	string? BackdropUrl,
 	string? ReleaseDate,
 	int? ReleaseYear,
+	string? MpaaRating,
 	double? Rating,
 	int? VoteCount,
 	IReadOnlyList<string> Genres,
