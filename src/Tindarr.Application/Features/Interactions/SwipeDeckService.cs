@@ -8,7 +8,7 @@ public sealed class SwipeDeckService(IInteractionStore interactionStore, ISwipeD
 {
     public async Task<IReadOnlyList<SwipeCard>> GetDeckAsync(string userId, ServiceScope scope, int limit, CancellationToken cancellationToken)
     {
-        var candidates = await source.GetCandidatesAsync(scope, cancellationToken);
+        var candidates = await source.GetCandidatesAsync(userId, scope, cancellationToken);
         var interacted = await interactionStore.GetInteractedTmdbIdsAsync(userId, scope, cancellationToken);
 
         var filtered = candidates

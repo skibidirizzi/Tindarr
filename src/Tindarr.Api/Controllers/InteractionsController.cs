@@ -13,6 +13,38 @@ namespace Tindarr.Api.Controllers;
 [Route("api/v1/interactions")]
 public sealed class InteractionsController(IInteractionService interactionService) : ControllerBase
 {
+	[HttpGet]
+	public async Task<ActionResult<InteractionListResponse>> List(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		[FromQuery] SwipeActionDto? action,
+		[FromQuery] int? tmdbId,
+		[FromQuery] int limit = 200,
+		CancellationToken cancellationToken = default)
+	{
+		if (!ServiceScope.TryCreate(serviceType, serverId, out var scope))
+		{
+			return BadRequest("ServiceType and ServerId are required.");
+		}
+
+		// Hard cap to avoid unbounded reads.
+		limit = Math.Clamp(limit, 1, 500);
+
+		var userId = User.GetUserId();
+		var items = await interactionService.ListAsync(
+			userId,
+			scope!,
+			action is null ? null : MapAction(action.Value),
+			tmdbId,
+			limit,
+			cancellationToken);
+
+		return Ok(new InteractionListResponse(
+			scope!.ServiceType.ToString(),
+			scope.ServerId,
+			items.Select(x => new InteractionDto(x.TmdbId, MapAction(x.Action), x.CreatedAtUtc)).ToList()));
+	}
+
 	[HttpPost]
 	public async Task<ActionResult<SwipeResponse>> Create([FromBody] SwipeRequest request, CancellationToken cancellationToken)
 	{

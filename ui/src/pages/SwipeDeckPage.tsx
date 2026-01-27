@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import SwipeCardComponent from "../components/SwipeCard";
 import { fetchSwipeDeck, sendSwipe, undoSwipe } from "../api/client";
+import { ApiError } from "../api/http";
 import type { SwipeAction, SwipeCard } from "../types";
 
 const ACTION_LABELS: Record<SwipeAction, string> = {
@@ -25,7 +27,11 @@ export default function SwipeDeckPage() {
       const response = await fetchSwipeDeck();
       setCards(response.items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load swipedeck");
+      if (err instanceof ApiError && err.status === 401) {
+        setError("You’re not logged in. Please login and try again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load swipedeck");
+      }
     } finally {
       setLoading(false);
     }
@@ -68,7 +74,7 @@ export default function SwipeDeckPage() {
 
   async function handleUndo() {
     try {
-      const response = await undoSwipe();
+      const response = (await undoSwipe()) as { undone: boolean };
       if (response.undone) {
         await loadDeck();
         setLastAction(null);
@@ -103,10 +109,19 @@ export default function SwipeDeckPage() {
       </div>
 
       {loading ? <div className="deck__state">Loading swipedeck…</div> : null}
-      {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+      {error ? (
+        <div className="deck__state deck__state--error">
+          {error} {error.includes("login") ? <Link to="/login">Go to login</Link> : null}
+        </div>
+      ) : null}
 
       {!loading && !error && cards.length === 0 ? (
-        <div className="deck__state">You are all caught up. Refresh for more.</div>
+        <div className="deck__state">
+          No movies returned.
+          <div style={{ marginTop: "0.5rem", color: "#8c93a6" }}>
+            If this is unexpected, check your TMDB configuration (TMDB_API_KEY) and preferences, then refresh.
+          </div>
+        </div>
       ) : null}
 
       <div className="deck__stack">

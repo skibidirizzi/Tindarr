@@ -5,5 +5,5 @@ namespace Tindarr.Application.Interfaces.Interactions;
 
 public interface ISwipeDeckSource
 {
-    Task<IReadOnlyList<SwipeCard>> GetCandidatesAsync(ServiceScope scope, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SwipeCard>> GetCandidatesAsync(string userId, ServiceScope scope, CancellationToken cancellationToken);
 }

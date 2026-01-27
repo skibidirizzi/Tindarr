@@ -1,0 +1,58 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Domain", "Tindarr.Domain\Tindarr.Domain.csproj", "{851D42AB-2102-4125-A015-5F6682989286}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Contracts", "Tindarr.Contracts\Tindarr.Contracts.csproj", "{E300F552-DF99-4099-A75C-8CE7CD9BFE6B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Application", "Tindarr.Application\Tindarr.Application.csproj", "{1A3A1723-81B7-4503-A111-64C66CA7F0E4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Infrastructure", "Tindarr.Infrastructure\Tindarr.Infrastructure.csproj", "{DCFBD4EE-B598-4385-B01B-05D554B4C2DA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Api", "Tindarr.Api\Tindarr.Api.csproj", "{4C75121E-1764-422A-AC53-297FDD4961E6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Workers", "Tindarr.Workers\Tindarr.Workers.csproj", "{37DB0F04-ADAF-4B56-959D-091524C3380B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.UnitTests", "..\tests\Tindarr.UnitTests\Tindarr.UnitTests.csproj", "{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{851D42AB-2102-4125-A015-5F6682989286}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{851D42AB-2102-4125-A015-5F6682989286}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{851D42AB-2102-4125-A015-5F6682989286}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{851D42AB-2102-4125-A015-5F6682989286}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E300F552-DF99-4099-A75C-8CE7CD9BFE6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E300F552-DF99-4099-A75C-8CE7CD9BFE6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E300F552-DF99-4099-A75C-8CE7CD9BFE6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E300F552-DF99-4099-A75C-8CE7CD9BFE6B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A3A1723-81B7-4503-A111-64C66CA7F0E4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A3A1723-81B7-4503-A111-64C66CA7F0E4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A3A1723-81B7-4503-A111-64C66CA7F0E4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A3A1723-81B7-4503-A111-64C66CA7F0E4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DCFBD4EE-B598-4385-B01B-05D554B4C2DA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DCFBD4EE-B598-4385-B01B-05D554B4C2DA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DCFBD4EE-B598-4385-B01B-05D554B4C2DA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DCFBD4EE-B598-4385-B01B-05D554B4C2DA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4C75121E-1764-422A-AC53-297FDD4961E6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4C75121E-1764-422A-AC53-297FDD4961E6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4C75121E-1764-422A-AC53-297FDD4961E6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4C75121E-1764-422A-AC53-297FDD4961E6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{37DB0F04-ADAF-4B56-959D-091524C3380B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{37DB0F04-ADAF-4B56-959D-091524C3380B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{37DB0F04-ADAF-4B56-959D-091524C3380B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{37DB0F04-ADAF-4B56-959D-091524C3380B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -44,3 +44,6 @@ Desktop.ini
 
 # Logs
 *.log
+
+# Local sqlite DB files (dev/runtime)
+src/Tindarr.Api/tindarr.db*

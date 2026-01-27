@@ -147,11 +147,23 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("UserId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ExcludedGenresJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]");
+
                     b.Property<bool>("IncludeAdult")
                         .HasColumnType("INTEGER");
 
+                    b.Property<double?>("MaxRating")
+                        .HasColumnType("REAL");
+
                     b.Property<int?>("MaxReleaseYear")
                         .HasColumnType("INTEGER");
+
+                    b.Property<double?>("MinRating")
+                        .HasColumnType("REAL");
 
                     b.Property<int?>("MinReleaseYear")
                         .HasColumnType("INTEGER");
@@ -167,6 +179,19 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT")
                         .HasDefaultValue("[]");
+
+                    b.Property<string>("PreferredRegionsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]");
+
+                    b.Property<string>("SortBy")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("popularity.desc");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
                         .HasColumnType("TEXT");

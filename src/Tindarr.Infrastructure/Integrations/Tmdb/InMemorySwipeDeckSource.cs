@@ -18,7 +18,7 @@ public sealed class InMemorySwipeDeckSource : ISwipeDeckSource
         new(1891, "The Empire Strikes Back", "The Rebels are pursued by the Empire in the aftermath of the Death Star's destruction.", "https://image.tmdb.org/t/p/w500/7BuH8itoSrLExs2YZSsM01Qk2no.jpg", "https://image.tmdb.org/t/p/w780/2u7zbn8tNrEWfY9VP2K4QQ9nN8K.jpg", 1980, 8.4)
     };
 
-    public Task<IReadOnlyList<SwipeCard>> GetCandidatesAsync(ServiceScope scope, CancellationToken cancellationToken)
+    public Task<IReadOnlyList<SwipeCard>> GetCandidatesAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
     {
         return Task.FromResult(Cards);
     }

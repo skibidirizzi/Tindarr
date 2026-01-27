@@ -1,78 +1,87 @@
 import type { SwipeAction, SwipeDeckResponse } from "../types";
+import type {
+  AuthResponse,
+  LoginRequest,
+  MeResponse,
+  RegisterRequest,
+  UndoResponse,
+  UpdateUserPreferencesRequest,
+  UserPreferencesDto
+} from "./contracts";
+import { apiRequest } from "./http";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 const DEFAULT_SERVICE_TYPE = "tmdb";
 const DEFAULT_SERVER_ID = "tmdb";
 
-function getUserId(): string {
-  const stored = localStorage.getItem("tindarr_user_id");
-  if (stored) {
-    return stored;
-  }
-  const fallback = `user-${Math.random().toString(16).slice(2, 10)}`;
-  localStorage.setItem("tindarr_user_id", fallback);
-  return fallback;
-}
-
-function baseHeaders() {
-  return {
-    "Content-Type": "application/json",
-    "X-User-Id": getUserId(),
-    "X-User-Role": "Contributor"
-  };
-}
-
-export async function fetchSwipeDeck(limit = 10, serviceType = DEFAULT_SERVICE_TYPE, serverId = DEFAULT_SERVER_ID): Promise<SwipeDeckResponse> {
-  const params = new URLSearchParams({
-    serviceType,
-    serverId,
-    limit: limit.toString()
+export async function fetchSwipeDeck(
+  limit = 10,
+  serviceType = DEFAULT_SERVICE_TYPE,
+  serverId = DEFAULT_SERVER_ID
+): Promise<SwipeDeckResponse> {
+  return apiRequest<SwipeDeckResponse>({
+    path: "/api/v1/swipedeck",
+    query: { serviceType, serverId, limit }
   });
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/swipedeck?${params.toString()}`, {
-    headers: baseHeaders()
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to load swipedeck (${response.status})`);
-  }
-
-  return response.json();
 }
 
-export async function sendSwipe(tmdbId: number, action: SwipeAction, serviceType = DEFAULT_SERVICE_TYPE, serverId = DEFAULT_SERVER_ID) {
-  const response = await fetch(`${API_BASE_URL}/api/v1/interactions`, {
+export async function sendSwipe(
+  tmdbId: number,
+  action: SwipeAction,
+  serviceType = DEFAULT_SERVICE_TYPE,
+  serverId = DEFAULT_SERVER_ID
+) {
+  return apiRequest({
+    path: "/api/v1/interactions",
     method: "POST",
-    headers: baseHeaders(),
-    body: JSON.stringify({
-      tmdbId,
-      action,
-      serviceType,
-      serverId
-    })
+    body: { tmdbId, action, serviceType, serverId }
   });
-
-  if (!response.ok) {
-    throw new Error(`Failed to send swipe (${response.status})`);
-  }
-
-  return response.json();
 }
 
-export async function undoSwipe(serviceType = DEFAULT_SERVICE_TYPE, serverId = DEFAULT_SERVER_ID) {
-  const params = new URLSearchParams({
-    serviceType,
-    serverId
-  });
-
-  const response = await fetch(`${API_BASE_URL}/api/v1/interactions/undo?${params.toString()}`, {
+export async function undoSwipe(
+  serviceType = DEFAULT_SERVICE_TYPE,
+  serverId = DEFAULT_SERVER_ID
+): Promise<UndoResponse> {
+  return apiRequest<UndoResponse>({
+    path: "/api/v1/interactions/undo",
     method: "POST",
-    headers: baseHeaders()
+    query: { serviceType, serverId }
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`Failed to undo swipe (${response.status})`);
-  }
+export async function register(request: RegisterRequest) {
+  return apiRequest<AuthResponse>({
+    path: "/api/v1/auth/register",
+    method: "POST",
+    auth: false,
+    body: request
+  });
+}
 
-  return response.json();
+export async function login(request: LoginRequest) {
+  return apiRequest<AuthResponse>({
+    path: "/api/v1/auth/login",
+    method: "POST",
+    auth: false,
+    body: request
+  });
+}
+
+export async function me() {
+  return apiRequest<MeResponse>({
+    path: "/api/v1/auth/me"
+  });
+}
+
+export async function getPreferences() {
+  return apiRequest<UserPreferencesDto>({
+    path: "/api/v1/preferences"
+  });
+}
+
+export async function updatePreferences(request: UpdateUserPreferencesRequest) {
+  return apiRequest<UserPreferencesDto>({
+    path: "/api/v1/preferences",
+    method: "PUT",
+    body: request
+  });
 }

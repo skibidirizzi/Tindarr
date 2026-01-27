@@ -12,6 +12,9 @@ if (-not $Update -and [string]::IsNullOrWhiteSpace($AddMigration)) {
 	$Update = $true
 }
 
+Write-Host "Setting ASPNETCORE_ENVIRONMENT=$Environment"
+$env:ASPNETCORE_ENVIRONMENT = $Environment
+
 Write-Host "Restoring local dotnet tools..."
 dotnet tool restore | Out-Host
 
@@ -20,17 +23,13 @@ if (-not [string]::IsNullOrWhiteSpace($AddMigration)) {
 	dotnet tool run dotnet-ef migrations add $AddMigration `
 		--project $Project `
 		--startup-project $StartupProject `
-		--output-dir "Persistence/Migrations" `
-		-- `
-		--environment $Environment | Out-Host
+		--output-dir "Persistence/Migrations" | Out-Host
 }
 
 if ($Update) {
 	Write-Host "Applying migrations..."
 	dotnet tool run dotnet-ef database update `
 		--project $Project `
-		--startup-project $StartupProject `
-		-- `
-		--environment $Environment | Out-Host
+		--startup-project $StartupProject | Out-Host
 }
 

@@ -16,14 +16,29 @@ public sealed class UserPreferencesEntityConfiguration : IEntityTypeConfiguratio
 		builder.Property(x => x.IncludeAdult).IsRequired();
 		builder.Property(x => x.MinReleaseYear);
 		builder.Property(x => x.MaxReleaseYear);
+		builder.Property(x => x.MinRating);
+		builder.Property(x => x.MaxRating);
 
 		builder.Property(x => x.PreferredGenresJson)
+			.IsRequired()
+			.HasDefaultValue("[]");
+
+		builder.Property(x => x.ExcludedGenresJson)
 			.IsRequired()
 			.HasDefaultValue("[]");
 
 		builder.Property(x => x.PreferredOriginalLanguagesJson)
 			.IsRequired()
 			.HasDefaultValue("[]");
+
+		builder.Property(x => x.PreferredRegionsJson)
+			.IsRequired()
+			.HasDefaultValue("[]");
+
+		builder.Property(x => x.SortBy)
+			.IsRequired()
+			.HasMaxLength(64)
+			.HasDefaultValue("popularity.desc");
 
 		builder.Property(x => x.UpdatedAtUtc).IsRequired();
 	}
