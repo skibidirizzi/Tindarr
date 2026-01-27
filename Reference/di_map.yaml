@@ -1,0 +1,265 @@
+version: 1
+solution:
+  projects:
+    - Tindarr.Domain
+    - Tindarr.Contracts
+    - Tindarr.Application
+    - Tindarr.Infrastructure
+    - Tindarr.Api
+    - Tindarr.Workers
+
+reference_rules:
+  allowed_references:
+    Tindarr.Domain: []
+    Tindarr.Contracts: []
+    Tindarr.Application:
+      - Tindarr.Domain
+      - Tindarr.Contracts
+    Tindarr.Infrastructure:
+      - Tindarr.Application
+      - Tindarr.Domain
+      - Tindarr.Contracts
+    Tindarr.Api:
+      - Tindarr.Application
+      - Tindarr.Infrastructure
+      - Tindarr.Contracts
+    Tindarr.Workers:
+      - Tindarr.Application
+      - Tindarr.Infrastructure
+      - Tindarr.Contracts
+
+options_binding:
+  required:
+    - DatabaseOptions
+    - JwtOptions
+    - TmdbOptions
+    - RadarrOptions
+    - PlexOptions
+    - JellyfinOptions
+    - EmbyOptions
+    - PlaybackOptions
+    - CastingOptions
+    - BaseUrlOptions
+    - RegistrationOptions
+    - LoggingOptions
+
+lifetimes:
+  canonical:
+    dbcontext: scoped
+    repository: scoped
+    httpclient: typed_httpclient
+    stateless_logic: scoped
+    cache: singleton
+    ratelimiter: singleton
+    token_signing: singleton
+    playback_rewrite_proxy: singleton
+    base_url_resolver: singleton
+    casting_services: singleton
+
+api_host:
+  framework:
+    controllers:
+      type: mvc_controllers
+      lifetime: implicit
+    routing:
+      spa_fallback: true
+      static_assets: true
+    middleware_pipeline_order:
+      - CorrelationIdMiddleware
+      - ExceptionHandlingMiddleware
+      - RequestLoggingMiddleware
+      - Authentication
+      - Authorization
+  cors:
+    enabled: true
+  auth:
+    scheme: jwt_bearer
+    policies:
+      - AdminOnly
+      - CuratorOnly
+      - ContributorOrCurator
+
+  persistence:
+    dbcontext:
+      service: Tindarr.Infrastructure.Persistence.TindarrDbContext
+      lifetime: scoped
+      provider: sqlite
+    repositories:
+      - service: Tindarr.Application.Abstractions.Persistence.IUserRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.UserRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IInteractionRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.InteractionRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IAcceptedMovieRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.AcceptedMovieRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IRoomRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.RoomRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IServiceSettingsRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.ServiceSettingsRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.ILibraryCacheRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.LibraryCacheRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IPlaybackTokenRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.PlaybackTokenRepository
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.ICastSessionRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.CastSessionRepository
+        lifetime: scoped
+
+  security:
+    services:
+      - service: Tindarr.Application.Abstractions.Security.IPasswordHasher
+        impl: Tindarr.Infrastructure.Security.Pbkdf2PasswordHasher
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Security.ITokenService
+        impl: Tindarr.Infrastructure.Security.JwtTokenService
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Security.ITokenSigningKeyStore
+        impl: Tindarr.Infrastructure.Security.DbOrFileTokenSigningKeyStore
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Security.ICurrentUser
+        impl: Tindarr.Api.Auth.HttpContextCurrentUser
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Common.IClock
+        impl: Tindarr.Application.Common.SystemClock
+        lifetime: singleton
+
+  integrations:
+    http_clients:
+      - service: Tindarr.Application.Abstractions.Integrations.ITmdbClient
+        impl: Tindarr.Infrastructure.Integrations.Tmdb.TmdbClient
+        lifetime: typed_httpclient
+      - service: Tindarr.Application.Abstractions.Integrations.IRadarrClient
+        impl: Tindarr.Infrastructure.Integrations.Radarr.RadarrClient
+        lifetime: typed_httpclient
+      - service: Tindarr.Application.Abstractions.Integrations.IPlexAuthClient
+        impl: Tindarr.Infrastructure.Integrations.Plex.PlexAuthClient
+        lifetime: typed_httpclient
+      - service: Tindarr.Application.Abstractions.Integrations.IPlexLibraryClient
+        impl: Tindarr.Infrastructure.Integrations.Plex.PlexLibraryClient
+        lifetime: typed_httpclient
+      - service: Tindarr.Application.Abstractions.Integrations.IJellyfinClient
+        impl: Tindarr.Infrastructure.Integrations.Jellyfin.JellyfinClient
+        lifetime: typed_httpclient
+      - service: Tindarr.Application.Abstractions.Integrations.IEmbyClient
+        impl: Tindarr.Infrastructure.Integrations.Emby.EmbyClient
+        lifetime: typed_httpclient
+
+  caching:
+    services:
+      - service: Tindarr.Application.Abstractions.Caching.ITmdbCache
+        impl: Tindarr.Infrastructure.Caching.MemoryOrDbTmdbCache
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Caching.ITmdbRateLimiter
+        impl: Tindarr.Infrastructure.Caching.TokenBucketRateLimiter
+        lifetime: singleton
+
+  application_services:
+    services:
+      - service: Tindarr.Application.Abstractions.Domain.IMatchingEngine
+        impl: Tindarr.Application.Services.MatchingEngine
+        lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Ops.IBaseUrlResolver
+        impl: Tindarr.Application.Services.BaseUrlResolver
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.ServiceScopes.IServiceScopeResolver
+        impl: Tindarr.Application.Services.ServiceScopeResolver
+        lifetime: scoped
+
+  playback_gateway:
+    services:
+      - service: Tindarr.Application.Abstractions.Playback.IPlaybackProviderFactory
+        impl: Tindarr.Infrastructure.Playback.Providers.PlaybackProviderFactory
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Playback.IPlaybackTokenService
+        impl: Tindarr.Infrastructure.Playback.PlaybackTokenService
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Playback.IManifestRewriter
+        impl: Tindarr.Infrastructure.Playback.Hls.HlsManifestRewriter
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Playback.IStreamProxy
+        impl: Tindarr.Infrastructure.Playback.Proxy.StreamingProxy
+        lifetime: singleton
+    providers:
+      - provider: Plex
+        type: Tindarr.Infrastructure.Playback.Providers.PlexPlaybackProvider
+        lifetime: scoped
+      - provider: Jellyfin
+        type: Tindarr.Infrastructure.Playback.Providers.JellyfinPlaybackProvider
+        lifetime: scoped
+        mode: stub
+      - provider: Emby
+        type: Tindarr.Infrastructure.Playback.Providers.EmbyPlaybackProvider
+        lifetime: scoped
+        mode: stub
+
+  casting:
+    services:
+      - service: Tindarr.Application.Abstractions.Casting.ICastDiscovery
+        impl: Tindarr.Infrastructure.Casting.CastDiscoveryService
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Casting.ICastSessionStore
+        impl: Tindarr.Infrastructure.Casting.CastSessionStore
+        lifetime: singleton
+
+  hosted_services:
+    enabled: optional
+    jobs:
+      - type: Tindarr.Workers.Jobs.RoomCleanupWorker
+      - type: Tindarr.Workers.Jobs.RadarrAutoAddWorker
+      - type: Tindarr.Workers.Jobs.PlexLibrarySyncWorker
+      - type: Tindarr.Workers.Jobs.JellyfinLibrarySyncWorker
+      - type: Tindarr.Workers.Jobs.EmbyLibrarySyncWorker
+
+workers_host:
+  framework:
+    controllers: none
+    middleware_pipeline_order: []
+  options_binding:
+    inherit_from: api_host.options_binding
+  persistence:
+    inherit_from: api_host.persistence
+  security:
+    shared_key_store_required: true
+    services:
+      - service: Tindarr.Application.Abstractions.Security.ITokenSigningKeyStore
+        impl: Tindarr.Infrastructure.Security.DbOrFileTokenSigningKeyStore
+        lifetime: singleton
+      - service: Tindarr.Application.Abstractions.Common.IClock
+        impl: Tindarr.Application.Common.SystemClock
+        lifetime: singleton
+  integrations:
+    inherit_from: api_host.integrations
+  caching:
+    inherit_from: api_host.caching
+  application_services:
+    inherit_from: api_host.application_services
+  playback_gateway:
+    register_if_needed: false
+    required_for_jobs: []
+    shared_signing_key: true
+  casting:
+    register_if_needed: false
+  hosted_services:
+    enabled: true
+    jobs:
+      - type: Tindarr.Workers.Jobs.RoomCleanupWorker
+      - type: Tindarr.Workers.Jobs.RadarrAutoAddWorker
+      - type: Tindarr.Workers.Jobs.PlexLibrarySyncWorker
+      - type: Tindarr.Workers.Jobs.JellyfinLibrarySyncWorker
+      - type: Tindarr.Workers.Jobs.EmbyLibrarySyncWorker
+
+invariants:
+  - id: INV-0001
+    rule: service_scoped_data_everywhere
+  - id: INV-0002
+    rule: playback_only_via_gateway
+  - id: INV-0003
+    rule: clients_never_talk_directly_to_media_servers
+  - id: INV-0004
+    rule: api_prefix_required
+    value: /api/v1

@@ -1,0 +1,368 @@
+M1: Solo TMDB Swiping
+
+EPIC 0 — Rewrite Prep & Guardrails
+Labels: epic, planning
+Body:
+Goal: prevent rewrite drift and lock architecture rules.
+Invariants: service-scoped data everywhere; playback always through Tindarr Playback Gateway; Chromecast/clients never talk directly to Plex/Jellyfin/Emby; /api/v1 only. Child issues link back here.
+
+* Freeze legacy Tindarr
+  Labels: planning
+  Body: Tag last working version and archive legacy branch/repo.
+* Write invariants doc
+  Labels: planning
+  Body: Document invariants (service-scoped data, playback gateway, API versioning).
+
+---
+
+EPIC 1 — Solution & Infrastructure Foundation
+Labels: epic, backend, ops
+Body:
+Repo layout, logging standards, configuration model, base-URL resolution, and Windows Service scaffolding.
+
+* Create solution layout + projects
+  Labels: backend, ops
+  Body: Create Api/Core/Infrastructure/Workers projects and UI folder.
+* Logging + redaction baseline
+  Labels: backend, ops
+  Body: Add correlation IDs and redact auth headers/tokens by default.
+* Base URL config (LAN/WAN) resolver skeleton
+  Labels: backend, ops
+  Body: Configuration and service to safely resolve LAN/WAN base URLs.
+* Windows Service hosting scaffolding
+  Labels: backend, ops
+  Body: Support running as Windows Service with data dir and webroot mirroring.
+
+---
+
+EPIC 2 — Database & Schema (EF Core)
+Labels: epic, backend, database
+Body:
+EF Core + SQLite schema and migrations covering users, interactions, services, rooms, and playback state.
+
+* EF Core + SQLite setup
+  Labels: backend, database
+  Body: DbContext, migrations, connection handling, startup wiring.
+* Schema: users/roles/preferences
+  Labels: backend, database
+  Body: Users, roles, and per-user preference tables with seeds.
+* Schema: interactions + accepted (service-scoped)
+  Labels: backend, database
+  Body: Service-scoped interactions and accepted-movie tables.
+
+---
+
+EPIC 3 — Auth & Accounts
+Labels: epic, backend, auth
+Body:
+JWT auth, PBKDF2 hashing, RBAC, user management, and preference endpoints.
+
+* JWT issuance + validation
+  Labels: backend, auth
+  Body: Token service, auth middleware, and claims handling.
+* PBKDF2 hashing + tests
+  Labels: backend, auth, testing
+  Body: Password hashing and verification utilities with tests.
+* Auth endpoints
+  Labels: backend, auth
+  Body: /auth/register, /auth/login, /auth/me, /auth/set-password.
+* RBAC policies
+  Labels: backend, auth
+  Body: Curator/Contributor roles and AdminOnly policy.
+* User CRUD + role admin endpoint
+  Labels: backend, auth, admin
+  Body: Admin endpoints to manage users and roles.
+* Preferences endpoints
+  Labels: backend, auth
+  Body: Genre include/exclude, rating/year ranges, language/region, sort options.
+
+---
+
+EPIC 4 — Core Movie Interaction Domain
+Labels: epic, backend, domain
+Body:
+Service-scoped swiping, undo, consensus matching, and accepted-movie logic.
+
+* Interaction endpoints (service-scoped)
+  Labels: backend, domain
+  Body: Like/Nope/Skip/Superlike and fetch interaction lists.
+* Undo last interaction
+  Labels: backend, domain
+  Body: Delete the most recent interaction per user/service.
+* Consensus matching engine
+  Labels: backend, domain, testing
+  Body: Compute liked-by-all matches with unit tests.
+* Accepted movies + force-match
+  Labels: backend, domain
+  Body: Accepted list and curator force-match endpoint.
+
+---
+
+EPIC 5 — TMDB Integration
+Labels: epic, backend, integration
+Body:
+TMDB client with caching, rate limiting, discover, and details APIs.
+
+* TMDB client + rate limiter + caching
+  Labels: backend, integration
+  Body: HTTP client with retry/backoff, rate limiting, and cache layer.
+* Discover endpoint
+  Labels: backend, integration
+  Body: Discover movies honoring user preferences and excluding seen items.
+* Movie details endpoint (cached)
+  Labels: backend, integration
+  Body: Normalized movie details DTO with caching.
+
+---
+
+EPIC 6 — Frontend Foundation
+Labels: epic, frontend
+Body:
+React shell, shared components, API client, auth state, and preferences UI.
+
+* React shell + routing + layouts
+  Labels: frontend
+  Body: Base pages, routing, guards, and layout components.
+* Shared UI components
+  Labels: frontend
+  Body: Modals, spinners, error messages, inputs, navigation.
+* Typed API client
+  Labels: frontend
+  Body: Centralized fetch wrapper with auth and error handling.
+* Auth UI + state bootstrap
+  Labels: frontend
+  Body: Login/register flows and current-user bootstrap.
+* Preferences UI
+  Labels: frontend
+  Body: UI for editing preferences and validating discover behavior.
+
+---
+
+EPIC 7 — Swiping (TMDB-only Vertical Slice)
+Labels: epic, frontend, backend
+Body:
+End-to-end TMDB swiping experience.
+
+* SwipeDeckPage UX
+  Labels: frontend
+  Body: Gesture and keyboard swiping with loading/empty states.
+* Wire swipes to interactions
+  Labels: frontend, backend
+  Body: Connect UI swipes to interaction endpoints.
+* Undo support (UI+API)
+  Labels: frontend, backend
+  Body: Undo button/shortcut calling undo endpoint.
+* MyLikedMoviesPage
+  Labels: frontend
+  Body: Liked/superliked list with filtering and details modal.
+* MatchListPage
+  Labels: frontend, backend
+  Body: Consensus matches view with reusable details modal.
+
+---
+
+M2: Radarr-backed Matching
+
+EPIC 8 — Radarr Integration
+Labels: epic, backend, integration
+Body:
+Radarr configuration, library sync, and auto-adding accepted movies.
+
+* Radarr settings + test connection
+  Labels: backend, integration
+  Body: Store settings, test connectivity, list profiles and root folders.
+* Radarr library sync (TMDB IDs)
+  Labels: backend, integration
+  Body: Sync library TMDB IDs locally.
+* Discover excludes Radarr library
+  Labels: backend, integration
+  Body: Filter discover results using synced library IDs.
+* Add movie to Radarr + tag management
+  Labels: backend, integration
+  Body: Add movie with tindarr tag, idempotent behavior.
+* Auto-add accepted movies worker
+  Labels: backend, integration
+  Body: Background job to add accepted movies.
+
+---
+
+M3: Multi-Service Browsing
+
+EPIC 9 — Plex Integration (Non-Streaming)
+Labels: epic, backend, integration
+Body:
+Plex auth, multi-server management, and library browsing.
+
+* Plex PIN auth + token verify
+  Labels: backend, integration, auth
+  Body: Implement Plex PIN flow and token storage.
+* Multi-server management
+  Labels: backend, integration
+  Body: Store and select between multiple Plex servers.
+* Persistent Plex client identifier
+  Labels: backend, integration
+  Body: Generate and persist Plex client identifier.
+* Plex library sync + TMDB enrichment
+  Labels: backend, integration
+  Body: Cache library items and enrich with TMDB data.
+* Preference-filtered library fetch
+  Labels: backend, integration
+  Body: Expose library endpoints honoring preferences.
+
+---
+
+EPIC 10 — Jellyfin & Emby (Non-Streaming)
+Labels: epic, backend, integration
+Body:
+Shared abstractions and non-streaming library sync.
+
+* Shared base media server controller/service
+  Labels: backend, integration
+  Body: Common status, settings, and sync scaffolding.
+* Jellyfin settings + library TMDB sync
+  Labels: backend, integration
+  Body: Store tokens/settings and sync TMDB IDs.
+* Emby settings + library TMDB sync
+  Labels: backend, integration
+  Body: Store tokens/settings and sync TMDB IDs.
+* UI: service scope selection wiring
+  Labels: frontend
+  Body: Allow selecting Radarr/Plex/JF/Emby scopes.
+
+---
+
+M4: Playback Gateway
+
+EPIC 11 — Playback / Streaming Architecture (Critical)
+Labels: epic, backend, streaming
+Body:
+Provider-agnostic playback gateway with signed tokens and HLS proxying.
+
+* Define IPlaybackProvider + DTOs
+  Labels: backend, streaming
+  Body: Provider-agnostic playback contracts.
+* Playback prepare endpoint
+  Labels: backend, streaming
+  Body: Prepare playback and return signed play info.
+* Signed token system (TTL + rotation plan)
+  Labels: backend, streaming, ops
+  Body: Token signing, validation, TTL, and rotation.
+* HLS manifest rewrite engine
+  Labels: backend, streaming
+  Body: Rewrite HLS playlists safely.
+* Streaming proxy pipeline
+  Labels: backend, streaming
+  Body: Pass-through proxy without full buffering.
+* Subtitle + audio policy layer
+  Labels: backend, streaming
+  Body: Subtitle and audio fallback rules.
+* PlexPlaybackProvider implementation
+  Labels: backend, streaming, integration
+  Body: Map Plex playback into gateway.
+* JellyfinPlaybackProvider stub
+  Labels: backend, streaming, integration
+  Body: Shape-stable stub for future implementation.
+* EmbyPlaybackProvider stub
+  Labels: backend, streaming, integration
+  Body: Shape-stable stub for future implementation.
+
+---
+
+M5: Rooms
+
+EPIC 12 — Rooms (Multi-User Swiping)
+Labels: epic, backend, frontend
+Body:
+Multi-user rooms with shared swiping and matching.
+
+* Room create/join endpoints
+  Labels: backend
+  Body: Guest and authenticated join flows.
+* Room state + matches + scoring
+  Labels: backend
+  Body: Room state, match scoring, and interaction tracking.
+* Room cleanup worker
+  Labels: backend, ops
+  Body: Cleanup inactive rooms and state.
+* QR code generation (LAN/WAN)
+  Labels: backend, frontend
+  Body: Generate join QR codes using base URL resolver.
+* RoomPage UI
+  Labels: frontend
+  Body: Lobby, members, owner controls, swiping, matches.
+
+---
+
+M6: Casting
+
+EPIC 13 — Chromecast Casting
+Labels: epic, casting, streaming
+Body:
+Chromecast discovery, sessions, and playback via gateway.
+
+* Cast device discovery service
+  Labels: backend, casting
+  Body: Discover and expose cast devices.
+* Cast session store
+  Labels: backend, casting
+  Body: Server-side session storage with TTL.
+* Cast initiation using playback gateway URLs
+  Labels: backend, casting, streaming
+  Body: Initiate casting using gateway URLs only.
+* Web Sender SDK integration (UI)
+  Labels: frontend, casting
+  Body: Device picker and session management.
+* iOS/Safari fallback casting
+  Labels: backend, casting
+  Body: Server-initiated casting when SDK unavailable.
+* Cast diagnostics panel
+  Labels: frontend, casting
+  Body: Event/state logging and diagnostics UI.
+
+---
+
+M7: Public-ready Release
+
+EPIC 14 — Admin, Ops & Shipping
+Labels: epic, admin, ops
+Body:
+Admin tools, operational polish, and hosting features.
+
+* AdminConsole UI
+  Labels: frontend, admin
+  Body: Settings and management UI.
+* Admin endpoints: stats + toggles + utilities
+  Labels: backend, admin
+  Body: Registration toggle, base URLs, force-match tools.
+* Request/response logging middleware
+  Labels: backend, ops
+  Body: Logging with sensitive data redaction.
+* Health/info + SPA fallback + static asset serving
+  Labels: backend, ops
+  Body: Health endpoints and SPA routing.
+* Update checker (GitHub releases)
+  Labels: backend, ops
+  Body: Check and expose updates in admin UI.
+* Windows Service finalization
+  Labels: backend, ops
+  Body: Finalize service runtime and reliability.
+
+---
+
+EPIC 15 — Hardening & Release
+Labels: epic, testing, release
+Body:
+Stability, testing, migration, and release process.
+
+* Integration test suite
+  Labels: testing, backend, frontend
+  Body: End-to-end tests for auth, swiping, integrations, playback.
+* Abuse protections + rate limits
+  Labels: backend, ops
+  Body: API and playback rate limits and safeguards.
+* Optional legacy DB migration tool
+  Labels: backend, database
+  Body: Export legacy DB and import into new schema.
+* Release packaging + versioning + changelog
+  Labels: release
+  Body: Define release artifacts, versioning, and upgrade notes.
