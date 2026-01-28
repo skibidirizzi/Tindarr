@@ -13,6 +13,7 @@ using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Features.Radarr;
+using Tindarr.Application.Features.Plex;
 using Tindarr.Application.Features.AcceptedMovies;
 using Tindarr.Application.Features.Interactions;
 using Tindarr.Application.Interfaces.Interactions;
@@ -25,6 +26,7 @@ using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Caching;
 using Tindarr.Infrastructure.Integrations.Radarr;
+using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 using Tindarr.Infrastructure.Interactions;
@@ -125,6 +127,11 @@ builder.Services.AddOptions<RadarrOptions>()
 	.Validate(o => o.IsValid(), "Invalid Radarr configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<PlexOptions>()
+	.BindConfiguration(PlexOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Plex configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -151,6 +158,7 @@ builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 builder.Services.AddScoped<IAcceptedMoviesService, AcceptedMoviesService>();
 builder.Services.AddScoped<IRadarrService, RadarrService>();
+builder.Services.AddScoped<IPlexService, PlexService>();
 
 builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearerOptions>();
 
@@ -233,6 +241,8 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 .AddHttpMessageHandler(() => new TmdbRetryHandler(maxRetries: 3));
 
 builder.Services.AddHttpClient<IRadarrClient, RadarrClient>();
+builder.Services.AddHttpClient<IPlexAuthClient, PlexAuthClient>();
+builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
 
 builder.Services.AddScoped<ISwipeDeckSource, TmdbSwipeDeckSource>();
 builder.Services.AddScoped<IInteractionService, InteractionService>();

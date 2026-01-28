@@ -23,6 +23,16 @@ public sealed record ServiceSettingsRecord(
 	bool RadarrAutoAddEnabled,
 	long? RadarrLastAutoAddAcceptedId,
 	DateTimeOffset? RadarrLastLibrarySyncUtc,
+	string? PlexClientIdentifier,
+	string? PlexAuthToken,
+	string? PlexServerName,
+	string? PlexServerUri,
+	string? PlexServerVersion,
+	string? PlexServerPlatform,
+	bool? PlexServerOwned,
+	bool? PlexServerOnline,
+	string? PlexServerAccessToken,
+	DateTimeOffset? PlexLastLibrarySyncUtc,
 	DateTimeOffset UpdatedAtUtc);
 
 public sealed record ServiceSettingsUpsert(
@@ -34,4 +44,14 @@ public sealed record ServiceSettingsUpsert(
 	int? RadarrTagId,
 	bool RadarrAutoAddEnabled,
 	long? RadarrLastAutoAddAcceptedId,
-	DateTimeOffset? RadarrLastLibrarySyncUtc);
+	DateTimeOffset? RadarrLastLibrarySyncUtc,
+	string? PlexClientIdentifier,
+	string? PlexAuthToken,
+	string? PlexServerName,
+	string? PlexServerUri,
+	string? PlexServerVersion,
+	string? PlexServerPlatform,
+	bool? PlexServerOwned,
+	bool? PlexServerOnline,
+	string? PlexServerAccessToken,
+	DateTimeOffset? PlexLastLibrarySyncUtc);
