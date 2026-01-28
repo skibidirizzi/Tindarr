@@ -91,6 +91,7 @@ export type MovieDetailsDto = {
   rating: number | null;
   voteCount: number | null;
   genres: string[];
+  regions: string[];
   originalLanguage: string | null;
   runtimeMinutes: number | null;
 };

@@ -12,6 +12,7 @@ public sealed record MovieDetailsDto(
 	double? Rating,
 	int? VoteCount,
 	IReadOnlyList<string> Genres,
+	IReadOnlyList<string> Regions,
 	string? OriginalLanguage,
 	int? RuntimeMinutes);
 

@@ -18,5 +18,16 @@ public sealed class ServiceSettingsEntity
 	public bool RadarrAutoAddEnabled { get; set; }
 	public long? RadarrLastAutoAddAcceptedId { get; set; }
 	public DateTimeOffset? RadarrLastLibrarySyncUtc { get; set; }
+
+	public string? PlexClientIdentifier { get; set; }
+	public string? PlexAuthToken { get; set; }
+	public string? PlexServerName { get; set; }
+	public string? PlexServerUri { get; set; }
+	public string? PlexServerVersion { get; set; }
+	public string? PlexServerPlatform { get; set; }
+	public bool? PlexServerOwned { get; set; }
+	public bool? PlexServerOnline { get; set; }
+	public string? PlexServerAccessToken { get; set; }
+	public DateTimeOffset? PlexLastLibrarySyncUtc { get; set; }
 	public DateTimeOffset UpdatedAtUtc { get; set; }
 }

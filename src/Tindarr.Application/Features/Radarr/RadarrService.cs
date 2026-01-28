@@ -78,7 +78,17 @@ public sealed class RadarrService(
 			RadarrTagId: tagId,
 			RadarrAutoAddEnabled: upsert.AutoAddEnabled,
 			RadarrLastAutoAddAcceptedId: existing?.RadarrLastAutoAddAcceptedId,
-			RadarrLastLibrarySyncUtc: lastLibrarySyncUtc);
+			RadarrLastLibrarySyncUtc: lastLibrarySyncUtc,
+			PlexClientIdentifier: existing?.PlexClientIdentifier,
+			PlexAuthToken: existing?.PlexAuthToken,
+			PlexServerName: existing?.PlexServerName,
+			PlexServerUri: existing?.PlexServerUri,
+			PlexServerVersion: existing?.PlexServerVersion,
+			PlexServerPlatform: existing?.PlexServerPlatform,
+			PlexServerOwned: existing?.PlexServerOwned,
+			PlexServerOnline: existing?.PlexServerOnline,
+			PlexServerAccessToken: existing?.PlexServerAccessToken,
+			PlexLastLibrarySyncUtc: existing?.PlexLastLibrarySyncUtc);
 
 		await settingsRepo.UpsertAsync(scope, upsertRecord, cancellationToken);
 		return await settingsRepo.GetAsync(scope, cancellationToken) ?? throw new InvalidOperationException("Radarr settings missing after upsert.");
@@ -305,7 +315,17 @@ public sealed class RadarrService(
 			radarrTagId ?? settings.RadarrTagId,
 			settings.RadarrAutoAddEnabled,
 			radarrLastAutoAddAcceptedId ?? settings.RadarrLastAutoAddAcceptedId,
-			radarrLastLibrarySyncUtc ?? settings.RadarrLastLibrarySyncUtc);
+			radarrLastLibrarySyncUtc ?? settings.RadarrLastLibrarySyncUtc,
+			settings.PlexClientIdentifier,
+			settings.PlexAuthToken,
+			settings.PlexServerName,
+			settings.PlexServerUri,
+			settings.PlexServerVersion,
+			settings.PlexServerPlatform,
+			settings.PlexServerOwned,
+			settings.PlexServerOnline,
+			settings.PlexServerAccessToken,
+			settings.PlexLastLibrarySyncUtc);
 
 		return settingsRepo.UpsertAsync(new ServiceScope(settings.ServiceType, settings.ServerId), upsert, cancellationToken);
 	}

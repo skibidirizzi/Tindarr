@@ -25,6 +25,17 @@ public sealed class ServiceSettingsEntityConfiguration : IEntityTypeConfiguratio
 		builder.Property(x => x.RadarrAutoAddEnabled).IsRequired();
 		builder.Property(x => x.RadarrLastAutoAddAcceptedId);
 		builder.Property(x => x.RadarrLastLibrarySyncUtc);
+
+		builder.Property(x => x.PlexClientIdentifier);
+		builder.Property(x => x.PlexAuthToken);
+		builder.Property(x => x.PlexServerName);
+		builder.Property(x => x.PlexServerUri);
+		builder.Property(x => x.PlexServerVersion);
+		builder.Property(x => x.PlexServerPlatform);
+		builder.Property(x => x.PlexServerOwned);
+		builder.Property(x => x.PlexServerOnline);
+		builder.Property(x => x.PlexServerAccessToken);
+		builder.Property(x => x.PlexLastLibrarySyncUtc);
 		builder.Property(x => x.UpdatedAtUtc).IsRequired();
 
 		builder.HasIndex(x => new { x.ServiceType, x.ServerId }).IsUnique();

@@ -49,6 +49,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 				RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled,
 				RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId,
 				RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc,
+				PlexClientIdentifier = upsert.PlexClientIdentifier,
+				PlexAuthToken = upsert.PlexAuthToken,
+				PlexServerName = upsert.PlexServerName,
+				PlexServerUri = upsert.PlexServerUri,
+				PlexServerVersion = upsert.PlexServerVersion,
+				PlexServerPlatform = upsert.PlexServerPlatform,
+				PlexServerOwned = upsert.PlexServerOwned,
+				PlexServerOnline = upsert.PlexServerOnline,
+				PlexServerAccessToken = upsert.PlexServerAccessToken,
+				PlexLastLibrarySyncUtc = upsert.PlexLastLibrarySyncUtc,
 				UpdatedAtUtc = now
 			};
 
@@ -65,6 +75,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled;
 			entity.RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId;
 			entity.RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc;
+			entity.PlexClientIdentifier = upsert.PlexClientIdentifier;
+			entity.PlexAuthToken = upsert.PlexAuthToken;
+			entity.PlexServerName = upsert.PlexServerName;
+			entity.PlexServerUri = upsert.PlexServerUri;
+			entity.PlexServerVersion = upsert.PlexServerVersion;
+			entity.PlexServerPlatform = upsert.PlexServerPlatform;
+			entity.PlexServerOwned = upsert.PlexServerOwned;
+			entity.PlexServerOnline = upsert.PlexServerOnline;
+			entity.PlexServerAccessToken = upsert.PlexServerAccessToken;
+			entity.PlexLastLibrarySyncUtc = upsert.PlexLastLibrarySyncUtc;
 			entity.UpdatedAtUtc = now;
 		}
 
@@ -85,6 +105,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrAutoAddEnabled,
 			entity.RadarrLastAutoAddAcceptedId,
 			entity.RadarrLastLibrarySyncUtc,
+			entity.PlexClientIdentifier,
+			entity.PlexAuthToken,
+			entity.PlexServerName,
+			entity.PlexServerUri,
+			entity.PlexServerVersion,
+			entity.PlexServerPlatform,
+			entity.PlexServerOwned,
+			entity.PlexServerOnline,
+			entity.PlexServerAccessToken,
+			entity.PlexLastLibrarySyncUtc,
 			entity.UpdatedAtUtc);
 	}
 }

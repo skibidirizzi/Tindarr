@@ -147,6 +147,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 
 		var releaseYear = TryParseYear(parsed.ReleaseDate);
 		var mpaa = ExtractUsCertification(parsed.ReleaseDates);
+		var regions = ExtractRegions(parsed.ReleaseDates);
 
 		return new MovieDetailsDto(
 			TmdbId: parsed.Id,
@@ -160,6 +161,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			Rating: parsed.VoteAverage,
 			VoteCount: parsed.VoteCount,
 			Genres: parsed.Genres?.Where(g => !string.IsNullOrWhiteSpace(g.Name)).Select(g => g.Name!).ToList() ?? [],
+			Regions: regions,
 			OriginalLanguage: parsed.OriginalLanguage,
 			RuntimeMinutes: parsed.Runtime);
 	}
@@ -192,6 +194,21 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			.FirstOrDefault();
 
 		return best?.Certification?.Trim();
+	}
+
+	private static IReadOnlyList<string> ExtractRegions(TmdbReleaseDatesContainer? releaseDates)
+	{
+		if (releaseDates?.Results is null || releaseDates.Results.Count == 0)
+		{
+			return [];
+		}
+
+		return releaseDates.Results
+			.Select(r => r.Iso3166_1?.Trim())
+			.Where(r => !string.IsNullOrWhiteSpace(r))
+			.Select(r => r!)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
 	}
 
 	private string BuildDiscoverUri(UserPreferencesRecord preferences, int page)
