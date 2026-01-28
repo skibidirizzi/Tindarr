@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Tindarr.Infrastructure.Persistence;
 
@@ -10,9 +11,11 @@ using Tindarr.Infrastructure.Persistence;
 namespace Tindarr.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(TindarrDbContext))]
-    partial class TindarrDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260127234917_AddServiceSettingsAndLibraryCache")]
+    partial class AddServiceSettingsAndLibraryCache
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.23");

@@ -12,6 +12,7 @@ using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
+using Tindarr.Application.Features.Radarr;
 using Tindarr.Application.Features.AcceptedMovies;
 using Tindarr.Application.Features.Interactions;
 using Tindarr.Application.Interfaces.Interactions;
@@ -19,9 +20,11 @@ using Tindarr.Application.Interfaces.Auth;
 using Tindarr.Application.Interfaces.AcceptedMovies;
 using Tindarr.Application.Interfaces.Ops;
 using Tindarr.Application.Interfaces.Preferences;
+using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Caching;
+using Tindarr.Infrastructure.Integrations.Radarr;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 using Tindarr.Infrastructure.Interactions;
@@ -117,6 +120,11 @@ builder.Services.AddOptions<TmdbOptions>()
 	.Validate(o => o.IsValid(), "Invalid Tmdb configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<RadarrOptions>()
+	.BindConfiguration(RadarrOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Radarr configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -136,10 +144,13 @@ builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository>();
 builder.Services.AddScoped<IAcceptedMovieRepository, AcceptedMovieRepository>();
+builder.Services.AddScoped<IServiceSettingsRepository, ServiceSettingsRepository>();
+builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 builder.Services.AddScoped<IAcceptedMoviesService, AcceptedMoviesService>();
+builder.Services.AddScoped<IRadarrService, RadarrService>();
 
 builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearerOptions>();
 
@@ -220,6 +231,8 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 .AddHttpMessageHandler<TmdbCachingHandler>()
 .AddHttpMessageHandler<TmdbRateLimitingHandler>()
 .AddHttpMessageHandler(() => new TmdbRetryHandler(maxRetries: 3));
+
+builder.Services.AddHttpClient<IRadarrClient, RadarrClient>();
 
 builder.Services.AddScoped<ISwipeDeckSource, TmdbSwipeDeckSource>();
 builder.Services.AddScoped<IInteractionService, InteractionService>();
