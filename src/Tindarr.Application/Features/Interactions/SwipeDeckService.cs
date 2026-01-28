@@ -15,9 +15,16 @@ public sealed class SwipeDeckService(IInteractionStore interactionStore, ISwipeD
 			? await libraryCache.GetTmdbIdsAsync(scope, cancellationToken)
 			: Array.Empty<int>();
 
+		var shouldFilterByLibrary = libraryIds.Count > 0;
+		HashSet<int>? libraryIdSet = null;
+		if (shouldFilterByLibrary)
+		{
+			libraryIdSet = libraryIds as HashSet<int> ?? libraryIds.ToHashSet();
+		}
+
         var filtered = candidates
             .Where(card => !interacted.Contains(card.TmdbId))
-			.Where(card => libraryIds.Count == 0 || !libraryIds.Contains(card.TmdbId))
+			.Where(card => !shouldFilterByLibrary || !libraryIdSet!.Contains(card.TmdbId))
             .Take(Math.Max(1, limit))
             .ToList();
 

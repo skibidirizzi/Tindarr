@@ -168,7 +168,7 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 
 	private async Task<HttpResponseMessage> SendAsync(RadarrConnection connection, HttpMethod method, Uri uri, HttpContent? content, CancellationToken cancellationToken)
 	{
-		var request = new HttpRequestMessage(method, uri);
+		using var request = new HttpRequestMessage(method, uri);
 		request.Headers.Accept.ParseAdd("application/json");
 		request.Headers.Add("X-Api-Key", connection.ApiKey);
 		if (content is not null)
@@ -176,15 +176,7 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 			request.Content = content;
 		}
 
-		try
-		{
-			return await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-		}
-		catch
-		{
-			request.Dispose();
-			throw;
-		}
+		return await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 	}
 
 	private static Uri BuildApiUri(string baseUrl, string path)
@@ -219,8 +211,7 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 		}
 
 		return body.Contains("already exists", StringComparison.OrdinalIgnoreCase)
-			|| body.Contains("movie exists", StringComparison.OrdinalIgnoreCase)
-			|| body.Contains("exists", StringComparison.OrdinalIgnoreCase);
+			|| body.Contains("movie exists", StringComparison.OrdinalIgnoreCase);
 	}
 
 	private sealed record RadarrQualityProfileDto(

@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Domain.Common;
@@ -76,9 +77,16 @@ public sealed class LibraryCacheRepository(TindarrDbContext db) : ILibraryCacheR
 		{
 			await db.SaveChangesAsync(cancellationToken);
 		}
-		catch (DbUpdateException)
+		catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
 		{
 			// Ignore duplicates (unique constraint).
 		}
+	}
+
+	private static bool IsUniqueConstraintViolation(DbUpdateException exception)
+	{
+		return exception.InnerException is SqliteException sqliteException
+			&& (sqliteException.SqliteExtendedErrorCode == 1555
+				|| sqliteException.SqliteExtendedErrorCode == 2067);
 	}
 }
