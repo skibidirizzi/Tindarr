@@ -1,3 +1,4 @@
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Features.Interactions;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Domain.Common;
@@ -20,7 +21,8 @@ public sealed class SwipeDeckServiceTests
 		]);
 
 		var store = new StubStore(interacted: [2, 3]);
-		var svc = new SwipeDeckService(store, source);
+		var library = new StubLibraryCache();
+		var svc = new SwipeDeckService(store, source, library);
 
 		var deck = await svc.GetDeckAsync("u1", scope, limit: 10, CancellationToken.None);
 
@@ -49,6 +51,24 @@ public sealed class SwipeDeckServiceTests
 		public Task<IReadOnlyList<Interaction>> ListAsync(string userId, ServiceScope scope, InteractionAction? action, int? tmdbId, int limit, CancellationToken cancellationToken) => throw new NotSupportedException();
 
 		public Task<IReadOnlyList<Interaction>> ListForScopeAsync(ServiceScope scope, int? tmdbId, int limit, CancellationToken cancellationToken) => throw new NotSupportedException();
+	}
+
+	private sealed class StubLibraryCache : ILibraryCacheRepository
+	{
+		public Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+		{
+			return Task.FromResult<IReadOnlyCollection<int>>(Array.Empty<int>());
+		}
+
+		public Task ReplaceTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
+		{
+			throw new NotSupportedException();
+		}
+
+		public Task AddTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
+		{
+			throw new NotSupportedException();
+		}
 	}
 }
 

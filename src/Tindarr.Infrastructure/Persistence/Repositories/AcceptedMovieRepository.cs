@@ -20,6 +20,28 @@ public sealed class AcceptedMovieRepository(TindarrDbContext db) : IAcceptedMovi
 
 		return rows
 			.Select(x => new AcceptedMovie(
+				x.Id,
+				new ServiceScope(x.ServiceType, x.ServerId),
+				x.TmdbId,
+				x.AcceptedByUserId,
+				x.AcceptedAtUtc))
+			.ToList();
+	}
+
+	public async Task<IReadOnlyList<AcceptedMovie>> ListSinceIdAsync(ServiceScope scope, long? afterId, int limit, CancellationToken cancellationToken)
+	{
+		var minId = afterId ?? 0;
+
+		var rows = await db.AcceptedMovies
+			.AsNoTracking()
+			.Where(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId && x.Id > minId)
+			.OrderBy(x => x.Id)
+			.Take(Math.Clamp(limit, 1, 500))
+			.ToListAsync(cancellationToken);
+
+		return rows
+			.Select(x => new AcceptedMovie(
+				x.Id,
 				new ServiceScope(x.ServiceType, x.ServerId),
 				x.TmdbId,
 				x.AcceptedByUserId,

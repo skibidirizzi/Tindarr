@@ -16,6 +16,8 @@ public sealed class TindarrDbContext : DbContext
 	public DbSet<UserPreferencesEntity> UserPreferences => Set<UserPreferencesEntity>();
 	public DbSet<InteractionEntity> Interactions => Set<InteractionEntity>();
 	public DbSet<AcceptedMovieEntity> AcceptedMovies => Set<AcceptedMovieEntity>();
+	public DbSet<ServiceSettingsEntity> ServiceSettings => Set<ServiceSettingsEntity>();
+	public DbSet<LibraryCacheEntity> LibraryCache => Set<LibraryCacheEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{

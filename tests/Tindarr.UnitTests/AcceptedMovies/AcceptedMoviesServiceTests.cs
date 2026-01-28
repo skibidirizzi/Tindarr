@@ -29,12 +29,25 @@ public sealed class AcceptedMoviesServiceTests
 	private sealed class FakeAcceptedMovieRepository : IAcceptedMovieRepository
 	{
 		private readonly Dictionary<(ServiceType ServiceType, string ServerId, int TmdbId), AcceptedMovie> _store = new();
+		private long _nextId = 1;
 
 		public Task<IReadOnlyList<AcceptedMovie>> ListAsync(ServiceScope scope, int limit, CancellationToken cancellationToken)
 		{
 			var items = _store.Values
 				.Where(x => x.Scope.ServiceType == scope.ServiceType && x.Scope.ServerId == scope.ServerId)
 				.OrderByDescending(x => x.AcceptedAtUtc)
+				.Take(Math.Clamp(limit, 1, 500))
+				.ToList();
+
+			return Task.FromResult<IReadOnlyList<AcceptedMovie>>(items);
+		}
+
+		public Task<IReadOnlyList<AcceptedMovie>> ListSinceIdAsync(ServiceScope scope, long? afterId, int limit, CancellationToken cancellationToken)
+		{
+			var minId = afterId ?? 0;
+			var items = _store.Values
+				.Where(x => x.Scope.ServiceType == scope.ServiceType && x.Scope.ServerId == scope.ServerId && x.Id > minId)
+				.OrderBy(x => x.Id)
 				.Take(Math.Clamp(limit, 1, 500))
 				.ToList();
 
@@ -49,7 +62,7 @@ public sealed class AcceptedMoviesServiceTests
 				return Task.FromResult(false);
 			}
 
-			_store[key] = new AcceptedMovie(scope, tmdbId, acceptedByUserId, DateTimeOffset.UtcNow);
+			_store[key] = new AcceptedMovie(_nextId++, scope, tmdbId, acceptedByUserId, DateTimeOffset.UtcNow);
 			return Task.FromResult(true);
 		}
 	}
