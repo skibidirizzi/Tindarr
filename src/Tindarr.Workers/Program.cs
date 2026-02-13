@@ -22,6 +22,7 @@ using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Radarr;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
+using Tindarr.Infrastructure.PlexCache;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
 using Tindarr.Workers.Jobs;
@@ -81,6 +82,11 @@ builder.Services.AddOptions<EmbyOptions>()
 	.Validate(o => o.IsValid(), "Invalid Emby configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<CleanupOptions>()
+	.BindConfiguration(CleanupOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Cleanup configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 {
 	var options = sp.GetRequiredService<IOptions<BaseUrlOptions>>().Value;
@@ -90,6 +96,7 @@ builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 builder.Services.AddSingleton<ILanAddressResolver, LanAddressResolver>();
 
 builder.Services.AddTindarrPersistence(builder.Configuration);
+builder.Services.AddPlexCache(builder.Configuration);
 
 builder.Services.AddScoped<IAcceptedMovieRepository, AcceptedMovieRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
@@ -165,4 +172,13 @@ builder.Services.AddHostedService<RecommendationWorker>();
 builder.Services.AddHostedService<ImageCacheWorker>();
 builder.Services.AddHostedService<CastSessionWorker>();
 
-await builder.Build().RunAsync();
+var host = builder.Build();
+
+// Ensure plexcache.db schema exists before any sync/webhook writes.
+using (var scope = host.Services.CreateScope())
+{
+	var plexCacheDb = scope.ServiceProvider.GetRequiredService<PlexCacheDbContext>();
+	plexCacheDb.Database.EnsureCreated();
+}
+
+await host.RunAsync();

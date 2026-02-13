@@ -25,6 +25,12 @@ public interface IPlexService
 		UserPreferencesRecord preferences,
 		int limit,
 		CancellationToken cancellationToken);
+
+	Task<IReadOnlyList<MovieDetailsDto>> GetCachedLibraryAsync(
+		ServiceScope scope,
+		UserPreferencesRecord preferences,
+		int limit,
+		CancellationToken cancellationToken);
 }
 
 public sealed record PlexPinCreateResult(

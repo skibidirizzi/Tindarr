@@ -1,12 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { AuthResponse, MeResponse } from "../api/contracts";
-import { login as apiLogin, me as apiMe, register as apiRegister } from "../api/client";
+import { guestLogin as apiGuestLogin, login as apiLogin, me as apiMe, register as apiRegister } from "../api/client";
 import { clearSession, getAccessToken, setSession } from "./session";
 
 type AuthContextValue = {
   user: MeResponse | null;
   loading: boolean;
   login: (userId: string, password: string) => Promise<void>;
+  guestLogin: (displayName?: string) => Promise<void>;
   register: (userId: string, displayName: string, password: string) => Promise<void>;
   logout: () => void;
 };
@@ -47,6 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login: async (userId: string, password: string) => {
         const session = await apiLogin({ userId, password });
+        setSession(session);
+        setUser(mapAuthToMe(session));
+      },
+      guestLogin: async (displayName?: string) => {
+        const session = await apiGuestLogin({ displayName: displayName ?? null });
         setSession(session);
         setUser(mapAuthToMe(session));
       },

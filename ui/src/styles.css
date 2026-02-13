@@ -189,6 +189,24 @@ body.is-swipe-page .deck {
   outline: none;
 }
 
+select,
+select.input,
+select.app__navLink {
+  color-scheme: dark;
+}
+
+select.app__navLink {
+  background: #101522;
+  color: #cbd0de;
+  border-color: #2e3342;
+}
+
+select option,
+select optgroup {
+  background-color: #101522;
+  color: #fff;
+}
+
 .input:focus {
   border-color: rgba(52, 185, 255, 0.7);
   box-shadow: 0 0 0 3px rgba(52, 185, 255, 0.15);

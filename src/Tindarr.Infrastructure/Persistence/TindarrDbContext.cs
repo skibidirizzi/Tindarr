@@ -18,6 +18,7 @@ public sealed class TindarrDbContext : DbContext
 	public DbSet<AcceptedMovieEntity> AcceptedMovies => Set<AcceptedMovieEntity>();
 	public DbSet<ServiceSettingsEntity> ServiceSettings => Set<ServiceSettingsEntity>();
 	public DbSet<LibraryCacheEntity> LibraryCache => Set<LibraryCacheEntity>();
+	public DbSet<JoinAddressSettingsEntity> JoinAddressSettings => Set<JoinAddressSettingsEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{

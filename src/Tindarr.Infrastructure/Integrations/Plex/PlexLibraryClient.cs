@@ -162,9 +162,27 @@ public sealed class PlexLibraryClient(HttpClient httpClient, IOptions<PlexOption
 
 	private static IEnumerable<string?> EnumerateGuids(PlexItemDto item)
 	{
-		if (!string.IsNullOrWhiteSpace(item.Guid))
+		if (item.Guid is { } guidElement)
 		{
-			yield return item.Guid;
+			if (guidElement.ValueKind == JsonValueKind.String)
+			{
+				yield return guidElement.GetString();
+			}
+			else if (guidElement.ValueKind == JsonValueKind.Array)
+			{
+				foreach (var element in guidElement.EnumerateArray())
+				{
+					if (element.ValueKind != JsonValueKind.Object)
+					{
+						continue;
+					}
+
+					if (TryGetStringProperty(element, "id", out var id))
+					{
+						yield return id;
+					}
+				}
+			}
 		}
 
 		if (item.ExtensionData is null)
@@ -244,8 +262,11 @@ public sealed class PlexLibraryClient(HttpClient httpClient, IOptions<PlexOption
 		[property: JsonPropertyName("Metadata")] List<PlexItemDto>? Metadata);
 
 	private sealed record PlexItemDto(
-		[property: JsonPropertyName("guid")] string? Guid,
+		[property: JsonPropertyName("guid")] JsonElement? Guid,
 		[property: JsonPropertyName("title")] string? Title,
-		[property: JsonPropertyName("ratingKey")] string? RatingKey,
-		[property: JsonExtensionData] Dictionary<string, JsonElement>? ExtensionData);
+		[property: JsonPropertyName("ratingKey")] string? RatingKey)
+	{
+		[JsonExtensionData]
+		public Dictionary<string, JsonElement>? ExtensionData { get; init; }
+	}
 }

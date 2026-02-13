@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Integrations;
@@ -15,10 +16,12 @@ public sealed class PlexService(
 	IPlexAuthClient authClient,
 	IPlexLibraryClient libraryClient,
 	IServiceSettingsRepository settingsRepo,
-	ILibraryCacheRepository libraryCache,
+	IPlexLibraryCacheRepository plexLibraryCache,
 	ITmdbClient tmdbClient,
+	ITmdbCache tmdbCache,
 	ILanAddressResolver lanAddressResolver,
 	IOptions<PlexOptions> options,
+	IOptions<TmdbOptions> tmdbOptions,
 	ILogger<PlexService> logger) : IPlexService
 {
 	private static readonly IReadOnlyDictionary<int, string> TmdbGenreMap = new Dictionary<int, string>
@@ -45,7 +48,45 @@ public sealed class PlexService(
 	};
 
 	private readonly PlexOptions _options = options.Value;
+	private readonly TmdbOptions _tmdbOptions = tmdbOptions.Value;
 	private readonly IPAddress? _lanIp = lanAddressResolver.GetLanIPv4();
+	private const string DefaultServerId = "default";
+
+	private async Task<ServiceScope> ResolveDefaultServerScopeAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return scope;
+		}
+
+		if (!string.Equals(scope.ServerId, DefaultServerId, StringComparison.OrdinalIgnoreCase))
+		{
+			return scope;
+		}
+
+		var rows = await settingsRepo.ListAsync(ServiceType.Plex, cancellationToken).ConfigureAwait(false);
+		var candidates = rows
+			.Where(x => !string.Equals(x.ServerId, PlexConstants.AccountServerId, StringComparison.OrdinalIgnoreCase))
+			.Where(x => !string.IsNullOrWhiteSpace(x.PlexServerUri))
+			.ToList();
+
+		if (candidates.Count == 0)
+		{
+			return scope;
+		}
+
+		ServiceSettingsRecord SelectBest(IReadOnlyList<ServiceSettingsRecord> list)
+		{
+			return list
+				.OrderByDescending(x => x.PlexServerOwned ?? false)
+				.ThenByDescending(x => x.PlexServerOnline ?? false)
+				.ThenByDescending(x => x.UpdatedAtUtc)
+				.First();
+		}
+
+		var best = SelectBest(candidates);
+		return new ServiceScope(ServiceType.Plex, best.ServerId);
+	}
 
 	public async Task<PlexPinCreateResult> CreatePinAsync(CancellationToken cancellationToken)
 	{
@@ -116,6 +157,7 @@ public sealed class PlexService(
 
 	public async Task<PlexLibrarySyncResult> SyncLibraryAsync(ServiceScope scope, CancellationToken cancellationToken)
 	{
+		scope = await ResolveDefaultServerScopeAsync(scope, cancellationToken).ConfigureAwait(false);
 		var settings = await RequireServerAsync(scope, cancellationToken);
 		var account = await EnsureAccountAsync(cancellationToken);
 		var accessToken = ResolveAccessToken(settings, account);
@@ -142,16 +184,21 @@ public sealed class PlexService(
 		}
 
 		var now = DateTimeOffset.UtcNow;
-		await libraryCache.ReplaceTmdbIdsAsync(scope, tmdbIds.ToList(), now, cancellationToken);
+		await plexLibraryCache.ReplaceTmdbIdsAsync(scope, tmdbIds.ToList(), now, cancellationToken);
 		await UpdateServerAsync(settings, plexLastLibrarySyncUtc: now, cancellationToken: cancellationToken);
 
-		await EnrichTmdbAsync(tmdbIds, cancellationToken);
+		var warmCount = Math.Min(200, tmdbIds.Count);
+		if (warmCount > 0)
+		{
+			await EnrichTmdbAsync(tmdbIds.Take(warmCount).ToList(), cancellationToken).ConfigureAwait(false);
+		}
 
 		return new PlexLibrarySyncResult(tmdbIds.Count, now);
 	}
 
 	public async Task<PlexLibrarySyncResult?> EnsureLibrarySyncAsync(ServiceScope scope, CancellationToken cancellationToken)
 	{
+		scope = await ResolveDefaultServerScopeAsync(scope, cancellationToken).ConfigureAwait(false);
 		var settings = await settingsRepo.GetAsync(scope, cancellationToken);
 		if (settings is null || string.IsNullOrWhiteSpace(settings.PlexServerUri))
 		{
@@ -174,19 +221,75 @@ public sealed class PlexService(
 		int limit,
 		CancellationToken cancellationToken)
 	{
+		scope = await ResolveDefaultServerScopeAsync(scope, cancellationToken).ConfigureAwait(false);
 		limit = Math.Clamp(limit, 1, 200);
-		await EnsureLibrarySyncAsync(scope, cancellationToken);
 
-		var ids = await libraryCache.GetTmdbIdsAsync(scope, cancellationToken);
+		// When serving a Plex swipedeck, "no settings" should be a visible error (not a silent empty deck).
+		var serverSettings = await settingsRepo.GetAsync(scope, cancellationToken).ConfigureAwait(false);
+		if (serverSettings is null || string.IsNullOrWhiteSpace(serverSettings.PlexServerUri))
+		{
+			throw new InvalidOperationException("Plex server is not configured.");
+		}
+
+		await EnsureLibrarySyncAsync(scope, cancellationToken).ConfigureAwait(false);
+
+		var ids = await plexLibraryCache.GetTmdbIdsAsync(scope, cancellationToken);
 		if (ids.Count == 0)
 		{
 			return [];
 		}
 
+		return await BuildLibraryFromTmdbIdsAsync(ids, preferences, limit, cancellationToken).ConfigureAwait(false);
+	}
+
+	public async Task<IReadOnlyList<MovieDetailsDto>> GetCachedLibraryAsync(
+		ServiceScope scope,
+		UserPreferencesRecord preferences,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+		scope = await ResolveDefaultServerScopeAsync(scope, cancellationToken).ConfigureAwait(false);
+		limit = Math.Clamp(limit, 1, 200);
+
+		// Keep the same user-facing validation as GetLibraryAsync.
+		var serverSettings = await settingsRepo.GetAsync(scope, cancellationToken).ConfigureAwait(false);
+		if (serverSettings is null || string.IsNullOrWhiteSpace(serverSettings.PlexServerUri))
+		{
+			throw new InvalidOperationException("Plex server is not configured.");
+		}
+
+		var ids = await plexLibraryCache.GetTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+		if (ids.Count == 0)
+		{
+			return [];
+		}
+
+		return await BuildLibraryFromTmdbIdsAsync(ids, preferences, limit, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async Task<IReadOnlyList<MovieDetailsDto>> BuildLibraryFromTmdbIdsAsync(
+		IReadOnlyCollection<int> ids,
+		UserPreferencesRecord preferences,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+
+		var detailsTtlSeconds = Math.Clamp(_tmdbOptions.DetailsCacheSeconds, 1, 60 * 60 * 24 * 30);
+		var detailsTtl = TimeSpan.FromSeconds(detailsTtlSeconds);
+
 		var results = new List<MovieDetailsDto>(limit);
 		foreach (var tmdbId in ids)
 		{
-			var details = await tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken);
+			var cacheKey = $"tmdb:movie_details:{tmdbId}";
+			var details = await tmdbCache.GetAsync<MovieDetailsDto>(cacheKey, cancellationToken).ConfigureAwait(false);
+			if (details is null)
+			{
+				details = await tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken).ConfigureAwait(false);
+				if (details is not null)
+				{
+					await tmdbCache.SetAsync(cacheKey, details, detailsTtl, cancellationToken).ConfigureAwait(false);
+				}
+			}
 			if (details is null)
 			{
 				continue;
@@ -430,25 +533,20 @@ public sealed class PlexService(
 		}
 
 		var maxConcurrency = Math.Clamp(_options.EnrichmentConcurrency, 1, 32);
-		using var gate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-		var tasks = tmdbIds.Select(async id =>
-		{
-			await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-			try
+		await Parallel.ForEachAsync(
+			tmdbIds,
+			new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = cancellationToken },
+			async (id, ct) =>
 			{
-				_ = await tmdbClient.GetMovieDetailsAsync(id, cancellationToken).ConfigureAwait(false);
-			}
-			catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-			{
-				logger.LogWarning(ex, "tmdb enrichment failed. TmdbId={TmdbId}", id);
-			}
-			finally
-			{
-				gate.Release();
-			}
-		}).ToList();
-
-		await Task.WhenAll(tasks).ConfigureAwait(false);
+				try
+				{
+					_ = await tmdbClient.GetMovieDetailsAsync(id, ct).ConfigureAwait(false);
+				}
+				catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+				{
+					logger.LogWarning(ex, "tmdb enrichment failed. TmdbId={TmdbId}", id);
+				}
+			});
 	}
 
 	private static bool MatchesPreferences(MovieDetailsDto details, UserPreferencesRecord preferences)

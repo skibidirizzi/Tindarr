@@ -1,8 +1,12 @@
 using System.Net;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Tindarr.Api.Middleware;
 
-public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+public sealed class ExceptionHandlingMiddleware(
+	RequestDelegate next,
+	ILogger<ExceptionHandlingMiddleware> logger)
 {
 	public async Task InvokeAsync(HttpContext context)
 	{
@@ -23,12 +27,33 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
 			{
 				context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
 				context.Response.ContentType = "application/problem+json";
-				await context.Response.WriteAsJsonAsync(new
+
+				IHostEnvironment? hostEnvironment =
+					context.RequestServices.GetService<IHostEnvironment>() ??
+					context.RequestServices.GetService<IWebHostEnvironment>();
+
+				var includeExceptionDetails = hostEnvironment is not null && hostEnvironment.IsDevelopment();
+				if (includeExceptionDetails)
 				{
-					title = "Unexpected error",
-					status = context.Response.StatusCode,
-					correlationId
-				});
+					await context.Response.WriteAsJsonAsync(new
+					{
+						title = "Unexpected error",
+						status = context.Response.StatusCode,
+						correlationId,
+						exceptionType = ex.GetType().FullName,
+						detail = ex.Message,
+						stackTrace = ex.StackTrace
+					});
+				}
+				else
+				{
+					await context.Response.WriteAsJsonAsync(new
+					{
+						title = "Unexpected error",
+						status = context.Response.StatusCode,
+						correlationId
+					});
+				}
 			}
 		}
 	}

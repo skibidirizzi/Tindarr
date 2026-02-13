@@ -3,9 +3,11 @@ import { ApiError } from "../api/http";
 import {
   adminCreateUser,
   adminDeleteUser,
+  adminGetJoinAddressSettings,
   adminListUsers,
   adminSetUserPassword,
   adminSetUserRoles,
+  adminUpdateJoinAddressSettings,
   adminUpdateUser,
   embyListServers,
   embySyncLibrary,
@@ -39,6 +41,7 @@ import {
 import type {
   EmbyServerDto,
   JellyfinServerDto,
+  JoinAddressSettingsDto,
   PlexServerDto,
   RadarrQualityProfileDto,
   RadarrRootFolderDto,
@@ -88,7 +91,7 @@ function roleButtonClass(role: AppRole) {
 }
 
 export default function AdminConsolePage() {
-  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb">("users");
+  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms">("users");
 
   return (
     <section className="deck">
@@ -96,6 +99,7 @@ export default function AdminConsolePage() {
         <h2 style={{ margin: 0 }}>Admin Console</h2>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" className={tabButtonClass(tab === "users")} onClick={() => setTab("users")}>Users</button>
+          <button type="button" className={tabButtonClass(tab === "rooms")} onClick={() => setTab("rooms")}>Rooms</button>
           <button type="button" className={tabButtonClass(tab === "plex")} onClick={() => setTab("plex")}>Plex</button>
           <button type="button" className={tabButtonClass(tab === "radarr")} onClick={() => setTab("radarr")}>Radarr</button>
           <button type="button" className={tabButtonClass(tab === "jellyfin")} onClick={() => setTab("jellyfin")}>Jellyfin</button>
@@ -105,12 +109,100 @@ export default function AdminConsolePage() {
       </div>
 
       {tab === "users" ? <UsersTab /> : null}
+      {tab === "rooms" ? <RoomsTab /> : null}
       {tab === "plex" ? <PlexTab /> : null}
       {tab === "radarr" ? <RadarrTab /> : null}
       {tab === "jellyfin" ? <JellyfinTab /> : null}
       {tab === "emby" ? <EmbyTab /> : null}
       {tab === "tmdb" ? <TmdbTab /> : null}
     </section>
+  );
+}
+
+function RoomsTab() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<JoinAddressSettingsDto | null>(null);
+
+  const [lanHostPort, setLanHostPort] = useState("");
+  const [wanHostPort, setWanHostPort] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const s = await adminGetJoinAddressSettings();
+      setSettings(s);
+      setLanHostPort(s.lanHostPort ?? "");
+      setWanHostPort(s.wanHostPort ?? "");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load room settings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await adminUpdateJoinAddressSettings({
+        lanHostPort: lanHostPort.trim() ? lanHostPort.trim() : null,
+        wanHostPort: wanHostPort.trim() ? wanHostPort.trim() : null
+      });
+      setSettings(updated);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save room settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="deck__toolbar" style={{ justifyContent: "flex-end" }}>
+        <button type="button" className="app__navLink" onClick={() => void load()} disabled={loading || saving}>
+          Refresh
+        </button>
+      </div>
+
+      {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+
+      <div className="deck__state" style={{ textAlign: "left" }}>
+        <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Room Join URL</h3>
+
+        <div style={{ color: "#8c93a6", marginBottom: "0.75rem" }}>
+          Configure the LAN/WAN join address used for room invite links. Values must be in the form <span className="adminTable__mono">host:port</span>.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+          <div>
+            <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>LAN Host:Port</div>
+            <input className="input" value={lanHostPort} onChange={(e) => setLanHostPort(e.target.value)} placeholder="192.168.1.50:4886" />
+          </div>
+          <div>
+            <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>WAN Host:Port</div>
+            <input className="input" value={wanHostPort} onChange={(e) => setWanHostPort(e.target.value)} placeholder="203.0.113.10:4886" />
+          </div>
+        </div>
+
+        <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" className="pill pill--neutral is-on" onClick={() => void onSave()} disabled={loading || saving}>
+            Save
+          </button>
+          <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
+            Updated: {settings?.updatedAtUtc ?? ""}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 

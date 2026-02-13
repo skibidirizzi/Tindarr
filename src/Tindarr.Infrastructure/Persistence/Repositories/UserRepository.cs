@@ -6,6 +6,53 @@ namespace Tindarr.Infrastructure.Persistence.Repositories;
 
 public sealed class UserRepository(TindarrDbContext db) : IUserRepository
 {
+	public async Task<int> PurgeGuestUsersAsync(DateTimeOffset createdBeforeUtc, CancellationToken cancellationToken)
+	{
+		// NOTE: SQLite DateTimeOffset translation is intentionally limited in LINQ.
+		// Use SQL with a subquery to keep this operation set-based and avoid parameter limits.
+		await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+
+		// Remove orphanable data that does not have FK relationships to users.
+		await db.Database.ExecuteSqlInterpolatedAsync($@"
+DELETE FROM interactions
+WHERE UserId IN (
+	SELECT Id FROM users
+	WHERE Id LIKE 'guest-%'
+	  AND CreatedAtUtc < {createdBeforeUtc}
+	  AND PasswordHash IS NULL
+	  AND PasswordSalt IS NULL
+	  AND PasswordIterations IS NULL
+);
+", cancellationToken);
+
+		// Best-effort audit cleanup.
+		await db.Database.ExecuteSqlInterpolatedAsync($@"
+UPDATE accepted_movies
+SET AcceptedByUserId = NULL
+WHERE AcceptedByUserId IN (
+	SELECT Id FROM users
+	WHERE Id LIKE 'guest-%'
+	  AND CreatedAtUtc < {createdBeforeUtc}
+	  AND PasswordHash IS NULL
+	  AND PasswordSalt IS NULL
+	  AND PasswordIterations IS NULL
+);
+", cancellationToken);
+
+		// Deleting users cascades to roles/preferences via FKs.
+		var deleted = await db.Database.ExecuteSqlInterpolatedAsync($@"
+DELETE FROM users
+WHERE Id LIKE 'guest-%'
+	AND CreatedAtUtc < {createdBeforeUtc}
+	AND PasswordHash IS NULL
+	AND PasswordSalt IS NULL
+	AND PasswordIterations IS NULL;
+", cancellationToken);
+
+		await tx.CommitAsync(cancellationToken);
+		return deleted;
+	}
+
 	public async Task<UserRecord?> FindByIdAsync(string userId, CancellationToken cancellationToken)
 	{
 		var user = await db.Users
