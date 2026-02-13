@@ -23,7 +23,9 @@ public sealed class UserPreferencesService(IUserPreferencesRepository repo) : IU
 			PreferredGenres: [],
 			ExcludedGenres: [],
 			PreferredOriginalLanguages: [],
+			ExcludedOriginalLanguages: [],
 			PreferredRegions: [],
+			ExcludedRegions: [],
 			SortBy: "popularity.desc",
 			UpdatedAtUtc: DateTimeOffset.UtcNow);
 	}
@@ -42,7 +44,9 @@ public sealed class UserPreferencesService(IUserPreferencesRepository repo) : IU
 			upsert.PreferredGenres.ToList(),
 			upsert.ExcludedGenres.ToList(),
 			upsert.PreferredOriginalLanguages.ToList(),
+			upsert.ExcludedOriginalLanguages.ToList(),
 			upsert.PreferredRegions.ToList(),
+			upsert.ExcludedRegions.ToList(),
 			upsert.SortBy,
 			now);
 	}

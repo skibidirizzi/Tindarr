@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Integrations;
@@ -27,69 +28,236 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			return [];
 		}
 
+		using var opCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		opCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_tmdb.OperationTimeoutSeconds, 1, 120)));
+		var opToken = opCts.Token;
+
+		var sw = Stopwatch.StartNew();
 		page = Math.Clamp(page, 1, 500);
-		limit = Math.Clamp(limit, 1, 200);
+		// Support larger warmup pulls by paging. Keep this bounded to avoid accidentally hammering the API.
+		limit = Math.Clamp(limit, 1, 1000);
+		var maxPagesToAttempt = Math.Clamp(limit, 1, 50);
 
 		var cards = new List<SwipeCard>(capacity: limit);
 		var currentPage = page;
+		var attemptedPages = 0;
+		var lastStatus = (HttpStatusCode?)null;
 
-		while (cards.Count < limit && currentPage <= page + 4)
+		while (cards.Count < limit && attemptedPages < maxPagesToAttempt)
 		{
+			attemptedPages++;
 			var uri = BuildDiscoverUri(preferences, currentPage);
-			using var response = await httpClient.GetAsync(uri, cancellationToken).ConfigureAwait(false);
-			if (response.StatusCode == HttpStatusCode.NotFound)
-			{
-				break;
-			}
-
-			if (!response.IsSuccessStatusCode)
-			{
-				// Typical causes: bad key (401/403), rate limiting (429), transient upstream issues.
-				var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-				if (errorBody.Length > 800) { errorBody = errorBody[..800]; }
-
-				logger.LogWarning(
-					"TMDB discover failed. Status={Status} Uri={Uri} Body={Body}",
-					(int)response.StatusCode,
-					RedactSensitiveQuery(uri),
-					errorBody);
-				break;
-			}
-
-			var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-			TmdbDiscoverResponse? parsed;
+			var perRequest = Stopwatch.StartNew();
+			HttpResponseMessage response;
 			try
 			{
-				parsed = JsonSerializer.Deserialize<TmdbDiscoverResponse>(body, Json);
+				response = await httpClient.GetAsync(uri, opToken).ConfigureAwait(false);
 			}
-			catch (JsonException ex)
+			catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
 			{
-				logger.LogWarning(ex, "TMDB discover returned invalid JSON. Uri={Uri}", uri);
+				logger.LogWarning(
+					"TMDB discover timed out. Page={Page} AttemptedPages={AttemptedPages} ElapsedMs={ElapsedMs}",
+					currentPage,
+					attemptedPages,
+					perRequest.ElapsedMilliseconds);
 				break;
 			}
-
-			if (parsed?.Results is { Count: > 0 })
+			using (response)
 			{
-				foreach (var movie in parsed.Results)
+				perRequest.Stop();
+				lastStatus = response.StatusCode;
+				logger.LogDebug(
+					"tmdb discover request complete. Page={Page} Status={Status} ElapsedMs={ElapsedMs} Path={Path}",
+					currentPage,
+					(int)response.StatusCode,
+					perRequest.ElapsedMilliseconds,
+					uri.Split('?', 2)[0]);
+				if (response.StatusCode == HttpStatusCode.NotFound)
 				{
-					cards.Add(MapSwipeCard(movie));
-					if (cards.Count >= limit)
+					break;
+				}
+
+				if (!response.IsSuccessStatusCode)
+				{
+					// Typical causes: bad key (401/403), rate limiting (429), transient upstream issues.
+					var errorBody = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+					if (errorBody.Length > 800) { errorBody = errorBody[..800]; }
+
+					logger.LogWarning(
+						"TMDB discover failed. Status={Status} Uri={Uri} Body={Body}",
+						(int)response.StatusCode,
+						RedactSensitiveQuery(uri),
+						errorBody);
+					break;
+				}
+
+				var body = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+				TmdbDiscoverResponse? parsed;
+				try
+				{
+					parsed = JsonSerializer.Deserialize<TmdbDiscoverResponse>(body, Json);
+				}
+				catch (JsonException ex)
+				{
+					logger.LogWarning(ex, "TMDB discover returned invalid JSON. Uri={Uri}", uri);
+					break;
+				}
+
+				if (parsed?.Results is { Count: > 0 })
+				{
+					foreach (var movie in parsed.Results)
+					{
+						if (preferences.ExcludedOriginalLanguages is { Count: > 0 }
+							&& !string.IsNullOrWhiteSpace(movie.OriginalLanguage)
+							&& preferences.ExcludedOriginalLanguages.Contains(movie.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
+						{
+							continue;
+						}
+
+						cards.Add(MapSwipeCard(movie));
+						if (cards.Count >= limit)
+						{
+							break;
+						}
+					}
+				}
+
+				// Stop if the API indicates no more pages.
+				if (parsed is null || currentPage >= parsed.TotalPages)
+				{
+					break;
+				}
+
+				currentPage++;
+			}
+		}
+
+		sw.Stop();
+		logger.LogDebug(
+			"tmdb discover complete. RequestedLimit={RequestedLimit} Returned={Returned} Pages={Pages} LastStatus={LastStatus} ElapsedMs={ElapsedMs}",
+			limit,
+			cards.Count,
+			attemptedPages,
+			lastStatus is null ? null : (int)lastStatus,
+			sw.ElapsedMilliseconds);
+
+		return cards;
+	}
+
+	public async Task<IReadOnlyList<TmdbDiscoverMovieRecord>> DiscoverMoviesAsync(
+		UserPreferencesRecord preferences,
+		int page,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+		if (!_tmdb.HasCredentials)
+		{
+			return [];
+		}
+
+		using var opCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		opCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_tmdb.OperationTimeoutSeconds, 1, 120)));
+		var opToken = opCts.Token;
+
+		var sw = Stopwatch.StartNew();
+		page = Math.Clamp(page, 1, 500);
+		// Support larger warmup pulls by paging. Keep this bounded to avoid accidentally hammering the API.
+		limit = Math.Clamp(limit, 1, 1000);
+		var maxPagesToAttempt = Math.Clamp(limit, 1, 50);
+
+		var movies = new List<TmdbDiscoverMovieRecord>(capacity: limit);
+		var currentPage = page;
+		var attemptedPages = 0;
+		var lastStatus = (HttpStatusCode?)null;
+
+		while (movies.Count < limit && attemptedPages < maxPagesToAttempt)
+		{
+			attemptedPages++;
+			var uri = BuildDiscoverUri(preferences, currentPage);
+
+			HttpResponseMessage response;
+			try
+			{
+				response = await httpClient.GetAsync(uri, opToken).ConfigureAwait(false);
+			}
+			catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+			{
+				logger.LogWarning(
+					"TMDB discover movies timed out. Page={Page} AttemptedPages={AttemptedPages}",
+					currentPage,
+					attemptedPages);
+				break;
+			}
+			using (response)
+			{
+				lastStatus = response.StatusCode;
+				if (!response.IsSuccessStatusCode)
+				{
+					var errorBody = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+					if (errorBody.Length > 800) { errorBody = errorBody[..800]; }
+					logger.LogWarning(
+						"TMDB discover movies failed. Status={Status} Uri={Uri} Body={Body}",
+						(int)response.StatusCode,
+						RedactSensitiveQuery(uri),
+						errorBody);
+					break;
+				}
+
+				var body = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+				TmdbDiscoverResponse? parsed;
+				try
+				{
+					parsed = JsonSerializer.Deserialize<TmdbDiscoverResponse>(body, Json);
+				}
+				catch (JsonException ex)
+				{
+					logger.LogWarning(ex, "TMDB discover movies returned invalid JSON. Uri={Uri}", uri);
+					break;
+				}
+
+				if (parsed is null)
+				{
+					break;
+				}
+
+				foreach (var m in parsed.Results)
+				{
+					if (movies.Count >= limit)
 					{
 						break;
 					}
+
+					movies.Add(new TmdbDiscoverMovieRecord(
+						Id: m.Id,
+						Title: m.Title,
+						OriginalTitle: m.OriginalTitle,
+						Overview: m.Overview,
+						PosterPath: m.PosterPath,
+						BackdropPath: m.BackdropPath,
+						ReleaseDate: m.ReleaseDate,
+						OriginalLanguage: m.OriginalLanguage,
+						VoteAverage: m.VoteAverage,
+						GenreIds: m.GenreIds));
+				}
+
+				if (parsed.TotalPages <= currentPage)
+				{
+					break;
 				}
 			}
-
-			// Stop if the API indicates no more pages.
-			if (parsed is null || currentPage >= parsed.TotalPages)
-			{
-				break;
-			}
-
 			currentPage++;
 		}
 
-		return cards;
+		sw.Stop();
+		logger.LogDebug(
+			"tmdb discover movies complete. RequestedLimit={RequestedLimit} Returned={Returned} Pages={Pages} LastStatus={LastStatus} ElapsedMs={ElapsedMs}",
+			limit,
+			movies.Count,
+			attemptedPages,
+			lastStatus is null ? null : (int)lastStatus,
+			sw.ElapsedMilliseconds);
+
+		return movies;
 	}
 
 	public async Task<MovieDetailsDto?> GetMovieDetailsAsync(int tmdbId, CancellationToken cancellationToken)
@@ -109,61 +277,79 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		{
 			["append_to_response"] = "release_dates"
 		});
-		using var response = await httpClient.GetAsync(uri, cancellationToken).ConfigureAwait(false);
-		if (response.StatusCode == HttpStatusCode.NotFound)
-		{
-			return null;
-		}
 
-		if (!response.IsSuccessStatusCode)
-		{
-			var errorBody = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-			if (errorBody.Length > 800) { errorBody = errorBody[..800]; }
+		using var opCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		opCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_tmdb.OperationTimeoutSeconds, 1, 120)));
+		var opToken = opCts.Token;
 
-			logger.LogWarning(
-				"TMDB movie details failed. Status={Status} TmdbId={TmdbId} Uri={Uri} Body={Body}",
-				(int)response.StatusCode,
-				tmdbId,
-				RedactSensitiveQuery(uri),
-				errorBody);
-			return null;
-		}
-
-		var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-		TmdbMovieDetails? parsed;
+		HttpResponseMessage response;
 		try
 		{
-			parsed = JsonSerializer.Deserialize<TmdbMovieDetails>(body, Json);
+			response = await httpClient.GetAsync(uri, opToken).ConfigureAwait(false);
 		}
-		catch (JsonException ex)
+		catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
 		{
-			logger.LogWarning(ex, "TMDB movie details returned invalid JSON. TmdbId={TmdbId} Uri={Uri}", tmdbId, uri);
-			return null;
-		}
-		if (parsed is null)
-		{
+			logger.LogWarning("TMDB movie details timed out. TmdbId={TmdbId}", tmdbId);
 			return null;
 		}
 
-		var releaseYear = TryParseYear(parsed.ReleaseDate);
-		var mpaa = ExtractUsCertification(parsed.ReleaseDates);
-		var regions = ExtractRegions(parsed.ReleaseDates);
+		using (response)
+		{
+			if (response.StatusCode == HttpStatusCode.NotFound)
+			{
+				return null;
+			}
 
-		return new MovieDetailsDto(
-			TmdbId: parsed.Id,
-			Title: parsed.Title ?? parsed.OriginalTitle ?? $"TMDB:{parsed.Id}",
-			Overview: parsed.Overview,
-			PosterUrl: BuildImageUrl(parsed.PosterPath, _tmdb.PosterSize),
-			BackdropUrl: BuildImageUrl(parsed.BackdropPath, _tmdb.BackdropSize),
-			ReleaseDate: parsed.ReleaseDate,
-			ReleaseYear: releaseYear,
-			MpaaRating: mpaa,
-			Rating: parsed.VoteAverage,
-			VoteCount: parsed.VoteCount,
-			Genres: parsed.Genres?.Where(g => !string.IsNullOrWhiteSpace(g.Name)).Select(g => g.Name!).ToList() ?? [],
-			Regions: regions,
-			OriginalLanguage: parsed.OriginalLanguage,
-			RuntimeMinutes: parsed.Runtime);
+			if (!response.IsSuccessStatusCode)
+			{
+				var errorBody = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+				if (errorBody.Length > 800) { errorBody = errorBody[..800]; }
+
+				logger.LogWarning(
+					"TMDB movie details failed. Status={Status} TmdbId={TmdbId} Uri={Uri} Body={Body}",
+					(int)response.StatusCode,
+					tmdbId,
+					RedactSensitiveQuery(uri),
+					errorBody);
+				return null;
+			}
+
+			var body = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+			TmdbMovieDetails? parsed;
+			try
+			{
+				parsed = JsonSerializer.Deserialize<TmdbMovieDetails>(body, Json);
+			}
+			catch (JsonException ex)
+			{
+				logger.LogWarning(ex, "TMDB movie details returned invalid JSON. TmdbId={TmdbId} Uri={Uri}", tmdbId, uri);
+				return null;
+			}
+			if (parsed is null)
+			{
+				return null;
+			}
+
+			var releaseYear = TryParseYear(parsed.ReleaseDate);
+			var mpaa = ExtractUsCertification(parsed.ReleaseDates);
+			var regions = ExtractRegions(parsed.ReleaseDates);
+
+			return new MovieDetailsDto(
+				TmdbId: parsed.Id,
+				Title: parsed.Title ?? parsed.OriginalTitle ?? $"TMDB:{parsed.Id}",
+				Overview: parsed.Overview,
+				PosterUrl: BuildImageUrl(parsed.PosterPath, _tmdb.PosterSize),
+				BackdropUrl: BuildImageUrl(parsed.BackdropPath, _tmdb.BackdropSize),
+				ReleaseDate: parsed.ReleaseDate,
+				ReleaseYear: releaseYear,
+				MpaaRating: mpaa,
+				Rating: parsed.VoteAverage,
+				VoteCount: parsed.VoteCount,
+				Genres: parsed.Genres?.Where(g => !string.IsNullOrWhiteSpace(g.Name)).Select(g => g.Name!).ToList() ?? [],
+				Regions: regions,
+				OriginalLanguage: parsed.OriginalLanguage,
+				RuntimeMinutes: parsed.Runtime);
+		}
 	}
 
 	private static string? ExtractUsCertification(TmdbReleaseDatesContainer? releaseDates)
@@ -382,7 +568,9 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		[property: JsonPropertyName("poster_path")] string? PosterPath,
 		[property: JsonPropertyName("backdrop_path")] string? BackdropPath,
 		[property: JsonPropertyName("release_date")] string? ReleaseDate,
-		[property: JsonPropertyName("vote_average")] double? VoteAverage);
+		[property: JsonPropertyName("original_language")] string? OriginalLanguage,
+		[property: JsonPropertyName("vote_average")] double? VoteAverage,
+		[property: JsonPropertyName("genre_ids")] List<int>? GenreIds);
 
 	private sealed record TmdbMovieDetails(
 		[property: JsonPropertyName("id")] int Id,

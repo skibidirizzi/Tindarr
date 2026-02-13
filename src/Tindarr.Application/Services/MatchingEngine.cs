@@ -11,6 +11,8 @@ public sealed class MatchingEngine : IMatchingEngine
 		IReadOnlyList<Interaction> interactions,
 		int minUsers = 2)
 	{
+		minUsers = Math.Max(2, minUsers);
+
 		if (interactions.Count == 0)
 		{
 			return Array.Empty<int>();
@@ -24,7 +26,7 @@ public sealed class MatchingEngine : IMatchingEngine
 		}
 
 		var users = scoped.Select(x => x.UserId).Distinct().ToArray();
-		if (users.Length < Math.Max(2, minUsers))
+		if (users.Length < minUsers)
 		{
 			return Array.Empty<int>();
 		}
@@ -59,11 +61,18 @@ public sealed class MatchingEngine : IMatchingEngine
 			likedCounts[entry.TmdbId] = count + 1;
 		}
 
-		// "Liked-by-all": every user in the scope must have a positive current interaction for that movie.
-		var required = users.Length;
+		var superliked = latest.Values
+			.Where(x => x.Action == InteractionAction.Superlike)
+			.Select(x => x.TmdbId)
+			.Distinct();
+
+		// "Match": a movie is matched if at least minUsers distinct users currently Like/Superlike it.
+		var required = minUsers;
 		return likedCounts
-			.Where(kvp => kvp.Value == required)
+			.Where(kvp => kvp.Value >= required)
 			.Select(kvp => kvp.Key)
+			.Concat(superliked)
+			.Distinct()
 			.OrderBy(x => x)
 			.ToList();
 	}

@@ -49,6 +49,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 				RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled,
 				RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId,
 				RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc,
+				JellyfinBaseUrl = upsert.JellyfinBaseUrl,
+				JellyfinApiKey = upsert.JellyfinApiKey,
+				JellyfinServerName = upsert.JellyfinServerName,
+				JellyfinServerVersion = upsert.JellyfinServerVersion,
+				JellyfinLastLibrarySyncUtc = upsert.JellyfinLastLibrarySyncUtc,
+				EmbyBaseUrl = upsert.EmbyBaseUrl,
+				EmbyApiKey = upsert.EmbyApiKey,
+				EmbyServerName = upsert.EmbyServerName,
+				EmbyServerVersion = upsert.EmbyServerVersion,
+				EmbyLastLibrarySyncUtc = upsert.EmbyLastLibrarySyncUtc,
 				PlexClientIdentifier = upsert.PlexClientIdentifier,
 				PlexAuthToken = upsert.PlexAuthToken,
 				PlexServerName = upsert.PlexServerName,
@@ -75,6 +85,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled;
 			entity.RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId;
 			entity.RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc;
+			entity.JellyfinBaseUrl = upsert.JellyfinBaseUrl;
+			entity.JellyfinApiKey = upsert.JellyfinApiKey;
+			entity.JellyfinServerName = upsert.JellyfinServerName;
+			entity.JellyfinServerVersion = upsert.JellyfinServerVersion;
+			entity.JellyfinLastLibrarySyncUtc = upsert.JellyfinLastLibrarySyncUtc;
+			entity.EmbyBaseUrl = upsert.EmbyBaseUrl;
+			entity.EmbyApiKey = upsert.EmbyApiKey;
+			entity.EmbyServerName = upsert.EmbyServerName;
+			entity.EmbyServerVersion = upsert.EmbyServerVersion;
+			entity.EmbyLastLibrarySyncUtc = upsert.EmbyLastLibrarySyncUtc;
 			entity.PlexClientIdentifier = upsert.PlexClientIdentifier;
 			entity.PlexAuthToken = upsert.PlexAuthToken;
 			entity.PlexServerName = upsert.PlexServerName;
@@ -105,6 +125,16 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrAutoAddEnabled,
 			entity.RadarrLastAutoAddAcceptedId,
 			entity.RadarrLastLibrarySyncUtc,
+			entity.JellyfinBaseUrl,
+			entity.JellyfinApiKey,
+			entity.JellyfinServerName,
+			entity.JellyfinServerVersion,
+			entity.JellyfinLastLibrarySyncUtc,
+			entity.EmbyBaseUrl,
+			entity.EmbyApiKey,
+			entity.EmbyServerName,
+			entity.EmbyServerVersion,
+			entity.EmbyLastLibrarySyncUtc,
 			entity.PlexClientIdentifier,
 			entity.PlexAuthToken,
 			entity.PlexServerName,

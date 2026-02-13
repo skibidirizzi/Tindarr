@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Interfaces.Preferences;
@@ -10,7 +11,7 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/preferences")]
-public sealed class PreferencesController(IUserPreferencesService preferencesService, ICurrentUser currentUser) : ControllerBase
+public sealed class PreferencesController(IUserPreferencesService preferencesService, ICurrentUser currentUser, ITmdbMetadataStore metadataStore) : ControllerBase
 {
 	[HttpGet]
 	public async Task<ActionResult<UserPreferencesDto>> Get(CancellationToken cancellationToken)
@@ -31,10 +32,16 @@ public sealed class PreferencesController(IUserPreferencesService preferencesSer
 			request.PreferredGenres ?? [],
 			request.ExcludedGenres ?? [],
 			request.PreferredOriginalLanguages ?? [],
+			request.ExcludedOriginalLanguages ?? [],
 			request.PreferredRegions ?? [],
+			request.ExcludedRegions ?? [],
 			string.IsNullOrWhiteSpace(request.SortBy) ? "popularity.desc" : request.SortBy.Trim());
 
 		var updated = await preferencesService.UpdateAsync(currentUser.UserId, upsert, cancellationToken);
+
+		// Preference changes should affect the next swipedeck immediately. The deck is served from a local per-user pool,
+		// so clear it here to force repopulation with the new preference filters.
+		await metadataStore.ClearUserPoolAsync(currentUser.UserId, cancellationToken);
 		return Ok(Map(updated));
 	}
 
@@ -49,7 +56,9 @@ public sealed class PreferencesController(IUserPreferencesService preferencesSer
 			record.PreferredGenres,
 			record.ExcludedGenres,
 			record.PreferredOriginalLanguages,
+			record.ExcludedOriginalLanguages,
 			record.PreferredRegions,
+			record.ExcludedRegions,
 			record.SortBy,
 			record.UpdatedAtUtc);
 	}

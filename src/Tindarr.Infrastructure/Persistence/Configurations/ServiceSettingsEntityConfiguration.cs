@@ -26,6 +26,18 @@ public sealed class ServiceSettingsEntityConfiguration : IEntityTypeConfiguratio
 		builder.Property(x => x.RadarrLastAutoAddAcceptedId);
 		builder.Property(x => x.RadarrLastLibrarySyncUtc);
 
+		builder.Property(x => x.JellyfinBaseUrl);
+		builder.Property(x => x.JellyfinApiKey);
+		builder.Property(x => x.JellyfinServerName);
+		builder.Property(x => x.JellyfinServerVersion);
+		builder.Property(x => x.JellyfinLastLibrarySyncUtc);
+
+		builder.Property(x => x.EmbyBaseUrl);
+		builder.Property(x => x.EmbyApiKey);
+		builder.Property(x => x.EmbyServerName);
+		builder.Property(x => x.EmbyServerVersion);
+		builder.Property(x => x.EmbyLastLibrarySyncUtc);
+
 		builder.Property(x => x.PlexClientIdentifier);
 		builder.Property(x => x.PlexAuthToken);
 		builder.Property(x => x.PlexServerName);

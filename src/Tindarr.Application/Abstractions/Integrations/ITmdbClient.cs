@@ -8,6 +8,8 @@ public interface ITmdbClient
 {
 	Task<IReadOnlyList<SwipeCard>> DiscoverAsync(UserPreferencesRecord preferences, int page, int limit, CancellationToken cancellationToken);
 
+	Task<IReadOnlyList<TmdbDiscoverMovieRecord>> DiscoverMoviesAsync(UserPreferencesRecord preferences, int page, int limit, CancellationToken cancellationToken);
+
 	Task<MovieDetailsDto?> GetMovieDetailsAsync(int tmdbId, CancellationToken cancellationToken);
 }
 

@@ -16,7 +16,9 @@ public sealed record UserPreferencesRecord(
 	IReadOnlyList<int> PreferredGenres,
 	IReadOnlyList<int> ExcludedGenres,
 	IReadOnlyList<string> PreferredOriginalLanguages,
+	IReadOnlyList<string> ExcludedOriginalLanguages,
 	IReadOnlyList<string> PreferredRegions,
+	IReadOnlyList<string> ExcludedRegions,
 	string SortBy,
 	DateTimeOffset UpdatedAtUtc);
 
@@ -29,6 +31,8 @@ public sealed record UserPreferencesUpsert(
 	IReadOnlyList<int> PreferredGenres,
 	IReadOnlyList<int> ExcludedGenres,
 	IReadOnlyList<string> PreferredOriginalLanguages,
+	IReadOnlyList<string> ExcludedOriginalLanguages,
 	IReadOnlyList<string> PreferredRegions,
+	IReadOnlyList<string> ExcludedRegions,
 	string SortBy);
 

@@ -46,5 +46,16 @@ Desktop.ini
 *.log
 
 # Local sqlite DB files (dev/runtime)
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.mdf
+*.ldf
 src/Tindarr.Api/tindarr.db*
 src/Tindarr.Api/tmdbmetadata.db*
+
+# TMDB cached images (test/runtime)
+src/Tindarr.Api/tmdb-images/

@@ -19,6 +19,18 @@ public sealed class ServiceSettingsEntity
 	public long? RadarrLastAutoAddAcceptedId { get; set; }
 	public DateTimeOffset? RadarrLastLibrarySyncUtc { get; set; }
 
+	public string? JellyfinBaseUrl { get; set; }
+	public string? JellyfinApiKey { get; set; }
+	public string? JellyfinServerName { get; set; }
+	public string? JellyfinServerVersion { get; set; }
+	public DateTimeOffset? JellyfinLastLibrarySyncUtc { get; set; }
+
+	public string? EmbyBaseUrl { get; set; }
+	public string? EmbyApiKey { get; set; }
+	public string? EmbyServerName { get; set; }
+	public string? EmbyServerVersion { get; set; }
+	public DateTimeOffset? EmbyLastLibrarySyncUtc { get; set; }
+
 	public string? PlexClientIdentifier { get; set; }
 	public string? PlexAuthToken { get; set; }
 	public string? PlexServerName { get; set; }

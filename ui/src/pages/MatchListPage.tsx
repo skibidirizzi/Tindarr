@@ -4,6 +4,8 @@ import { ApiError } from "../api/http";
 import { fetchMatches, fetchMovieDetails } from "../api/client";
 import type { MovieDetailsDto } from "../api/contracts";
 import MovieDetailsModal from "../components/MovieDetailsModal";
+import PosterGallery from "../components/PosterGallery";
+import { SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
 
 export default function MatchListPage() {
   const navigate = useNavigate();
@@ -42,14 +44,25 @@ export default function MatchListPage() {
   }
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [minUsers]);
+
+  useEffect(() => {
+    function handleScopeUpdated() {
+      setSelectedTmdbId(null);
+      void load();
+    }
+
+    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const missing = tmdbIds.filter((id) => detailsByTmdbId[id] === undefined).slice(0, 40);
@@ -80,7 +93,21 @@ export default function MatchListPage() {
     };
   }, [detailsByTmdbId, tmdbIds]);
 
-  const countLabel = useMemo(() => (tmdbIds.length === 1 ? "1 match" : `${tmdbIds.length} matches`), [tmdbIds.length]);
+  const galleryItems = useMemo(() => {
+    return tmdbIds.map((tmdbId) => {
+      const details = detailsByTmdbId[tmdbId];
+      const title = details?.title ?? `TMDB #${tmdbId}`;
+
+      return {
+        key: String(tmdbId),
+        tmdbId,
+        title,
+        year: details?.releaseYear ?? null,
+        posterUrl: details?.posterUrl ?? null,
+        ribbon: { label: "Match", variant: "matched" as const },
+      };
+    });
+  }, [detailsByTmdbId, tmdbIds]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -104,7 +131,7 @@ export default function MatchListPage() {
         <div className="modal__header">
           <div>
             <h2 className="modal__title">Matches</h2>
-            <p className="modal__subtitle">Movies liked by all (within the selected service scope).</p>
+            <p className="modal__subtitle">Movies liked by at least {minUsers} users (click for details).</p>
           </div>
           <button type="button" className="button button--ghost modal__close" onClick={handleClose}>
             Close
@@ -113,49 +140,30 @@ export default function MatchListPage() {
 
         <div className="modal__body">
           <div className="deck__toolbar" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-            <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.75rem" }}>
-              <span className="field__label" style={{ margin: 0 }}>
-                Min users
-              </span>
-              <select className="input" value={String(minUsers)} onChange={(e) => setMinUsers(Number(e.target.value))}>
-                {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-                  <option key={n} value={n}>
-                    {n}+
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div style={{ color: "#8c93a6", fontWeight: 600 }}>{countLabel}</div>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`button button--ghost ${minUsers === n ? "is-active" : ""}`}
+                  onClick={() => setMinUsers(n)}
+                >
+                  {n}+
+                </button>
+              ))}
+            </div>
+            <div style={{ color: "#8c93a6", fontWeight: 600 }}>{tmdbIds.length} items</div>
           </div>
 
           {loading ? <div className="deck__state">Loading matches…</div> : null}
           {!loading && error ? <div className="deck__state deck__state--error">{error}</div> : null}
 
-          {!loading && !error && tmdbIds.length === 0 ? <div className="deck__state">No matches yet.</div> : null}
+          {!loading && !error && tmdbIds.length === 0 ? (
+            <div className="deck__state">No matches yet. When {minUsers}+ users like the same movie, it will show up here.</div>
+          ) : null}
 
           {!loading && !error && tmdbIds.length > 0 ? (
-            <div className="list">
-              {tmdbIds.map((id) => (
-                <button key={id} className="listItem" type="button" onClick={() => setSelectedTmdbId(id)}>
-                  {detailsByTmdbId[id]?.posterUrl ? (
-                    <img className="listPoster" src={detailsByTmdbId[id].posterUrl!} alt={detailsByTmdbId[id].title} />
-                  ) : (
-                    <div className="listPoster listPoster--placeholder">No poster</div>
-                  )}
-                  <div className="listItem__main">
-                    <div className="listItem__title">
-                      {detailsByTmdbId[id]?.title ?? `TMDB #${id}`}{" "}
-                      {detailsByTmdbId[id]?.releaseYear ? <span className="listItem__year">({detailsByTmdbId[id].releaseYear})</span> : null}
-                    </div>
-                    <div className="listItem__sub">
-                      <span className="badge badge--neutral">Match</span>
-                      {detailsByTmdbId[id]?.mpaaRating ? <span className="badge badge--neutral">{detailsByTmdbId[id].mpaaRating}</span> : null}
-                    </div>
-                  </div>
-                  <div className="listItem__chev">›</div>
-                </button>
-              ))}
-            </div>
+            <PosterGallery items={galleryItems} onSelect={(id) => setSelectedTmdbId(id)} />
           ) : null}
         </div>
       </div>

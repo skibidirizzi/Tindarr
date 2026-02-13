@@ -9,6 +9,8 @@ public sealed record UpdateUserPreferencesRequest(
 	IReadOnlyList<int> PreferredGenres,
 	IReadOnlyList<int> ExcludedGenres,
 	IReadOnlyList<string> PreferredOriginalLanguages,
+	IReadOnlyList<string> ExcludedOriginalLanguages,
 	IReadOnlyList<string> PreferredRegions,
+	IReadOnlyList<string> ExcludedRegions,
 	string SortBy);
 

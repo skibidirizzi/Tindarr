@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: true,
     port: 5173,
     proxy: {
       // Dev convenience: let the UI call /api/v1/* on the Vite origin.
@@ -14,5 +15,8 @@ export default defineConfig({
         secure: false
       }
     }
+  },
+  preview: {
+    host: true
   }
 });

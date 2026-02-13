@@ -1,8 +1,10 @@
+using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Integrations;
+using Tindarr.Application.Interfaces.Ops;
 using Tindarr.Application.Options;
 using Tindarr.Contracts.Movies;
 using Tindarr.Domain.Common;
@@ -15,6 +17,7 @@ public sealed class PlexService(
 	IServiceSettingsRepository settingsRepo,
 	ILibraryCacheRepository libraryCache,
 	ITmdbClient tmdbClient,
+	ILanAddressResolver lanAddressResolver,
 	IOptions<PlexOptions> options,
 	ILogger<PlexService> logger) : IPlexService
 {
@@ -42,6 +45,7 @@ public sealed class PlexService(
 	};
 
 	private readonly PlexOptions _options = options.Value;
+	private readonly IPAddress? _lanIp = lanAddressResolver.GetLanIPv4();
 
 	public async Task<PlexPinCreateResult> CreatePinAsync(CancellationToken cancellationToken)
 	{
@@ -116,8 +120,10 @@ public sealed class PlexService(
 		var account = await EnsureAccountAsync(cancellationToken);
 		var accessToken = ResolveAccessToken(settings, account);
 
+		var baseUrl = NormalizePlexBaseUrl(settings.PlexServerUri!);
+
 		var connection = new PlexServerConnectionInfo(
-			settings.PlexServerUri!,
+			baseUrl,
 			accessToken,
 			account.PlexClientIdentifier!);
 
@@ -252,7 +258,7 @@ public sealed class PlexService(
 		var scope = new ServiceScope(ServiceType.Plex, resource.MachineIdentifier);
 		var existing = await settingsRepo.GetAsync(scope, cancellationToken);
 
-		var selectedUri = SelectBestUri(resource);
+		var selectedUri = NormalizePlexBaseUrl(SelectBestUri(resource));
 		var accessToken = string.IsNullOrWhiteSpace(resource.AccessToken) ? account.PlexAuthToken : resource.AccessToken;
 
 		var upsert = BuildUpsert(existing,
@@ -322,6 +328,16 @@ public sealed class PlexService(
 			RadarrAutoAddEnabled: existing?.RadarrAutoAddEnabled ?? false,
 			RadarrLastAutoAddAcceptedId: existing?.RadarrLastAutoAddAcceptedId,
 			RadarrLastLibrarySyncUtc: existing?.RadarrLastLibrarySyncUtc,
+			JellyfinBaseUrl: existing?.JellyfinBaseUrl,
+			JellyfinApiKey: existing?.JellyfinApiKey,
+			JellyfinServerName: existing?.JellyfinServerName,
+			JellyfinServerVersion: existing?.JellyfinServerVersion,
+			JellyfinLastLibrarySyncUtc: existing?.JellyfinLastLibrarySyncUtc,
+			EmbyBaseUrl: existing?.EmbyBaseUrl,
+			EmbyApiKey: existing?.EmbyApiKey,
+			EmbyServerName: existing?.EmbyServerName,
+			EmbyServerVersion: existing?.EmbyServerVersion,
+			EmbyLastLibrarySyncUtc: existing?.EmbyLastLibrarySyncUtc,
 			PlexClientIdentifier: plexClientIdentifier ?? existing?.PlexClientIdentifier,
 			PlexAuthToken: plexAuthToken ?? existing?.PlexAuthToken,
 			PlexServerName: plexServerName ?? existing?.PlexServerName,
@@ -369,6 +385,41 @@ public sealed class PlexService(
 			.ThenBy(c => c.Relay);
 
 		return ordered.FirstOrDefault()?.Uri;
+	}
+
+	private string NormalizePlexBaseUrl(string? discovered)
+	{
+		if (string.IsNullOrWhiteSpace(discovered))
+		{
+			return discovered ?? string.Empty;
+		}
+
+		if (_lanIp is null)
+		{
+			return discovered;
+		}
+
+		if (!Uri.TryCreate(discovered, UriKind.Absolute, out var uri))
+		{
+			return discovered;
+		}
+
+		// If the discovered base URL points at *this* machine's LAN IP (typical when Plex is on the same host),
+		// force localhost for reliability and to avoid LAN hairpinning.
+		if (uri.Port == 32400 && string.Equals(uri.Host, _lanIp.ToString(), StringComparison.OrdinalIgnoreCase))
+		{
+			return "http://localhost:32400";
+		}
+
+		// Also normalize any loopback hostnames to localhost.
+		if (uri.Port == 32400 && (string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(uri.Host, "::1", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)))
+		{
+			return "http://localhost:32400";
+		}
+
+		return discovered;
 	}
 
 	private async Task EnrichTmdbAsync(IReadOnlyCollection<int> tmdbIds, CancellationToken cancellationToken)
@@ -465,6 +516,14 @@ public sealed class PlexService(
 			}
 		}
 
+		if (preferences.ExcludedRegions is { Count: > 0 })
+		{
+			if (MatchesRegions(details.Regions, preferences.ExcludedRegions))
+			{
+				return false;
+			}
+		}
+
 		if (preferences.PreferredOriginalLanguages is { Count: > 0 })
 		{
 			if (string.IsNullOrWhiteSpace(details.OriginalLanguage))
@@ -473,6 +532,14 @@ public sealed class PlexService(
 			}
 
 			if (!preferences.PreferredOriginalLanguages.Contains(details.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+		}
+
+		if (preferences.ExcludedOriginalLanguages is { Count: > 0 } && !string.IsNullOrWhiteSpace(details.OriginalLanguage))
+		{
+			if (preferences.ExcludedOriginalLanguages.Contains(details.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
 			{
 				return false;
 			}

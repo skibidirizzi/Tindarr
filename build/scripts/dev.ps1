@@ -3,7 +3,7 @@ Param(
 	[string]$ApiUrl = "http://localhost:5080",
 
 	# Vite dev server port
-	[int]$UiPort = 5173,
+	[int]$UiPort = 6565,
 
 	# ASP.NET environment
 	[ValidateSet("Development", "Staging", "Production")]
@@ -44,8 +44,8 @@ function Kill-PortUsers([int]$port) {
 	if ($pids.Count -eq 0) { return }
 
 	Write-Host "Port $port is in use by PID(s): $($pids -join ', '). Killing..."
-	foreach ($pid in $pids) {
-		try { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue } catch { }
+	foreach ($processId in $pids) {
+		try { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue } catch { }
 	}
 	Start-Sleep -Milliseconds 250
 }
@@ -77,7 +77,7 @@ function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 		}
 
 		# Run Vite dev server in a child process so we can clean it up.
-		return Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--port", "$uiPort") -WorkingDirectory $uiDir -PassThru
+		return Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "0.0.0.0", "--port", "$uiPort") -WorkingDirectory $uiDir -PassThru
 	}
 	finally {
 		Pop-Location

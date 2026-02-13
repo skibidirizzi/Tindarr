@@ -20,4 +20,12 @@ public interface IInteractionStore
         int? tmdbId,
         int limit,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<Interaction>> SearchAsync(
+        string? userId,
+        ServiceScope? scope,
+        InteractionAction? action,
+        int? tmdbId,
+        int limit,
+        CancellationToken cancellationToken);
 }

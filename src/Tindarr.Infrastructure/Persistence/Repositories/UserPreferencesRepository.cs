@@ -28,7 +28,9 @@ public sealed class UserPreferencesRepository(TindarrDbContext db) : IUserPrefer
 			DeserializeIntList(entity.PreferredGenresJson),
 			DeserializeIntList(entity.ExcludedGenresJson),
 			DeserializeStringList(entity.PreferredOriginalLanguagesJson),
+			DeserializeStringList(entity.ExcludedOriginalLanguagesJson),
 			DeserializeStringList(entity.PreferredRegionsJson),
+			DeserializeStringList(entity.ExcludedRegionsJson),
 			string.IsNullOrWhiteSpace(entity.SortBy) ? "popularity.desc" : entity.SortBy,
 			entity.UpdatedAtUtc);
 	}
@@ -49,7 +51,9 @@ public sealed class UserPreferencesRepository(TindarrDbContext db) : IUserPrefer
 				PreferredGenresJson = Serialize(upsert.PreferredGenres),
 				ExcludedGenresJson = Serialize(upsert.ExcludedGenres),
 				PreferredOriginalLanguagesJson = Serialize(upsert.PreferredOriginalLanguages),
+				ExcludedOriginalLanguagesJson = Serialize(upsert.ExcludedOriginalLanguages),
 				PreferredRegionsJson = Serialize(upsert.PreferredRegions),
+				ExcludedRegionsJson = Serialize(upsert.ExcludedRegions),
 				SortBy = string.IsNullOrWhiteSpace(upsert.SortBy) ? "popularity.desc" : upsert.SortBy.Trim(),
 				UpdatedAtUtc = updatedAtUtc
 			};
@@ -66,7 +70,9 @@ public sealed class UserPreferencesRepository(TindarrDbContext db) : IUserPrefer
 			entity.PreferredGenresJson = Serialize(upsert.PreferredGenres);
 			entity.ExcludedGenresJson = Serialize(upsert.ExcludedGenres);
 			entity.PreferredOriginalLanguagesJson = Serialize(upsert.PreferredOriginalLanguages);
+			entity.ExcludedOriginalLanguagesJson = Serialize(upsert.ExcludedOriginalLanguages);
 			entity.PreferredRegionsJson = Serialize(upsert.PreferredRegions);
+			entity.ExcludedRegionsJson = Serialize(upsert.ExcludedRegions);
 			entity.SortBy = string.IsNullOrWhiteSpace(upsert.SortBy) ? "popularity.desc" : upsert.SortBy.Trim();
 			entity.UpdatedAtUtc = updatedAtUtc;
 		}
