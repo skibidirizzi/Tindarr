@@ -167,13 +167,61 @@ public sealed class PlexLibraryClient(HttpClient httpClient, IOptions<PlexOption
 			yield return item.Guid;
 		}
 
-		if (item.GuidList is not null)
+		if (item.ExtensionData is null)
 		{
-			foreach (var guid in item.GuidList)
+			yield break;
+		}
+
+		if (TryGetGuidArray(item.ExtensionData, out var guidArray))
+		{
+			foreach (var element in guidArray.EnumerateArray())
 			{
-				yield return guid?.Id;
+				if (element.ValueKind != JsonValueKind.Object)
+				{
+					continue;
+				}
+
+				if (TryGetStringProperty(element, "id", out var id))
+				{
+					yield return id;
+				}
 			}
 		}
+	}
+
+	private static bool TryGetGuidArray(IReadOnlyDictionary<string, JsonElement> extensionData, out JsonElement array)
+	{
+		if (extensionData.TryGetValue("Guid", out array) && array.ValueKind == JsonValueKind.Array)
+		{
+			return true;
+		}
+
+		if (extensionData.TryGetValue("guid", out array) && array.ValueKind == JsonValueKind.Array)
+		{
+			return true;
+		}
+
+		array = default;
+		return false;
+	}
+
+	private static bool TryGetStringProperty(JsonElement element, string propertyName, out string? value)
+	{
+		value = null;
+		if (element.TryGetProperty(propertyName, out var direct) && direct.ValueKind == JsonValueKind.String)
+		{
+			value = direct.GetString();
+			return !string.IsNullOrWhiteSpace(value);
+		}
+
+		var pascal = char.ToUpperInvariant(propertyName[0]) + propertyName[1..];
+		if (element.TryGetProperty(pascal, out var alt) && alt.ValueKind == JsonValueKind.String)
+		{
+			value = alt.GetString();
+			return !string.IsNullOrWhiteSpace(value);
+		}
+
+		return false;
 	}
 
 	private static string? ExtractGuid(PlexItemDto item)
@@ -197,9 +245,7 @@ public sealed class PlexLibraryClient(HttpClient httpClient, IOptions<PlexOption
 
 	private sealed record PlexItemDto(
 		[property: JsonPropertyName("guid")] string? Guid,
-		[property: JsonPropertyName("Guid")] List<PlexGuidDto>? GuidList,
 		[property: JsonPropertyName("title")] string? Title,
-		[property: JsonPropertyName("ratingKey")] string? RatingKey);
-
-	private sealed record PlexGuidDto([property: JsonPropertyName("id")] string? Id);
+		[property: JsonPropertyName("ratingKey")] string? RatingKey,
+		[property: JsonExtensionData] Dictionary<string, JsonElement>? ExtensionData);
 }

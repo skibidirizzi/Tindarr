@@ -148,4 +148,51 @@ public sealed class InMemoryInteractionStore : IInteractionStore
 
         return Task.FromResult<IReadOnlyList<Interaction>>(result);
     }
+
+    public Task<IReadOnlyList<Interaction>> SearchAsync(
+        string? userId,
+        ServiceScope? scope,
+        InteractionAction? action,
+        int? tmdbId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var all = new List<Interaction>();
+        foreach (var kvp in _interactions)
+        {
+            var list = kvp.Value;
+            lock (list)
+            {
+                all.AddRange(list);
+            }
+        }
+
+        IEnumerable<Interaction> filtered = all;
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            filtered = filtered.Where(x => x.UserId == userId);
+        }
+
+        if (scope is not null)
+        {
+            filtered = filtered.Where(x => x.Scope.ServiceType == scope.ServiceType && x.Scope.ServerId == scope.ServerId);
+        }
+
+        if (action is not null)
+        {
+            filtered = filtered.Where(x => x.Action == action.Value);
+        }
+
+        if (tmdbId is not null)
+        {
+            filtered = filtered.Where(x => x.TmdbId == tmdbId.Value);
+        }
+
+        var result = filtered
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(Math.Max(1, limit))
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<Interaction>>(result);
+    }
 }

@@ -34,7 +34,13 @@ public sealed class AuthService(
 		var hashed = passwordHasher.Hash(password, registration.PasswordHashIterations);
 		await users.SetPasswordAsync(normalizedUserId, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		await users.SetRolesAsync(normalizedUserId, [registration.DefaultRole], cancellationToken);
+		var rolesToSet = new List<string> { registration.DefaultRole };
+		if (string.Equals(normalizedUserId, "admin", StringComparison.OrdinalIgnoreCase))
+		{
+			rolesToSet.Add("Admin");
+		}
+
+		await users.SetRolesAsync(normalizedUserId, rolesToSet, cancellationToken);
 		var roles = await users.GetRolesAsync(normalizedUserId, cancellationToken);
 
 		var token = tokenService.IssueAccessToken(normalizedUserId, roles.ToList());

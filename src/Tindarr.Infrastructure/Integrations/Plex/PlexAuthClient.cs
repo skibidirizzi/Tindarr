@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Xml.Linq;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Integrations;
@@ -100,12 +102,95 @@ public sealed class PlexAuthClient(HttpClient httpClient, IOptions<PlexOptions> 
 		}
 
 		var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-		var parsed = JsonSerializer.Deserialize<List<PlexResourceDto>>(body, Json) ?? [];
+		return ParseServers(body);
+	}
 
-		var servers = new List<PlexServerResource>();
-		foreach (var resource in parsed)
+	private IReadOnlyList<PlexServerResource> ParseServers(string body)
+	{
+		if (string.IsNullOrWhiteSpace(body))
 		{
-			if (resource is null || string.IsNullOrWhiteSpace(resource.MachineIdentifier))
+			return [];
+		}
+
+		try
+		{
+			if (LooksLikeXml(body))
+			{
+				return ParseServersFromXml(body);
+			}
+
+			var resources = ExtractResourcesFromJson(body);
+			return MapServers(resources);
+		}
+		catch (Exception ex)
+		{
+			logger.LogWarning(ex, "plex resources response could not be parsed");
+			throw new HttpRequestException("Plex resources response was invalid.");
+		}
+	}
+
+	private static bool LooksLikeXml(string body)
+	{
+		for (var i = 0; i < body.Length; i++)
+		{
+			var ch = body[i];
+			if (char.IsWhiteSpace(ch))
+			{
+				continue;
+			}
+
+			return ch == '<';
+		}
+
+		return false;
+	}
+
+	private static List<PlexResourceDto> ExtractResourcesFromJson(string body)
+	{
+		using var doc = JsonDocument.Parse(body);
+		var root = doc.RootElement;
+
+		return root.ValueKind switch
+		{
+			JsonValueKind.Array => JsonSerializer.Deserialize<List<PlexResourceDto>>(root.GetRawText(), Json) ?? [],
+			JsonValueKind.Object => ExtractResourcesFromJsonObject(root),
+			_ => []
+		};
+	}
+
+	private static List<PlexResourceDto> ExtractResourcesFromJsonObject(JsonElement root)
+	{
+		if (root.TryGetProperty("resources", out var resourcesElement) && resourcesElement.ValueKind == JsonValueKind.Array)
+		{
+			return JsonSerializer.Deserialize<List<PlexResourceDto>>(resourcesElement.GetRawText(), Json) ?? [];
+		}
+
+		if (root.TryGetProperty("MediaContainer", out var mediaContainer)
+			&& mediaContainer.ValueKind == JsonValueKind.Object
+			&& mediaContainer.TryGetProperty("Device", out var devices)
+			&& devices.ValueKind == JsonValueKind.Array)
+		{
+			return JsonSerializer.Deserialize<List<PlexResourceDto>>(devices.GetRawText(), Json) ?? [];
+		}
+
+		return [];
+	}
+
+	private static IReadOnlyList<PlexServerResource> MapServers(IEnumerable<PlexResourceDto?> resources)
+	{
+		var servers = new List<PlexServerResource>();
+		foreach (var resource in resources)
+		{
+			if (resource is null)
+			{
+				continue;
+			}
+
+			var machineId = string.IsNullOrWhiteSpace(resource.MachineIdentifier)
+				? resource.ClientIdentifier
+				: resource.MachineIdentifier;
+
+			if (string.IsNullOrWhiteSpace(machineId))
 			{
 				continue;
 			}
@@ -125,8 +210,8 @@ public sealed class PlexAuthClient(HttpClient httpClient, IOptions<PlexOptions> 
 				.ToList() ?? [];
 
 			servers.Add(new PlexServerResource(
-				resource.MachineIdentifier!,
-				resource.Name ?? resource.MachineIdentifier!,
+				machineId!,
+				resource.Name ?? machineId!,
 				resource.ProductVersion,
 				resource.Platform,
 				resource.Owned ?? false,
@@ -136,6 +221,78 @@ public sealed class PlexAuthClient(HttpClient httpClient, IOptions<PlexOptions> 
 		}
 
 		return servers;
+	}
+
+	private static IReadOnlyList<PlexServerResource> ParseServersFromXml(string body)
+	{
+		var doc = XDocument.Parse(body);
+		var mediaContainer = doc.Root;
+		if (mediaContainer is null)
+		{
+			return [];
+		}
+
+		var devices = mediaContainer.Elements().Where(e => string.Equals(e.Name.LocalName, "Device", StringComparison.OrdinalIgnoreCase));
+		var servers = new List<PlexServerResource>();
+		foreach (var device in devices)
+		{
+			var provides = (string?)device.Attribute("provides");
+			if (string.IsNullOrWhiteSpace(provides) || !provides.Contains("server", StringComparison.OrdinalIgnoreCase))
+			{
+				continue;
+			}
+
+			var machineId = (string?)device.Attribute("machineIdentifier")
+				?? (string?)device.Attribute("clientIdentifier");
+			if (string.IsNullOrWhiteSpace(machineId))
+			{
+				continue;
+			}
+
+			var name = (string?)device.Attribute("name") ?? machineId;
+			var version = (string?)device.Attribute("productVersion");
+			var platform = (string?)device.Attribute("platform");
+			var accessToken = (string?)device.Attribute("accessToken");
+			var owned = ParseXmlBool(device.Attribute("owned"));
+			var presence = ParseXmlBool(device.Attribute("presence"));
+
+			var connections = device.Elements().Where(e => string.Equals(e.Name.LocalName, "Connection", StringComparison.OrdinalIgnoreCase))
+				.Select(c => new PlexServerConnection(
+					Uri: (string?)c.Attribute("uri") ?? string.Empty,
+					Local: ParseXmlBool(c.Attribute("local")),
+					Relay: ParseXmlBool(c.Attribute("relay")),
+					Protocol: (string?)c.Attribute("protocol") ?? "http"))
+				.Where(c => !string.IsNullOrWhiteSpace(c.Uri))
+				.ToList();
+
+			servers.Add(new PlexServerResource(
+				machineId,
+				name,
+				version,
+				platform,
+				owned,
+				presence,
+				accessToken,
+				connections));
+		}
+
+		return servers;
+	}
+
+	private static bool ParseXmlBool(XAttribute? attribute)
+	{
+		var raw = attribute?.Value;
+		if (string.IsNullOrWhiteSpace(raw))
+		{
+			return false;
+		}
+
+		if (bool.TryParse(raw, out var parsed))
+		{
+			return parsed;
+		}
+
+		return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) && number != 0;
 	}
 
 	private void ApplyHeaders(HttpRequestMessage request, string clientIdentifier, string? authToken)

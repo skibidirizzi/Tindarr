@@ -129,5 +129,50 @@ public sealed class EfCoreInteractionStore(TindarrDbContext db) : IInteractionSt
 				x.CreatedAtUtc))
 			.ToList();
 	}
+
+	public async Task<IReadOnlyList<Interaction>> SearchAsync(
+		string? userId,
+		ServiceScope? scope,
+		InteractionAction? action,
+		int? tmdbId,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+		var query = db.Interactions.AsNoTracking().AsQueryable();
+
+		if (!string.IsNullOrWhiteSpace(userId))
+		{
+			query = query.Where(x => x.UserId == userId);
+		}
+
+		if (scope is not null)
+		{
+			query = query.Where(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId);
+		}
+
+		if (action is not null)
+		{
+			query = query.Where(x => x.Action == action.Value);
+		}
+
+		if (tmdbId is not null)
+		{
+			query = query.Where(x => x.TmdbId == tmdbId.Value);
+		}
+
+		var rows = await query
+			.OrderByDescending(x => x.Id)
+			.Take(Math.Max(1, limit))
+			.ToListAsync(cancellationToken);
+
+		return rows
+			.Select(x => new Interaction(
+				x.UserId,
+				new ServiceScope(x.ServiceType, x.ServerId),
+				x.TmdbId,
+				x.Action,
+				x.CreatedAtUtc))
+			.ToList();
+	}
 }
 

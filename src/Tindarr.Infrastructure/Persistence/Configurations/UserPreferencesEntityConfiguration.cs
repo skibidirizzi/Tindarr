@@ -31,7 +31,15 @@ public sealed class UserPreferencesEntityConfiguration : IEntityTypeConfiguratio
 			.IsRequired()
 			.HasDefaultValue("[]");
 
+		builder.Property(x => x.ExcludedOriginalLanguagesJson)
+			.IsRequired()
+			.HasDefaultValue("[]");
+
 		builder.Property(x => x.PreferredRegionsJson)
+			.IsRequired()
+			.HasDefaultValue("[]");
+
+		builder.Property(x => x.ExcludedRegionsJson)
 			.IsRequired()
 			.HasDefaultValue("[]");
 

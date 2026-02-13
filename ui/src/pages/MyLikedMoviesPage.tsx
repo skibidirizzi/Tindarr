@@ -4,7 +4,9 @@ import { ApiError } from "../api/http";
 import { fetchMovieDetails, listInteractions } from "../api/client";
 import type { InteractionDto, MovieDetailsDto } from "../api/contracts";
 import MovieDetailsModal from "../components/MovieDetailsModal";
+import PosterGallery from "../components/PosterGallery";
 import type { SwipeAction } from "../types";
+import { SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
 
 type Filter = "Liked" | "Superliked" | "AllPositive";
 
@@ -29,22 +31,36 @@ export default function MyLikedMoviesPage() {
     navigate("/swipe", { replace: true });
   }
 
+  async function loadLikes() {
+    try {
+      setLoading(true);
+      setError(null);
+      const resp = await listInteractions({ limit: 200 });
+      // Keep only positive interactions for this view.
+      setItems(resp.items.filter((x) => x.action === "Like" || x.action === "Superlike"));
+    } catch (err) {
+      if (err instanceof ApiError) setError(err.message);
+      else if (err instanceof Error) setError(err.message);
+      else setError("Failed to load likes.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const resp = await listInteractions({ limit: 200 });
-        // Keep only positive interactions for this view.
-        setItems(resp.items.filter((x) => x.action === "Like" || x.action === "Superlike"));
-      } catch (err) {
-        if (err instanceof ApiError) setError(err.message);
-        else if (err instanceof Error) setError(err.message);
-        else setError("Failed to load likes.");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    void loadLikes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    function handleScopeUpdated() {
+      setSelectedTmdbId(null);
+      void loadLikes();
+    }
+
+    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
@@ -55,6 +71,25 @@ export default function MyLikedMoviesPage() {
       .filter((x) => want.includes(x.action))
       .sort((a, b) => (a.createdAtUtc < b.createdAtUtc ? 1 : -1));
   }, [filter, items]);
+
+  const galleryItems = useMemo(() => {
+    return filtered.map((x) => {
+      const details = detailsByTmdbId[x.tmdbId];
+      const title = details?.title ?? `TMDB #${x.tmdbId}`;
+
+      return {
+        key: `${x.tmdbId}:${x.createdAtUtc}`,
+        tmdbId: x.tmdbId,
+        title,
+        year: details?.releaseYear ?? null,
+        posterUrl: details?.posterUrl ?? null,
+        ribbon:
+          x.action === "Superlike"
+            ? { label: "\u00A0\u00A0\u00A0\u00A0Superliked", variant: "superliked" as const }
+            : { label: "Liked", variant: "liked" as const },
+      };
+    });
+  }, [detailsByTmdbId, filtered]);
 
   useEffect(() => {
     // Fetch movie details for visible items (bounded) so we can show poster/title/year/mpaa.
@@ -153,29 +188,7 @@ export default function MyLikedMoviesPage() {
           ) : null}
 
           {!loading && !error && filtered.length > 0 ? (
-            <div className="list">
-              {filtered.map((x) => (
-                <button key={`${x.tmdbId}:${x.createdAtUtc}`} className="listItem" type="button" onClick={() => setSelectedTmdbId(x.tmdbId)}>
-                  {detailsByTmdbId[x.tmdbId]?.posterUrl ? (
-                    <img className="listPoster" src={detailsByTmdbId[x.tmdbId].posterUrl!} alt={detailsByTmdbId[x.tmdbId].title} />
-                  ) : (
-                    <div className="listPoster listPoster--placeholder">No poster</div>
-                  )}
-                  <div className="listItem__main">
-                    <div className="listItem__title">
-                      {detailsByTmdbId[x.tmdbId]?.title ?? `TMDB #${x.tmdbId}`}{" "}
-                      {detailsByTmdbId[x.tmdbId]?.releaseYear ? <span className="listItem__year">({detailsByTmdbId[x.tmdbId].releaseYear})</span> : null}
-                    </div>
-                    <div className="listItem__sub">
-                      <span className={x.action === "Superlike" ? "badge badge--super" : "badge badge--like"}>{x.action}</span>
-                      {detailsByTmdbId[x.tmdbId]?.mpaaRating ? <span className="badge badge--neutral">{detailsByTmdbId[x.tmdbId].mpaaRating}</span> : null}
-                      <span>{new Date(x.createdAtUtc).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                  <div className="listItem__chev">›</div>
-                </button>
-              ))}
-            </div>
+            <PosterGallery items={galleryItems} onSelect={(id) => setSelectedTmdbId(id)} />
           ) : null}
         </div>
       </div>

@@ -1,19 +1,22 @@
 using Microsoft.Extensions.Logging;
+using Tindarr.Application.Abstractions.Caching;
+using Tindarr.Application.Abstractions.Integrations;
 
 namespace Tindarr.Workers.Jobs;
 
 /// <summary>
 /// Prefetches and caches poster/backdrop images; cleans expired image files.
-/// Core-only: no image storage/caching implementation yet.
+/// Keeps the local TMDB image cache bounded.
 /// </summary>
-public sealed class ImageCacheWorker(ILogger<ImageCacheWorker> logger) : PeriodicBackgroundService(logger)
+public sealed class ImageCacheWorker(ITmdbImageCache imageCache, ITmdbMetadataStore metadataStore, ILogger<ImageCacheWorker> logger) : PeriodicBackgroundService(logger)
 {
 	protected override TimeSpan Interval => TimeSpan.FromMinutes(30);
 
-	protected override Task ExecuteOnceAsync(CancellationToken stoppingToken)
+	protected override async Task ExecuteOnceAsync(CancellationToken stoppingToken)
 	{
-		Logger.LogDebug("Image cache worker tick (core-only stub)");
-		return Task.CompletedTask;
+		var settings = await metadataStore.GetSettingsAsync(stoppingToken).ConfigureAwait(false);
+		var maxBytes = (long)Math.Max(0, settings.ImageCacheMaxMb) * 1024L * 1024L;
+		await imageCache.PruneAsync(maxBytes, stoppingToken).ConfigureAwait(false);
 	}
 }
 

@@ -15,7 +15,9 @@ type FormState = {
   preferredGenres: number[];
   excludedGenres: number[];
   preferredOriginalLanguages: string[];
+  excludedOriginalLanguages: string[];
   preferredRegions: string[];
+  excludedRegions: string[];
 };
 
 function toNullableNumber(value: string): number | null {
@@ -35,7 +37,9 @@ function toForm(prefs: UserPreferencesDto): FormState {
     preferredGenres: [...(prefs.preferredGenres ?? [])],
     excludedGenres: [...(prefs.excludedGenres ?? [])],
     preferredOriginalLanguages: [...(prefs.preferredOriginalLanguages ?? [])],
-    preferredRegions: [...(prefs.preferredRegions ?? [])]
+    excludedOriginalLanguages: [...(prefs.excludedOriginalLanguages ?? [])],
+    preferredRegions: [...(prefs.preferredRegions ?? [])],
+    excludedRegions: [...(prefs.excludedRegions ?? [])]
   };
 }
 
@@ -81,6 +85,37 @@ function cycleGenre(form: FormState, genreId: number): FormState {
     ...form,
     preferredGenres: form.preferredGenres.filter((x) => x !== genreId),
     excludedGenres: form.excludedGenres.filter((x) => x !== genreId)
+  };
+}
+
+type TriState = "none" | "include" | "exclude";
+
+function getTriState(included: readonly string[], excluded: readonly string[], value: string): TriState {
+  if (included.includes(value)) return "include";
+  if (excluded.includes(value)) return "exclude";
+  return "none";
+}
+
+function cycleTriState(included: readonly string[], excluded: readonly string[], value: string) {
+  const state = getTriState(included, excluded, value);
+
+  if (state === "none") {
+    return {
+      included: [...included, value],
+      excluded: excluded.filter((x) => x !== value)
+    };
+  }
+
+  if (state === "include") {
+    return {
+      included: included.filter((x) => x !== value),
+      excluded: [...excluded, value]
+    };
+  }
+
+  return {
+    included: included.filter((x) => x !== value),
+    excluded: excluded.filter((x) => x !== value)
   };
 }
 
@@ -148,7 +183,9 @@ export default function PreferencesPage() {
         preferredGenres: form.preferredGenres,
         excludedGenres: form.excludedGenres,
         preferredOriginalLanguages: form.preferredOriginalLanguages,
+        excludedOriginalLanguages: form.excludedOriginalLanguages,
         preferredRegions: form.preferredRegions,
+        excludedRegions: form.excludedRegions,
         sortBy: form.sortBy?.trim() || "popularity.desc"
       });
       setPrefs(updated);
@@ -298,63 +335,79 @@ export default function PreferencesPage() {
 
                 <div className="field">
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                    <span className="field__label">Preferred original languages</span>
+                    <span className="field__label">Original languages</span>
                     <button
                       type="button"
                       className="button button--ghost"
-                      onClick={() => setForm({ ...form, preferredOriginalLanguages: [] })}
+                      onClick={() => setForm({ ...form, preferredOriginalLanguages: [], excludedOriginalLanguages: [] })}
                     >
                       Clear
                     </button>
                   </div>
                   <div className="pickerRow">
-                    {TMDB_LANGUAGES.map((opt) => (
-                      <label key={opt.value} className={pillClass(form.preferredOriginalLanguages.includes(opt.value), "neutral")}>
-                        <input
-                          className="pill__input"
-                          type="checkbox"
-                          checked={form.preferredOriginalLanguages.includes(opt.value)}
-                          onChange={() =>
-                            setForm({
-                              ...form,
-                              preferredOriginalLanguages: toggleInList(form.preferredOriginalLanguages, opt.value)
-                            })
-                          }
-                        />
-                        <span className="pill__label">{opt.label}</span>
-                      </label>
-                    ))}
+                    {TMDB_LANGUAGES.map((opt) => {
+                      const state = getTriState(form.preferredOriginalLanguages, form.excludedOriginalLanguages, opt.value);
+                      const checked = state !== "none";
+                      const variant = state === "include" ? "good" : state === "exclude" ? "bad" : "neutral";
+
+                      return (
+                        <label key={opt.value} className={pillClass(checked, variant)}>
+                          <input
+                            className="pill__input"
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const next = cycleTriState(form.preferredOriginalLanguages, form.excludedOriginalLanguages, opt.value);
+                              setForm({
+                                ...form,
+                                preferredOriginalLanguages: next.included,
+                                excludedOriginalLanguages: next.excluded
+                              });
+                            }}
+                          />
+                          <span className="pill__label">{opt.label}</span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
 
                 <div className="field">
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                    <span className="field__label">Preferred regions</span>
+                    <span className="field__label">Regions</span>
                     <button
                       type="button"
                       className="button button--ghost"
-                      onClick={() => setForm({ ...form, preferredRegions: [] })}
+                      onClick={() => setForm({ ...form, preferredRegions: [], excludedRegions: [] })}
                     >
                       Clear
                     </button>
                   </div>
                   <div className="pickerRow">
-                    {TMDB_REGIONS.map((opt) => (
-                      <label key={opt.value} className={pillClass(form.preferredRegions.includes(opt.value), "neutral")}>
-                        <input
-                          className="pill__input"
-                          type="checkbox"
-                          checked={form.preferredRegions.includes(opt.value)}
-                          onChange={() =>
-                            setForm({
-                              ...form,
-                              preferredRegions: toggleInList(form.preferredRegions, opt.value)
-                            })
-                          }
-                        />
-                        <span className="pill__label">{opt.label}</span>
-                      </label>
-                    ))}
+                    {TMDB_REGIONS.map((opt) => {
+                      const state = getTriState(form.preferredRegions, form.excludedRegions, opt.value);
+                      const checked = state !== "none";
+                      const variant = state === "include" ? "good" : state === "exclude" ? "bad" : "neutral";
+
+                      return (
+                        <label key={opt.value} className={pillClass(checked, variant)}>
+                          <input
+                            className="pill__input"
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              const next = cycleTriState(form.preferredRegions, form.excludedRegions, opt.value);
+                              setForm({
+                                ...form,
+                                preferredRegions: next.included,
+                                excludedRegions: next.excluded
+                              });
+                            }}
+                          />
+                          <span className="pill__label">{opt.label}</span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
 

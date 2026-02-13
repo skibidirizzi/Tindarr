@@ -17,7 +17,9 @@ public sealed class UserPreferencesEntity
 	public string PreferredGenresJson { get; set; } = "[]";
 	public string ExcludedGenresJson { get; set; } = "[]";
 	public string PreferredOriginalLanguagesJson { get; set; } = "[]";
+	public string ExcludedOriginalLanguagesJson { get; set; } = "[]";
 	public string PreferredRegionsJson { get; set; } = "[]";
+	public string ExcludedRegionsJson { get; set; } = "[]";
 
 	// TMDB sort key (e.g. "popularity.desc", "vote_average.desc").
 	public string SortBy { get; set; } = "popularity.desc";

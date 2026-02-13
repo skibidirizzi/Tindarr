@@ -51,6 +51,17 @@ public sealed class SwipeDeckServiceTests
 		public Task<IReadOnlyList<Interaction>> ListAsync(string userId, ServiceScope scope, InteractionAction? action, int? tmdbId, int limit, CancellationToken cancellationToken) => throw new NotSupportedException();
 
 		public Task<IReadOnlyList<Interaction>> ListForScopeAsync(ServiceScope scope, int? tmdbId, int limit, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+		public Task<IReadOnlyList<Interaction>> SearchAsync(
+			string? userId,
+			ServiceScope? scope,
+			InteractionAction? action,
+			int? tmdbId,
+			int limit,
+			CancellationToken cancellationToken)
+		{
+			return Task.FromResult<IReadOnlyList<Interaction>>([]);
+		}
 	}
 
 	private sealed class StubLibraryCache : ILibraryCacheRepository

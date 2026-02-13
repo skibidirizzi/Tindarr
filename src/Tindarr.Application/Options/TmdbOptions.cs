@@ -52,6 +52,12 @@ public sealed class TmdbOptions
 	/// </summary>
 	public int DetailsCacheSeconds { get; init; } = 10 * 60;
 
+	/// <summary>
+	/// Overall timeout budget (in seconds) for TMDB operations (discover/details), including rate-limiter waits and retries.
+	/// This is not just the raw HTTP connect/read timeout.
+	/// </summary>
+	public int OperationTimeoutSeconds { get; init; } = 12;
+
 	public bool HasApiKey => !string.IsNullOrWhiteSpace(ApiKey);
 
 	public bool HasReadAccessToken => !string.IsNullOrWhiteSpace(ReadAccessToken);
@@ -74,6 +80,8 @@ public sealed class TmdbOptions
 			&& RequestsPerSecond <= 50
 			&& DiscoverCacheSeconds >= 0
 			&& DetailsCacheSeconds >= 0
+			&& OperationTimeoutSeconds >= 1
+			&& OperationTimeoutSeconds <= 120
 			&& !string.IsNullOrWhiteSpace(PosterSize)
 			&& !string.IsNullOrWhiteSpace(BackdropSize);
 	}

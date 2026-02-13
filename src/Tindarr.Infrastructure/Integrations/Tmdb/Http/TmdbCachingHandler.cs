@@ -44,12 +44,15 @@ public sealed class TmdbCachingHandler(ITmdbCache cache, IOptions<TmdbOptions> o
 		}
 
 		// Cache only small-ish JSON payloads. If callers need streaming, do not use this handler.
+		// IMPORTANT: buffer + dispose the upstream response to avoid socket/connection exhaustion.
 		var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 		var contentType = response.Content.Headers.ContentType?.ToString();
 
 		var toCache = new TmdbCachedResponse((int)response.StatusCode, contentType, body);
 		var ttl = ResolveTtl(normalizedUri);
 		await cache.SetAsync(cacheKey, toCache, ttl, cancellationToken).ConfigureAwait(false);
+
+		response.Dispose();
 
 		// Return a fresh message; the original content has been buffered/consumed.
 		var cloned = new HttpResponseMessage(response.StatusCode)

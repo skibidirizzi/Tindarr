@@ -14,6 +14,8 @@ using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Features.Radarr;
 using Tindarr.Application.Features.Plex;
+using Tindarr.Application.Features.Jellyfin;
+using Tindarr.Application.Features.Emby;
 using Tindarr.Application.Features.AcceptedMovies;
 using Tindarr.Application.Features.Interactions;
 using Tindarr.Application.Interfaces.Interactions;
@@ -25,6 +27,8 @@ using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Caching;
+using Tindarr.Infrastructure.Integrations.Jellyfin;
+using Tindarr.Infrastructure.Integrations.Emby;
 using Tindarr.Infrastructure.Integrations.Radarr;
 using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Tmdb;
@@ -35,6 +39,7 @@ using Tindarr.Infrastructure.Persistence.Repositories;
 using Tindarr.Infrastructure.Security;
 using Tindarr.Application.Features.Auth;
 using Tindarr.Application.Features.Preferences;
+using Tindarr.Api.Services;
 
 var isWindowsService = WindowsServiceHostSetup.IsRunningAsWindowsService();
 var contentRoot = isWindowsService ? AppContext.BaseDirectory : null;
@@ -132,6 +137,16 @@ builder.Services.AddOptions<PlexOptions>()
 	.Validate(o => o.IsValid(), "Invalid Plex configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<JellyfinOptions>()
+	.BindConfiguration(JellyfinOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Jellyfin configuration.")
+	.ValidateOnStart();
+
+builder.Services.AddOptions<EmbyOptions>()
+	.BindConfiguration(EmbyOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Emby configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -140,6 +155,8 @@ builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 	var options = sp.GetRequiredService<IOptions<BaseUrlOptions>>().Value;
 	return new BaseUrlResolver(options);
 });
+
+builder.Services.AddSingleton<ILanAddressResolver, LanAddressResolver>();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
@@ -159,6 +176,8 @@ builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 builder.Services.AddScoped<IAcceptedMoviesService, AcceptedMoviesService>();
 builder.Services.AddScoped<IRadarrService, RadarrService>();
 builder.Services.AddScoped<IPlexService, PlexService>();
+builder.Services.AddScoped<IJellyfinService, JellyfinService>();
+builder.Services.AddScoped<IEmbyService, EmbyService>();
 
 builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearerOptions>();
 
@@ -219,6 +238,19 @@ builder.Services.AddMemoryCache();
 var tmdbMetadataDbPath = Path.Combine(dataDirOverride ?? builder.Environment.ContentRootPath, "tmdbmetadata.db");
 builder.Services.AddSingleton<ITmdbCache>(sp =>
 	new MemoryOrDbTmdbCache(sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(), tmdbMetadataDbPath));
+builder.Services.AddSingleton<ITmdbCacheAdmin>(sp => (ITmdbCacheAdmin)sp.GetRequiredService<ITmdbCache>());
+
+builder.Services.AddSingleton<ITmdbMetadataStore>(_ => new TmdbMetadataStore(tmdbMetadataDbPath));
+
+builder.Services.AddHttpClient("tmdb-images");
+builder.Services.AddSingleton<ITmdbImageCache>(sp =>
+{
+	var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient("tmdb-images");
+	return new TmdbImageCache(client, sp.GetRequiredService<IOptions<TmdbOptions>>(), tmdbMetadataDbPath);
+});
+
+builder.Services.AddSingleton<ITmdbBuildJob, TmdbBuildJob>();
+
 builder.Services.AddSingleton<ITmdbRateLimiter, TokenBucketRateLimiter>();
 builder.Services.AddTransient<TmdbCachingHandler>();
 builder.Services.AddTransient<TmdbRateLimitingHandler>();
@@ -243,6 +275,8 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 builder.Services.AddHttpClient<IRadarrClient, RadarrClient>();
 builder.Services.AddHttpClient<IPlexAuthClient, PlexAuthClient>();
 builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
+builder.Services.AddHttpClient<IJellyfinClient, JellyfinClient>();
+builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
 
 builder.Services.AddScoped<ISwipeDeckSource, TmdbSwipeDeckSource>();
 builder.Services.AddScoped<IInteractionService, InteractionService>();

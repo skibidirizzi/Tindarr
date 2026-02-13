@@ -19,7 +19,9 @@ public sealed class TmdbClientTests
 		PreferredGenres: [],
 		ExcludedGenres: [],
 		PreferredOriginalLanguages: [],
+		ExcludedOriginalLanguages: [],
 		PreferredRegions: [],
+		ExcludedRegions: [],
 		SortBy: "popularity.desc",
 		UpdatedAtUtc: DateTimeOffset.UtcNow);
 
@@ -73,7 +75,9 @@ public sealed class TmdbClientTests
 			PreferredGenres: [1, 2],
 			ExcludedGenres: [3],
 			PreferredOriginalLanguages: ["en"],
+			ExcludedOriginalLanguages: [],
 			PreferredRegions: ["US"],
+			ExcludedRegions: [],
 			SortBy: "vote_average.desc",
 			UpdatedAtUtc: DateTimeOffset.UtcNow);
 
@@ -103,6 +107,34 @@ public sealed class TmdbClientTests
 		Assert.Equal("https://image.tmdb.org/t/p/w780/b.jpg", results[0].BackdropUrl);
 		Assert.Equal(2001, results[0].ReleaseYear);
 		Assert.Equal(8.1, results[0].Rating);
+	}
+
+	[Fact]
+	public async Task DiscoverAsync_FiltersExcludedOriginalLanguages()
+	{
+		var handler = new StubHandler(_ =>
+		{
+			return new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new StringContent(
+					"""
+					{"page":1,"total_pages":1,"results":[
+					  {"id":1,"title":"A","original_title":"A","overview":"","poster_path":null,"backdrop_path":null,"release_date":"2001-01-01","original_language":"en","vote_average":5.0},
+					  {"id":2,"title":"B","original_title":"B","overview":"","poster_path":null,"backdrop_path":null,"release_date":"2002-01-01","original_language":"ja","vote_average":6.0}
+					]}
+					""",
+					Encoding.UTF8,
+					"application/json")
+			};
+		});
+
+		var tmdb = CreateClient(handler);
+		var prefs = DummyPreferences with { ExcludedOriginalLanguages = ["en"] };
+
+		var results = await tmdb.DiscoverAsync(prefs, page: 1, limit: 10, CancellationToken.None);
+
+		Assert.Single(results);
+		Assert.Equal(2, results[0].TmdbId);
 	}
 
 	[Fact]

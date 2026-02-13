@@ -2,10 +2,15 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Options;
+using Tindarr.Contracts.Admin;
+using Tindarr.Contracts.Interactions;
 using Tindarr.Contracts.Users;
+using Tindarr.Domain.Common;
+using Tindarr.Domain.Interactions;
 
 namespace Tindarr.Api.Controllers;
 
@@ -14,6 +19,7 @@ namespace Tindarr.Api.Controllers;
 [Route("api/v1/admin")]
 public sealed class AdminController(
 	IUserRepository users,
+	IInteractionStore interactionStore,
 	IPasswordHasher passwordHasher,
 	IOptions<RegistrationOptions> registrationOptions) : ControllerBase
 {
@@ -163,6 +169,70 @@ public sealed class AdminController(
 		var hashed = passwordHasher.Hash(request.NewPassword, registration.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 		return NoContent();
+	}
+
+	[HttpGet("interactions")]
+	public async Task<ActionResult<AdminInteractionSearchResponse>> SearchInteractions(
+		[FromQuery] string? userId,
+		[FromQuery] string? serviceType,
+		[FromQuery] string? serverId,
+		[FromQuery] SwipeActionDto? action,
+		[FromQuery] int? tmdbId,
+		[FromQuery] int limit = 200,
+		CancellationToken cancellationToken = default)
+	{
+		limit = Math.Clamp(limit, 1, 500);
+
+		ServiceScope? scope = null;
+		if (!string.IsNullOrWhiteSpace(serviceType) || !string.IsNullOrWhiteSpace(serverId))
+		{
+			if (!ServiceScope.TryCreate(serviceType ?? string.Empty, serverId ?? string.Empty, out scope))
+			{
+				return BadRequest("If provided, ServiceType and ServerId must both be valid.");
+			}
+		}
+
+		InteractionAction? mappedAction = action is null ? null : MapAction(action.Value);
+		var items = await interactionStore.SearchAsync(
+			string.IsNullOrWhiteSpace(userId) ? null : userId.Trim().ToLowerInvariant(),
+			scope,
+			mappedAction,
+			tmdbId,
+			limit,
+			cancellationToken);
+
+		return Ok(new AdminInteractionSearchResponse(
+			items.Select(x => new AdminInteractionDto(
+				x.UserId,
+				x.Scope.ServiceType.ToString().ToLowerInvariant(),
+				x.Scope.ServerId,
+				x.TmdbId,
+				MapAction(x.Action),
+				x.CreatedAtUtc)).ToList()));
+	}
+
+	private static InteractionAction MapAction(SwipeActionDto action)
+	{
+		return action switch
+		{
+			SwipeActionDto.Like => InteractionAction.Like,
+			SwipeActionDto.Nope => InteractionAction.Nope,
+			SwipeActionDto.Skip => InteractionAction.Skip,
+			SwipeActionDto.Superlike => InteractionAction.Superlike,
+			_ => InteractionAction.Skip
+		};
+	}
+
+	private static SwipeActionDto MapAction(InteractionAction action)
+	{
+		return action switch
+		{
+			InteractionAction.Like => SwipeActionDto.Like,
+			InteractionAction.Nope => SwipeActionDto.Nope,
+			InteractionAction.Skip => SwipeActionDto.Skip,
+			InteractionAction.Superlike => SwipeActionDto.Superlike,
+			_ => SwipeActionDto.Skip
+		};
 	}
 
 	private static string NormalizeUserId(string value)
