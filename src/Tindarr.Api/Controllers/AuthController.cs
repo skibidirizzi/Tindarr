@@ -11,6 +11,25 @@ namespace Tindarr.Api.Controllers;
 [Route("api/v1/auth")]
 public sealed class AuthController(IAuthService authService, ICurrentUser currentUser) : ControllerBase
 {
+	[HttpPost("guest")]
+	[AllowAnonymous]
+	public async Task<ActionResult<AuthResponse>> Guest([FromBody] GuestLoginRequest request, CancellationToken cancellationToken)
+	{
+		try
+		{
+			var session = await authService.GuestAsync(request.DisplayName, cancellationToken);
+			return Ok(Map(session));
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+		catch (InvalidOperationException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+	}
+
 	[HttpPost("register")]
 	[AllowAnonymous]
 	public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterRequest request, CancellationToken cancellationToken)

@@ -84,6 +84,28 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.ToTable("interactions", (string)null);
                 });
 
+            modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.JoinAddressSettingsEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LanHostPort")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("WanHostPort")
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("JoinAddressSettings", (string)null);
+                });
+
             modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.LibraryCacheEntity", b =>
                 {
                     b.Property<long>("Id")

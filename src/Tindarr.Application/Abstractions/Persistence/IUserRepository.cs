@@ -21,6 +21,12 @@ public interface IUserRepository
 	Task SetRolesAsync(string userId, IReadOnlyCollection<string> roles, CancellationToken cancellationToken);
 
 	Task DeleteAsync(string userId, CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Deletes temporary guest users created before <paramref name="createdBeforeUtc"/> and cleans up
+	/// any related persistence state.
+	/// </summary>
+	Task<int> PurgeGuestUsersAsync(DateTimeOffset createdBeforeUtc, CancellationToken cancellationToken);
 }
 
 public sealed record UserRecord(

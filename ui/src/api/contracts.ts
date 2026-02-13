@@ -17,6 +17,10 @@ export type RegisterRequest = {
   password: string;
 };
 
+export type GuestLoginRequest = {
+  displayName?: string | null;
+};
+
 export type MeResponse = {
   userId: string;
   displayName: string;
@@ -29,6 +33,23 @@ export type UserDto = {
   createdAtUtc: string;
   roles: string[];
   hasPassword: boolean;
+};
+
+export type JoinAddressSettingsDto = {
+  lanHostPort: string | null;
+  wanHostPort: string | null;
+  updatedAtUtc: string;
+};
+
+export type ServiceScopeOptionDto = {
+  serviceType: string;
+  serverId: string;
+  displayName: string;
+};
+
+export type UpdateJoinAddressSettingsRequest = {
+  lanHostPort: string | null;
+  wanHostPort: string | null;
 };
 
 export type CreateUserRequest = {
@@ -108,6 +129,54 @@ export type MatchesResponse = {
   serviceType: string;
   serverId: string;
   items: MatchDto[];
+};
+
+export type RoomMemberDto = {
+  userId: string;
+  joinedAtUtc: string;
+};
+
+export type CreateRoomRequest = {
+  serviceType: string;
+  serverId: string;
+};
+
+export type CreateRoomResponse = {
+  roomId: string;
+  ownerUserId: string;
+  serviceType: string;
+  serverId: string;
+  members: RoomMemberDto[];
+};
+
+export type JoinRoomResponse = {
+  roomId: string;
+  ownerUserId: string;
+  serviceType: string;
+  serverId: string;
+  members: RoomMemberDto[];
+};
+
+export type RoomStateResponse = {
+  roomId: string;
+  ownerUserId: string;
+  serviceType: string;
+  serverId: string;
+  isClosed: boolean;
+  createdAtUtc: string;
+  lastActivityAtUtc: string;
+  members: RoomMemberDto[];
+};
+
+export type RoomJoinUrlResponse = {
+  url: string;
+};
+
+export type RoomMatchesResponse = {
+  roomId: string;
+  serviceType: string;
+  serverId: string;
+  tmdbIds: number[];
 };
 
 export type MovieDetailsDto = {

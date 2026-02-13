@@ -13,6 +13,31 @@ public sealed class AuthService(
 {
 	private readonly RegistrationOptions registration = registrationOptions.Value;
 
+	public async Task<AuthSession> GuestAsync(string? displayName, CancellationToken cancellationToken)
+	{
+		var normalizedDisplayName = string.IsNullOrWhiteSpace(displayName) ? "Guest" : NormalizeDisplayName(displayName);
+		var now = DateTimeOffset.UtcNow;
+
+		// Try a handful of times to avoid collisions.
+		for (var attempt = 0; attempt < 10; attempt++)
+		{
+			var id = $"guest-{Guid.NewGuid():N}";
+			if (await users.UserExistsAsync(id, cancellationToken))
+			{
+				continue;
+			}
+
+			await users.CreateAsync(new CreateUserRecord(id, normalizedDisplayName, now), cancellationToken);
+			await users.SetRolesAsync(id, new[] { registration.DefaultRole }, cancellationToken);
+
+			var roles = await users.GetRolesAsync(id, cancellationToken);
+			var token = tokenService.IssueAccessToken(id, roles.ToList());
+			return new AuthSession(token.AccessToken, token.ExpiresAtUtc, id, normalizedDisplayName, roles.ToList());
+		}
+
+		throw new InvalidOperationException("Could not create guest session.");
+	}
+
 	public async Task<AuthSession> RegisterAsync(string userId, string displayName, string password, CancellationToken cancellationToken)
 	{
 		if (!registration.AllowOpenRegistration)

@@ -16,6 +16,10 @@ public sealed class PlexOptions
 
 	public string Version { get; init; } = "1.0";
 
+	// Optional shared secret for Plex webhook ingestion.
+	// If set, callers must provide it via X-Tindarr-Webhook-Token header or ?token= query.
+	public string WebhookToken { get; init; } = "";
+
 	public bool IsValid()
 	{
 		return LibrarySyncMinutes is >= 1 and <= 1440

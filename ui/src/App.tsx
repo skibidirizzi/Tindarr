@@ -7,9 +7,13 @@ import MyLikedMoviesPage from "./pages/MyLikedMoviesPage";
 import MatchListPage from "./pages/MatchListPage";
 import AdminConsolePage from "./pages/AdminConsolePage";
 import ServiceSelectPage from "./pages/ServiceSelectPage";
+import RoomPage from "./pages/RoomPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import { useAuth } from "./auth/AuthContext";
 import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
+import { fetchConfiguredScopes } from "./api/client";
+import type { ServiceScopeOptionDto } from "./api/contracts";
+import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, type ServiceScope } from "./serviceScope";
 
 const HEADER_COLLAPSED_KEY = "tindarr:headerCollapsed:v1";
 
@@ -24,6 +28,7 @@ export default function App() {
         <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
           <Route index element={<ServiceSelectPage />} />
           <Route path="/swipe" element={<SwipeDeckPage />} />
+          <Route path="/rooms" element={<RoomPage />} />
           <Route path="/preferences" element={<PreferencesPage />} />
           <Route path="/liked" element={<MyLikedMoviesPage />} />
           <Route path="/matches" element={<MatchListPage />} />
@@ -36,6 +41,9 @@ export default function App() {
             }
           />
         </Route>
+
+        {/* Invite link join route (supports guest join) */}
+        <Route path="/rooms/:roomId" element={<RoomPage />} />
 
         <Route path="/login" element={<LoginPage />} />
         <Route path="*" element={<NotFoundPage />} />
@@ -57,6 +65,9 @@ function AppLayout() {
   const location = useLocation();
   const isAdmin = user?.roles?.includes("Admin") ?? false;
 
+  const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
+  const [availableScopes, setAvailableScopes] = useState<ServiceScopeOptionDto[]>([]);
+
   const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(HEADER_COLLAPSED_KEY) === "1";
@@ -66,6 +77,12 @@ function AppLayout() {
   });
 
   useEffect(() => {
+    fetchConfiguredScopes()
+      .then(setAvailableScopes)
+      .catch((err) => console.error("Failed to fetch configured scopes:", err));
+  }, []);
+
+  useEffect(() => {
     try {
       localStorage.setItem(HEADER_COLLAPSED_KEY, headerCollapsed ? "1" : "0");
     } catch {
@@ -73,7 +90,39 @@ function AppLayout() {
     }
   }, [headerCollapsed]);
 
+  useEffect(() => {
+    function handleScopeUpdated() {
+      setCurrentScope(getServiceScope());
+    }
+
+    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+  }, []);
+
   const headerToggleLabel = useMemo(() => (headerCollapsed ? "Expand" : "Collapse"), [headerCollapsed]);
+
+  const scopeOptions = useMemo(() => {
+    // Map API scope options to dropdown format
+    const mapped = availableScopes.map((o) => ({
+      value: `${o.serviceType}/${o.serverId}`,
+      label: o.displayName,
+      scope: { serviceType: o.serviceType as any, serverId: o.serverId }
+    }));
+
+    // Ensure current scope is included even if not in the API list (fallback for edge cases)
+    const currentValue = `${currentScope.serviceType}/${currentScope.serverId}`;
+    if (!mapped.some((o) => o.value === currentValue)) {
+      mapped.push({
+        value: currentValue,
+        label: `${currentScope.serviceType} (${currentScope.serverId})`,
+        scope: currentScope
+      });
+    }
+
+    return mapped;
+  }, [availableScopes, currentScope]);
+
+  const selectedScopeValue = useMemo(() => `${currentScope.serviceType}/${currentScope.serverId}`, [currentScope]);
 
   return (
     <div className={`app ${headerCollapsed ? "app--headerCollapsed" : ""}`}>
@@ -93,10 +142,33 @@ function AppLayout() {
               {headerToggleLabel}
             </button>
 
+      <select
+        className="app__navLink"
+        value={selectedScopeValue}
+        onChange={(e) => {
+          const value = e.target.value;
+          const option = scopeOptions.find((o) => o.value === value);
+          if (option) {
+            setServiceScopeAndNotify(option.scope);
+          }
+        }}
+        aria-label="Service scope"
+        title="Service scope"
+      >
+        {scopeOptions.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+
             {!headerCollapsed ? (
               <>
                 <NavLink to="/swipe" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
                   Swipe
+                </NavLink>
+                <NavLink to="/rooms" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
+                  Rooms
                 </NavLink>
                 <NavLink
                   to="/liked"

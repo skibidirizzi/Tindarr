@@ -34,6 +34,7 @@ using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 using Tindarr.Infrastructure.Interactions;
+using Tindarr.Infrastructure.PlexCache;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
 using Tindarr.Infrastructure.Security;
@@ -170,6 +171,7 @@ builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository
 builder.Services.AddScoped<IAcceptedMovieRepository, AcceptedMovieRepository>();
 builder.Services.AddScoped<IServiceSettingsRepository, ServiceSettingsRepository>();
 builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
+builder.Services.AddScoped<IJoinAddressSettingsRepository, JoinAddressSettingsRepository>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
@@ -230,7 +232,9 @@ builder.Services.AddCors(options =>
 	});
 });
 
-builder.Services.AddScoped<IInteractionStore, EfCoreInteractionStore>();
+builder.Services.AddScoped<EfCoreInteractionStore>();
+builder.Services.AddSingleton<Tindarr.Infrastructure.Interactions.InMemoryInteractionStore>();
+builder.Services.AddScoped<IInteractionStore, Tindarr.Infrastructure.Interactions.RoutingInteractionStore>();
 builder.Services.AddMemoryCache();
 
 // Persist TMDB metadata separately from the main tindarr.db.
@@ -278,13 +282,22 @@ builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
 builder.Services.AddHttpClient<IJellyfinClient, JellyfinClient>();
 builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
 
-builder.Services.AddScoped<ISwipeDeckSource, TmdbSwipeDeckSource>();
+builder.Services.AddScoped<TmdbSwipeDeckSource>();
+builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Plex.PlexSwipeDeckSource>();
+builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Jellyfin.JellyfinSwipeDeckSource>();
+builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Emby.EmbySwipeDeckSource>();
+builder.Services.AddScoped<ISwipeDeckSource, Tindarr.Infrastructure.Integrations.Interactions.CompositeSwipeDeckSource>();
 builder.Services.AddScoped<IInteractionService, InteractionService>();
 builder.Services.AddScoped<ISwipeDeckService, SwipeDeckService>();
 builder.Services.AddScoped<IMatchingEngine, MatchingEngine>();
 
+builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomStore, Tindarr.Infrastructure.Rooms.InMemoryRoomStore>();
+builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomInteractionStore, Tindarr.Infrastructure.Rooms.InMemoryRoomInteractionStore>();
+builder.Services.AddScoped<Tindarr.Application.Interfaces.Rooms.IRoomService, Tindarr.Application.Features.Rooms.RoomService>();
+
 // Keep DB location stable across Debug/Release so migrations and runtime match.
 builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: dataDirOverride ?? builder.Environment.ContentRootPath);
+builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: dataDirOverride ?? builder.Environment.ContentRootPath);
 
 var app = builder.Build();
 
@@ -294,11 +307,13 @@ using (var scope = app.Services.CreateScope())
 {
 	var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
 	var db = scope.ServiceProvider.GetRequiredService<TindarrDbContext>();
+	var plexCacheDb = scope.ServiceProvider.GetRequiredService<Tindarr.Infrastructure.PlexCache.PlexCacheDbContext>();
 
 	// Safe to run repeatedly; in prod environments you may choose to disable if desired.
 	if (env.IsDevelopment() || isWindowsService)
 	{
 		db.Database.Migrate();
+		plexCacheDb.Database.EnsureCreated();
 	}
 }
 

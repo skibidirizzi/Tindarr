@@ -1,19 +1,48 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Tindarr.Application.Abstractions.Persistence;
+using Tindarr.Application.Options;
 
 namespace Tindarr.Workers.Jobs;
 
 /// <summary>
 /// Expires inactive rooms and temporary guest users; purges stale caches.
-/// Core-only: no persistence cleanup implementation yet.
+/// Runs as part of the Workers host.
 /// </summary>
-public sealed class CleanupWorker(ILogger<CleanupWorker> logger) : PeriodicBackgroundService(logger)
+public sealed class CleanupWorker(
+	IServiceScopeFactory scopeFactory,
+	IOptions<CleanupOptions> options,
+	ILogger<CleanupWorker> logger) : PeriodicBackgroundService(logger)
 {
-	protected override TimeSpan Interval => TimeSpan.FromMinutes(5);
+	private readonly CleanupOptions cleanup = options.Value;
 
-	protected override Task ExecuteOnceAsync(CancellationToken stoppingToken)
+	protected override TimeSpan Interval => cleanup.Interval;
+
+	protected override async Task ExecuteOnceAsync(CancellationToken stoppingToken)
 	{
-		Logger.LogDebug("Cleanup worker tick (core-only stub)");
-		return Task.CompletedTask;
+		if (!cleanup.Enabled)
+		{
+			Logger.LogDebug("Cleanup worker is disabled");
+			return;
+		}
+
+		using var scope = scopeFactory.CreateScope();
+		var users = scope.ServiceProvider.GetRequiredService<IUserRepository>();
+
+		if (cleanup.PurgeGuestUsers)
+		{
+			var cutoff = DateTimeOffset.UtcNow - cleanup.GuestUserMaxAge;
+			var deleted = await users.PurgeGuestUsersAsync(cutoff, stoppingToken).ConfigureAwait(false);
+			if (deleted > 0)
+			{
+				Logger.LogInformation("Purged {Deleted} guest users created before {CutoffUtc}", deleted, cutoff);
+			}
+			else
+			{
+				Logger.LogDebug("No guest users to purge");
+			}
+		}
 	}
 }
 

@@ -28,6 +28,7 @@ import type {
   RadarrConnectionTestResponse,
   RadarrLibrarySyncResponse,
   RegisterRequest,
+  GuestLoginRequest,
   SetUserRolesRequest,
   UndoResponse,
   UpdateEmbySettingsRequest,
@@ -36,7 +37,8 @@ import type {
   UpdateUserRequest,
   UpdateUserPreferencesRequest,
   UserDto,
-  UserPreferencesDto
+  UserPreferencesDto,
+  ServiceScopeOptionDto
   ,
   TmdbCacheSettingsDto,
   UpdateTmdbCacheSettingsRequest,
@@ -44,6 +46,13 @@ import type {
   TmdbBuildStatusDto,
   TmdbStoredMovieAdminListResponse,
   TmdbFetchMovieImagesResultDto
+  ,
+  CreateRoomRequest,
+  CreateRoomResponse,
+  JoinRoomResponse,
+  RoomJoinUrlResponse,
+  RoomMatchesResponse,
+  RoomStateResponse
 } from "./contracts";
 import { ApiError, apiRequest } from "./http";
 import { getCachedJson, setCachedJson } from "./localCache";
@@ -54,6 +63,12 @@ function resolveScope(serviceType?: string, serverId?: string) {
     serviceType: (serviceType ?? stored.serviceType).trim().toLowerCase(),
     serverId: (serverId ?? stored.serverId).trim() || "default"
   };
+}
+
+export async function fetchConfiguredScopes(): Promise<ServiceScopeOptionDto[]> {
+  return apiRequest<ServiceScopeOptionDto[]>({
+    path: "/api/v1/scopes"
+  });
 }
 
 export async function fetchSwipeDeck(
@@ -106,6 +121,15 @@ export async function register(request: RegisterRequest) {
 export async function login(request: LoginRequest) {
   return apiRequest<AuthResponse>({
     path: "/api/v1/auth/login",
+    method: "POST",
+    auth: false,
+    body: request
+  });
+}
+
+export async function guestLogin(request: GuestLoginRequest = {}) {
+  return apiRequest<AuthResponse>({
+    path: "/api/v1/auth/guest",
     method: "POST",
     auth: false,
     body: request
@@ -166,6 +190,61 @@ export async function fetchMatches(
   return apiRequest<MatchesResponse>({
     path: "/api/v1/matches",
     query: { serviceType: scope.serviceType, serverId: scope.serverId, minUsers, interactionLimit }
+  });
+}
+
+export async function createRoom(request: CreateRoomRequest): Promise<CreateRoomResponse> {
+  return apiRequest<CreateRoomResponse>({
+    path: "/api/v1/rooms",
+    method: "POST",
+    body: request
+  });
+}
+
+export async function joinRoom(roomId: string): Promise<JoinRoomResponse> {
+  return apiRequest<JoinRoomResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/join`,
+    method: "POST"
+  });
+}
+
+export async function getRoom(roomId: string): Promise<RoomStateResponse> {
+  return apiRequest<RoomStateResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}`
+  });
+}
+
+export async function closeRoom(roomId: string): Promise<RoomStateResponse> {
+  return apiRequest<RoomStateResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/close`,
+    method: "POST"
+  });
+}
+
+export async function getRoomJoinUrl(roomId: string): Promise<RoomJoinUrlResponse> {
+  return apiRequest<RoomJoinUrlResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/join-url`
+  });
+}
+
+export async function sendRoomSwipe(roomId: string, tmdbId: number, action: SwipeAction) {
+  return apiRequest({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/swipe`,
+    method: "POST",
+    body: { tmdbId, action }
+  });
+}
+
+export async function fetchRoomSwipeDeck(roomId: string, limit = 10): Promise<SwipeDeckResponse> {
+  return apiRequest<SwipeDeckResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/swipedeck`,
+    query: { limit }
+  });
+}
+
+export async function getRoomMatches(roomId: string): Promise<RoomMatchesResponse> {
+  return apiRequest<RoomMatchesResponse>({
+    path: `/api/v1/rooms/${encodeURIComponent(roomId)}/matches`
   });
 }
 
@@ -272,6 +351,21 @@ export async function adminListUsers(skip = 0, take = 200): Promise<UserDto[]> {
   return apiRequest<UserDto[]>({
     path: "/api/v1/admin/users",
     query: { skip, take }
+  });
+}
+
+export async function adminGetJoinAddressSettings(): Promise<JoinAddressSettingsDto> {
+  return apiRequest<JoinAddressSettingsDto>({
+    path: "/api/v1/admin/join-address",
+    method: "GET"
+  });
+}
+
+export async function adminUpdateJoinAddressSettings(request: UpdateJoinAddressSettingsRequest): Promise<JoinAddressSettingsDto> {
+  return apiRequest<JoinAddressSettingsDto>({
+    path: "/api/v1/admin/join-address",
+    method: "PUT",
+    body: request
   });
 }
 

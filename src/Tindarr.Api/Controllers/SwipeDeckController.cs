@@ -21,11 +21,27 @@ public sealed class SwipeDeckController(ISwipeDeckService swipeDeckService) : Co
             return BadRequest("ServiceType and ServerId are required.");
         }
 
-        var userId = User.GetUserId();
-        var cards = await swipeDeckService.GetDeckAsync(userId, scope!, Math.Clamp(limit, 1, 50), cancellationToken);
-        var response = new SwipeDeckResponse(scope!.ServiceType.ToString().ToLowerInvariant(), scope.ServerId, cards.Select(Map).ToList());
+        try
+        {
+            var userId = User.GetUserId();
+            var cards = await swipeDeckService.GetDeckAsync(userId, scope!, Math.Clamp(limit, 1, 50), cancellationToken);
+            var response = new SwipeDeckResponse(scope!.ServiceType.ToString().ToLowerInvariant(), scope.ServerId, cards.Select(Map).ToList());
 
-        return Ok(response);
+            return Ok(response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Common for "not configured" states (e.g., Plex not authenticated).
+            return BadRequest(ex.Message);
+        }
+        catch (HttpRequestException ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway, ex.Message);
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(StatusCodes.Status504GatewayTimeout, "Upstream request timed out.");
+        }
     }
 
     private static SwipeCardDto Map(SwipeCard card)

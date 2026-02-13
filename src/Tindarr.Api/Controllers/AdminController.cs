@@ -20,10 +20,42 @@ namespace Tindarr.Api.Controllers;
 public sealed class AdminController(
 	IUserRepository users,
 	IInteractionStore interactionStore,
+	IJoinAddressSettingsRepository joinAddressSettings,
 	IPasswordHasher passwordHasher,
 	IOptions<RegistrationOptions> registrationOptions) : ControllerBase
 {
 	private readonly RegistrationOptions registration = registrationOptions.Value;
+
+	[HttpGet("join-address")]
+	public async Task<ActionResult<JoinAddressSettingsDto>> GetJoinAddressSettings(CancellationToken cancellationToken)
+	{
+		var settings = await joinAddressSettings.GetAsync(cancellationToken);
+		if (settings is null)
+		{
+			return Ok(new JoinAddressSettingsDto(null, null, DateTimeOffset.UtcNow.ToString("O")));
+		}
+
+		return Ok(new JoinAddressSettingsDto(settings.LanHostPort, settings.WanHostPort, settings.UpdatedAtUtc.ToString("O")));
+	}
+
+	[HttpPut("join-address")]
+	public async Task<ActionResult<JoinAddressSettingsDto>> UpdateJoinAddressSettings([FromBody] UpdateJoinAddressSettingsRequest request, CancellationToken cancellationToken)
+	{
+		string? lan;
+		string? wan;
+		try
+		{
+			lan = NormalizeHostPort(request.LanHostPort, "LanHostPort");
+			wan = NormalizeHostPort(request.WanHostPort, "WanHostPort");
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+
+		var updated = await joinAddressSettings.UpsertAsync(new JoinAddressSettingsUpsert(lan, wan), cancellationToken);
+		return Ok(new JoinAddressSettingsDto(updated.LanHostPort, updated.WanHostPort, updated.UpdatedAtUtc.ToString("O")));
+	}
 
 	[HttpGet("users")]
 	public async Task<ActionResult<IReadOnlyList<UserDto>>> ListUsers([FromQuery] int skip = 0, [FromQuery] int take = 100, CancellationToken cancellationToken = default)
@@ -257,6 +289,58 @@ public sealed class AdminController(
 		if (string.IsNullOrWhiteSpace(v))
 		{
 			throw new ArgumentException("DisplayName is required.");
+		}
+
+		return v;
+	}
+
+	private static string? NormalizeHostPort(string? value, string fieldName)
+	{
+		var v = (value ?? string.Empty).Trim();
+		if (string.IsNullOrWhiteSpace(v))
+		{
+			return null;
+		}
+
+		if (v.Contains("://", StringComparison.OrdinalIgnoreCase))
+		{
+			throw new ArgumentException($"{fieldName} must be in the form host:port (no scheme).");
+		}
+
+		if (v.Contains('/') || v.Contains('?') || v.Contains('#'))
+		{
+			throw new ArgumentException($"{fieldName} must be in the form host:port (no path/query/fragment).");
+		}
+
+		// Require explicit port.
+		if (v.StartsWith('['))
+		{
+			if (!v.Contains("]:", StringComparison.Ordinal))
+			{
+				throw new ArgumentException($"{fieldName} must include an explicit port.");
+			}
+		}
+		else
+		{
+			if (!v.Contains(':', StringComparison.Ordinal))
+			{
+				throw new ArgumentException($"{fieldName} must include an explicit port.");
+			}
+		}
+
+		if (!Uri.TryCreate("http://" + v, UriKind.Absolute, out var uri))
+		{
+			throw new ArgumentException($"{fieldName} is not a valid host:port value.");
+		}
+
+		if (string.IsNullOrWhiteSpace(uri.Host))
+		{
+			throw new ArgumentException($"{fieldName} must include a host.");
+		}
+
+		if (uri.Port < 1 || uri.Port > 65535)
+		{
+			throw new ArgumentException($"{fieldName} must have a valid port (1-65535).");
 		}
 
 		return v;
