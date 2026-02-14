@@ -27,6 +27,7 @@ using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Caching;
+using Tindarr.Infrastructure.Casting;
 using Tindarr.Infrastructure.Integrations.Jellyfin;
 using Tindarr.Infrastructure.Integrations.Emby;
 using Tindarr.Infrastructure.Integrations.Radarr;
@@ -34,6 +35,7 @@ using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 using Tindarr.Infrastructure.Interactions;
+using Tindarr.Infrastructure.Playback.Providers;
 using Tindarr.Infrastructure.PlexCache;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
@@ -148,6 +150,11 @@ builder.Services.AddOptions<EmbyOptions>()
 	.Validate(o => o.IsValid(), "Invalid Emby configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<PlaybackOptions>()
+	.BindConfiguration(PlaybackOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Playback configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -165,6 +172,14 @@ builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
 builder.Services.AddSingleton<ITokenSigningKeyStore, DbOrFileTokenSigningKeyStore>();
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
+builder.Services.AddSingleton<IPlaybackTokenService, PlaybackTokenService>();
+builder.Services.AddSingleton<ICastUrlTokenService, CastUrlTokenService>();
+
+builder.Services.AddSingleton<Tindarr.Application.Interfaces.Casting.ICastClient, SharpCasterCastClient>();
+
+builder.Services.AddScoped<Tindarr.Application.Interfaces.Playback.IPlaybackProvider>(sp => sp.GetRequiredService<PlexPlaybackProvider>());
+builder.Services.AddScoped<Tindarr.Application.Interfaces.Playback.IPlaybackProvider>(sp => sp.GetRequiredService<JellyfinPlaybackProvider>());
+builder.Services.AddScoped<Tindarr.Application.Interfaces.Playback.IPlaybackProvider>(sp => sp.GetRequiredService<EmbyPlaybackProvider>());
 
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository>();
@@ -281,6 +296,12 @@ builder.Services.AddHttpClient<IPlexAuthClient, PlexAuthClient>();
 builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
 builder.Services.AddHttpClient<IJellyfinClient, JellyfinClient>();
 builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
+
+builder.Services.AddSingleton<Tindarr.Api.Services.IPlexLibrarySyncJobService, Tindarr.Api.Services.PlexLibrarySyncJobService>();
+
+builder.Services.AddHttpClient<PlexPlaybackProvider>();
+builder.Services.AddHttpClient<JellyfinPlaybackProvider>();
+builder.Services.AddHttpClient<EmbyPlaybackProvider>();
 
 builder.Services.AddScoped<TmdbSwipeDeckSource>();
 builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Plex.PlexSwipeDeckSource>();

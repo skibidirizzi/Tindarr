@@ -179,6 +179,21 @@ export type RoomMatchesResponse = {
   tmdbIds: number[];
 };
 
+export type CastDeviceDto = {
+  id: string;
+  name: string;
+  address: string | null;
+  port: number;
+};
+
+export type CastMovieRequest = {
+  deviceId: string;
+  serviceType: string;
+  serverId: string;
+  tmdbId: number;
+  title?: string | null;
+};
+
 export type MovieDetailsDto = {
   tmdbId: number;
   title: string;
@@ -304,6 +319,33 @@ export type PlexServerDto = {
   online: boolean;
   lastLibrarySyncUtc: string | null;
   updatedAtUtc: string;
+};
+
+export type PlexLibrarySyncStatusDto = {
+  serviceType: string;
+  serverId: string;
+  state: string;
+  totalSections: number;
+  processedSections: number;
+  totalItems: number;
+  processedItems: number;
+  tmdbIdsFound: number;
+  startedAtUtc: string | null;
+  finishedAtUtc: string | null;
+  message: string | null;
+  updatedAtUtc: string;
+};
+
+export type PlexLibraryMissingDetailsItemDto = {
+  tmdbId: number;
+  title: string;
+};
+
+export type PlexLibraryMissingDetailsResponse = {
+  serviceType: string;
+  serverId: string;
+  count: number;
+  items: PlexLibraryMissingDetailsItemDto[];
 };
 
 export type RadarrSettingsDto = {

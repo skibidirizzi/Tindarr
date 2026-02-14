@@ -19,8 +19,10 @@ import {
   jellyfinUpsertSettings,
   plexCreatePin,
   plexGetAuthStatus,
+  plexGetLibrarySyncStatus,
+  plexListLibraryCacheMovies,
   plexListServers,
-  plexSyncLibrary,
+  plexStartLibrarySync,
   plexSyncServers,
   plexVerifyPin,
   radarrGetQualityProfiles,
@@ -43,6 +45,7 @@ import type {
   JellyfinServerDto,
   JoinAddressSettingsDto,
   PlexServerDto,
+  PlexLibrarySyncStatusDto,
   RadarrQualityProfileDto,
   RadarrRootFolderDto,
   RadarrSettingsDto,
@@ -58,6 +61,13 @@ import {
   subscribeTmdbBulkJob,
   type TmdbBulkJob
 } from "../tmdb/tmdbBulkJob";
+import {
+	getPlexBulkJob,
+	startPlexBulkFetchAllDetails,
+	startPlexBulkFetchAllImages,
+	subscribePlexBulkJob,
+	type PlexBulkJob
+} from "../plex/plexBulkJob";
 
 type AdminUserRowState = {
   displayName: string;
@@ -428,7 +438,10 @@ function TmdbTab() {
     setMoviesBusyId(tmdbId);
     setMoviesError(null);
     try {
-      await tmdbFetchMovieImages(tmdbId, { includePoster: true, includeBackdrop: true });
+      const res = await tmdbFetchMovieImages(tmdbId, { includePoster: true, includeBackdrop: true });
+			if (!res.posterFetched && !res.backdropFetched) {
+				setMoviesError(res.message || "No images were fetched. If this movie has no poster/backdrop paths yet, run 'Fill details' first.");
+			}
       await loadMovies(moviesSkip);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to fetch movie images.";
@@ -714,6 +727,7 @@ function TmdbTab() {
                 const hasPoster = Boolean(m.posterPath);
                 const hasBackdrop = Boolean(m.backdropPath);
                 const busy = moviesBusyId === m.tmdbId;
+							const canFetchAnyImages = hasPoster || hasBackdrop;
                 return (
                   <tr key={m.tmdbId} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                     <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>{m.tmdbId}</td>
@@ -1091,6 +1105,22 @@ function PlexTab() {
   const [authStatus, setAuthStatus] = useState<{ hasClientIdentifier: boolean; hasAuthToken: boolean } | null>(null);
   const [pin, setPin] = useState<{ pinId: number; code: string; expiresAtUtc: string; authUrl: string } | null>(null);
   const [servers, setServers] = useState<PlexServerDto[]>([]);
+  const [syncStatus, setSyncStatus] = useState<PlexLibrarySyncStatusDto | null>(null);
+  const syncPollRef = useRef<number | null>(null);
+  const [tmdbCacheSettings, setTmdbCacheSettings] = useState<TmdbCacheSettingsDto | null>(null);
+
+  const [cacheServerId, setCacheServerId] = useState<string>("default");
+  const [moviesLoading, setMoviesLoading] = useState(false);
+  const [moviesError, setMoviesError] = useState<string | null>(null);
+  const [movies, setMovies] = useState<TmdbStoredMovieAdminDto[]>([]);
+  const [moviesSkip, setMoviesSkip] = useState(0);
+  const [moviesNextSkip, setMoviesNextSkip] = useState(0);
+  const [moviesHasMore, setMoviesHasMore] = useState(false);
+  const [missingDetailsOnly, setMissingDetailsOnly] = useState(false);
+  const [missingImagesOnly, setMissingImagesOnly] = useState(false);
+  const [moviesBusyId, setMoviesBusyId] = useState<number | null>(null);
+  const [plexBulkJob, setPlexBulkJob] = useState<PlexBulkJob | null>(() => getPlexBulkJob());
+  const previousBulkRunning = useRef<boolean>(Boolean(getPlexBulkJob()?.running));
 
   const load = async () => {
     setLoading(true);
@@ -1099,6 +1129,18 @@ function PlexTab() {
       const [status, list] = await Promise.all([plexGetAuthStatus(), plexListServers()]);
       setAuthStatus(status);
       setServers(list);
+      if (list.length > 0) {
+        setCacheServerId((prev) => (prev && prev !== "default" ? prev : list[0].serverId));
+      }
+
+			// Best-effort: LocalProxy affects whether image fetching is enabled.
+			// Don't fail Plex loading if TMDB settings can't be read.
+			try {
+				const s = await tmdbGetCacheSettings();
+				setTmdbCacheSettings(s);
+			} catch {
+				setTmdbCacheSettings(null);
+			}
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load Plex status.");
     } finally {
@@ -1106,9 +1148,110 @@ function PlexTab() {
     }
   };
 
+  const localProxyEnabled = tmdbCacheSettings?.posterMode === "LocalProxy" && (tmdbCacheSettings?.imageCacheMaxMb ?? 0) > 0;
+
+  const moviesBulkRunning = Boolean(plexBulkJob?.running);
+
+  const loadMovies = async (skip: number) => {
+    if (!cacheServerId || cacheServerId === "default") {
+      setMovies([]);
+      setMoviesSkip(0);
+      setMoviesNextSkip(0);
+      setMoviesHasMore(false);
+      return;
+    }
+
+    setMoviesLoading(true);
+    setMoviesError(null);
+    try {
+      const res = await plexListLibraryCacheMovies("plex", cacheServerId, {
+        skip,
+        take: 50,
+        missingDetailsOnly,
+        missingImagesOnly
+      });
+      setMovies(res.items);
+      setMoviesSkip(res.skip);
+      setMoviesNextSkip(res.nextSkip);
+      setMoviesHasMore(res.hasMore);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to load Plex cache contents.";
+      setMoviesError(msg);
+    } finally {
+      setMoviesLoading(false);
+    }
+  };
+
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    // Reset to first page whenever toggles change.
+    void loadMovies(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingDetailsOnly, missingImagesOnly]);
+
+  useEffect(() => {
+    if (!cacheServerId || cacheServerId === "default") return;
+    void loadMovies(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cacheServerId]);
+
+  useEffect(() => {
+    return subscribePlexBulkJob(setPlexBulkJob);
+  }, []);
+
+  useEffect(() => {
+    const wasRunning = previousBulkRunning.current;
+    const isNowRunning = Boolean(plexBulkJob?.running);
+    if (wasRunning && !isNowRunning) {
+      void loadMovies(moviesSkip);
+    }
+    previousBulkRunning.current = isNowRunning;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plexBulkJob?.running, moviesSkip]);
+
+  useEffect(() => {
+    const isRunning = syncStatus?.state === "running";
+    const serviceType = syncStatus?.serviceType ?? "plex";
+    const serverId = syncStatus?.serverId ?? "default";
+
+    if (!isRunning) {
+      if (syncPollRef.current) {
+        window.clearInterval(syncPollRef.current);
+        syncPollRef.current = null;
+      }
+      return;
+    }
+
+    if (syncPollRef.current) return;
+
+    syncPollRef.current = window.setInterval(() => {
+      void (async () => {
+        try {
+          const next = await plexGetLibrarySyncStatus(serviceType, serverId);
+          setSyncStatus(next);
+          if (next.state !== "running") {
+            if (syncPollRef.current) {
+              window.clearInterval(syncPollRef.current);
+              syncPollRef.current = null;
+            }
+            await load();
+          }
+        } catch {
+          // best-effort polling
+        }
+      })();
+    }, 1000);
+
+    return () => {
+      if (syncPollRef.current) {
+        window.clearInterval(syncPollRef.current);
+        syncPollRef.current = null;
+      }
+    };
+  }, [syncStatus?.state, syncStatus?.serviceType, syncStatus?.serverId]);
 
   const onCreatePin = async () => {
     setError(null);
@@ -1146,12 +1289,72 @@ function PlexTab() {
   const onSyncLibrary = async (serverId: string) => {
     setError(null);
     try {
-      await plexSyncLibrary("plex", serverId);
-      await load();
+      const started = await plexStartLibrarySync("plex", serverId);
+      setSyncStatus(started);
+			setCacheServerId(serverId);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to sync Plex library.");
     }
   };
+
+  const onFillDetails = async (tmdbId: number) => {
+    setMoviesBusyId(tmdbId);
+    setMoviesError(null);
+    try {
+      await tmdbFillMovieDetails(tmdbId, false);
+      await loadMovies(moviesSkip);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to fill movie details.";
+      setMoviesError(msg);
+    } finally {
+      setMoviesBusyId(null);
+    }
+  };
+
+  const onFetchImages = async (tmdbId: number) => {
+    setMoviesBusyId(tmdbId);
+    setMoviesError(null);
+    try {
+      await tmdbFetchMovieImages(tmdbId, { includePoster: true, includeBackdrop: true });
+      await loadMovies(moviesSkip);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to fetch movie images.";
+      setMoviesError(msg);
+    } finally {
+      setMoviesBusyId(null);
+    }
+  };
+
+  const onFetchAllMissingDetails = async () => {
+    setMoviesError(null);
+    try {
+      await startPlexBulkFetchAllDetails(cacheServerId);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to start bulk details fetch.";
+      setMoviesError(msg);
+    }
+  };
+
+  const onFetchAllMissingImages = async () => {
+    setMoviesError(null);
+    try {
+      await startPlexBulkFetchAllImages(cacheServerId, localProxyEnabled);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to start bulk images fetch.";
+      setMoviesError(msg);
+    }
+  };
+
+  const syncPercent = useMemo(() => {
+    if (!syncStatus) return 0;
+    if (syncStatus.totalItems > 0) {
+      return Math.min(100, Math.max(0, Math.round((syncStatus.processedItems / syncStatus.totalItems) * 100)));
+    }
+    if (syncStatus.totalSections > 0) {
+      return Math.min(100, Math.max(0, Math.round((syncStatus.processedSections / syncStatus.totalSections) * 100)));
+    }
+    return syncStatus.state === "running" ? 1 : 0;
+  }, [syncStatus]);
 
   return (
     <>
@@ -1197,6 +1400,25 @@ function PlexTab() {
           </button>
         </div>
 
+        {syncStatus ? (
+          <div style={{ marginTop: "0.75rem" }}>
+            <div style={{ color: "#8c93a6", fontWeight: 700 }}>
+              Library sync ({syncStatus.serverId}): {syncStatus.state}
+              {syncStatus.message ? ` — ${syncStatus.message}` : ""}
+            </div>
+            {syncStatus.state === "running" ? (
+              <>
+                <div style={{ marginTop: "0.25rem", color: "#8c93a6" }}>
+                  {syncStatus.totalItems > 0
+                    ? `${syncStatus.processedItems}/${syncStatus.totalItems} items`
+                    : `${syncStatus.processedSections}/${syncStatus.totalSections} sections`} — {syncPercent}%
+                </div>
+                <progress value={syncPercent} max={100} style={{ width: "100%", marginTop: "0.25rem" }} />
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
         {servers.length === 0 ? <div className="deck__state">No Plex servers found.</div> : null}
 
         {servers.length ? (
@@ -1227,6 +1449,115 @@ function PlexTab() {
             </table>
           </div>
         ) : null}
+
+      <h4 style={{ marginTop: "1rem" }}>Cache contents</h4>
+      <div className="deck__state" style={{ textAlign: "left" }}>
+        <p style={{ marginTop: 0 }}>
+          Browse the stored TMDB movie records for this Plex server and repair missing details or cached images.
+        </p>
+
+        {moviesLoading ? <div className="deck__state">Loading movies…</div> : null}
+        {moviesError ? <div className="deck__state deck__state--error">{moviesError}</div> : null}
+
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <label style={{ display: "grid", gap: "0.25rem" }}>
+            <span>Server</span>
+            <select
+              className="input"
+              value={cacheServerId}
+              onChange={(e) => setCacheServerId(e.target.value)}
+              disabled={servers.length === 0 || moviesLoading || moviesBulkRunning}
+            >
+              {servers.map((s) => (
+                <option key={s.serverId} value={s.serverId}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <input type="checkbox" checked={missingDetailsOnly} onChange={(e) => setMissingDetailsOnly(e.target.checked)} disabled={moviesBulkRunning} />
+            <span>Missing details only</span>
+          </label>
+
+          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <input type="checkbox" checked={missingImagesOnly} onChange={(e) => setMissingImagesOnly(e.target.checked)} disabled={moviesBulkRunning} />
+            <span>Missing images only</span>
+          </label>
+
+          <button type="button" className="button" onClick={onFetchAllMissingDetails} disabled={moviesLoading || moviesBulkRunning}>
+            Fetch all details
+          </button>
+
+          <button type="button" className="button" onClick={onFetchAllMissingImages} disabled={moviesLoading || moviesBulkRunning || !localProxyEnabled}>
+            Fetch all images
+          </button>
+
+          <button type="button" className="button button--neutral" onClick={() => void loadMovies(0)} disabled={moviesLoading}>
+            Refresh list
+          </button>
+
+          <button type="button" className="button button--neutral" onClick={() => void loadMovies(Math.max(0, moviesSkip - 50))} disabled={moviesLoading || moviesSkip <= 0}>
+            Prev
+          </button>
+
+          <button type="button" className="button button--neutral" onClick={() => void loadMovies(moviesNextSkip)} disabled={moviesLoading || !moviesHasMore}>
+            Next
+          </button>
+        </div>
+
+        <div style={{ marginTop: "0.75rem", overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>TMDB</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Title</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Details</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Poster</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Backdrop</th>
+                <th style={{ textAlign: "left", padding: "0.5rem" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {movies.map((m) => {
+                const hasDetails = Boolean(m.detailsFetchedAtUtc);
+                const hasPoster = Boolean(m.posterPath);
+                const hasBackdrop = Boolean(m.backdropPath);
+                const busy = moviesBusyId === m.tmdbId;
+							const canFetchAnyImages = hasPoster || hasBackdrop;
+                return (
+                  <tr key={m.tmdbId} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                    <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>{m.tmdbId}</td>
+                    <td style={{ padding: "0.5rem" }}>{m.title}{m.releaseYear ? ` (${m.releaseYear})` : ""}</td>
+                    <td style={{ padding: "0.5rem" }}>{hasDetails ? "Yes" : "No"}</td>
+                    <td style={{ padding: "0.5rem" }}>
+                      {hasPoster ? (localProxyEnabled ? (m.posterCached ? "Cached" : "Missing") : "N/A") : "—"}
+                    </td>
+                    <td style={{ padding: "0.5rem" }}>
+                      {hasBackdrop ? (localProxyEnabled ? (m.backdropCached ? "Cached" : "Missing") : "N/A") : "—"}
+                    </td>
+                    <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>
+                      <button type="button" className="button button--neutral" onClick={() => void onFillDetails(m.tmdbId)} disabled={busy}>
+                        {busy ? "Working…" : "Fill details"}
+                      </button>
+                      <button type="button" className="button button--neutral" onClick={() => void onFetchImages(m.tmdbId)} disabled={busy || !localProxyEnabled || !canFetchAnyImages} style={{ marginLeft: "0.5rem" }}>
+                        {busy ? "Working…" : "Fetch images"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {!moviesLoading && movies.length === 0 ? (
+                <tr>
+                  <td style={{ padding: "0.5rem" }} colSpan={6}>No movies found.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </div>
       </div>
     </>
   );

@@ -19,9 +19,18 @@ public sealed record TmdbMetadataStats(int MovieCount, long ImageCacheBytes);
 public sealed record TmdbStoredMovie(
 	int TmdbId,
 	string Title,
+	string? Overview,
+	string? ReleaseDate,
 	int? ReleaseYear,
 	string? PosterPath,
 	string? BackdropPath,
+	string? MpaaRating,
+	double? Rating,
+	int? VoteCount,
+	IReadOnlyList<string> Genres,
+	IReadOnlyList<string> Regions,
+	string? OriginalLanguage,
+	int? RuntimeMinutes,
 	DateTimeOffset? DetailsFetchedAtUtc,
 	DateTimeOffset? UpdatedAtUtc);
 
@@ -32,6 +41,8 @@ public interface ITmdbMetadataStore
 	ValueTask<TmdbMetadataSettings> SetSettingsAsync(TmdbMetadataSettings settings, CancellationToken cancellationToken);
 
 	ValueTask<TmdbMetadataStats> GetStatsAsync(CancellationToken cancellationToken);
+
+	Task UpsertMoviesAsync(IReadOnlyList<TmdbDiscoverMovieRecord> movies, CancellationToken cancellationToken);
 
 	Task AddToUserPoolAsync(string userId, IReadOnlyList<TmdbDiscoverMovieRecord> discovered, CancellationToken cancellationToken);
 

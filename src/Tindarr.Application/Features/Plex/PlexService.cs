@@ -17,11 +17,11 @@ public sealed class PlexService(
 	IPlexLibraryClient libraryClient,
 	IServiceSettingsRepository settingsRepo,
 	IPlexLibraryCacheRepository plexLibraryCache,
-	ITmdbClient tmdbClient,
-	ITmdbCache tmdbCache,
+	IPlexDeckIndexRepository plexDeckIndex,
+	ITmdbMetadataStore tmdbMetadataStore,
+	IOptions<TmdbOptions> tmdbOptions,
 	ILanAddressResolver lanAddressResolver,
 	IOptions<PlexOptions> options,
-	IOptions<TmdbOptions> tmdbOptions,
 	ILogger<PlexService> logger) : IPlexService
 {
 	private static readonly IReadOnlyDictionary<int, string> TmdbGenreMap = new Dictionary<int, string>
@@ -157,41 +157,113 @@ public sealed class PlexService(
 
 	public async Task<PlexLibrarySyncResult> SyncLibraryAsync(ServiceScope scope, CancellationToken cancellationToken)
 	{
+		return await SyncLibraryCoreAsync(scope, progress: null, cancellationToken).ConfigureAwait(false);
+	}
+
+	public Task<PlexLibrarySyncResult> SyncLibraryWithProgressAsync(
+		ServiceScope scope,
+		IProgress<PlexLibrarySyncProgress> progress,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(progress);
+		return SyncLibraryCoreAsync(scope, progress, cancellationToken);
+	}
+
+	private async Task<PlexLibrarySyncResult> SyncLibraryCoreAsync(
+		ServiceScope scope,
+		IProgress<PlexLibrarySyncProgress>? progress,
+		CancellationToken cancellationToken)
+	{
 		scope = await ResolveDefaultServerScopeAsync(scope, cancellationToken).ConfigureAwait(false);
-		var settings = await RequireServerAsync(scope, cancellationToken);
-		var account = await EnsureAccountAsync(cancellationToken);
+		var settings = await RequireServerAsync(scope, cancellationToken).ConfigureAwait(false);
+		var account = await EnsureAccountAsync(cancellationToken).ConfigureAwait(false);
 		var accessToken = ResolveAccessToken(settings, account);
 
 		var baseUrl = NormalizePlexBaseUrl(settings.PlexServerUri!);
+		var connection = new PlexServerConnectionInfo(baseUrl, accessToken, account.PlexClientIdentifier!);
 
-		var connection = new PlexServerConnectionInfo(
-			baseUrl,
-			accessToken,
-			account.PlexClientIdentifier!);
+		var sections = await libraryClient.GetMovieSectionsAsync(connection, cancellationToken).ConfigureAwait(false);
+		var totalSections = sections.Count;
+		var processedSections = 0;
+		var totalItems = 0;
+		var processedItems = 0;
 
-		var sections = await libraryClient.GetMovieSectionsAsync(connection, cancellationToken);
 		var tmdbIds = new HashSet<int>();
+		var libraryItems = new List<PlexLibraryItem>();
+
+		progress?.Report(new PlexLibrarySyncProgress(
+			TotalSections: totalSections,
+			ProcessedSections: processedSections,
+			TotalItems: totalItems,
+			ProcessedItems: processedItems,
+			TmdbIdsFound: tmdbIds.Count,
+			CurrentSectionTitle: null));
+
 		foreach (var section in sections)
 		{
-			var items = await libraryClient.GetLibraryItemsAsync(connection, section.Key, cancellationToken);
+			var items = await libraryClient.GetLibraryItemsAsync(connection, section.Key, cancellationToken).ConfigureAwait(false);
+			totalItems += items.Count;
 			foreach (var item in items)
 			{
 				if (item.TmdbId > 0)
 				{
 					tmdbIds.Add(item.TmdbId);
+					libraryItems.Add(item);
 				}
+				processedItems++;
 			}
+
+			processedSections++;
+			progress?.Report(new PlexLibrarySyncProgress(
+				TotalSections: totalSections,
+				ProcessedSections: processedSections,
+				TotalItems: totalItems,
+				ProcessedItems: processedItems,
+				TmdbIdsFound: tmdbIds.Count,
+				CurrentSectionTitle: section.Title));
 		}
 
 		var now = DateTimeOffset.UtcNow;
-		await plexLibraryCache.ReplaceTmdbIdsAsync(scope, tmdbIds.ToList(), now, cancellationToken);
-		await UpdateServerAsync(settings, plexLastLibrarySyncUtc: now, cancellationToken: cancellationToken);
+		await plexLibraryCache.ReplaceItemsAsync(scope, libraryItems, now, cancellationToken).ConfigureAwait(false);
+		await UpdateServerAsync(settings, plexLastLibrarySyncUtc: now, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-		var warmCount = Math.Min(200, tmdbIds.Count);
-		if (warmCount > 0)
+		// Seed local TMDB metadata store with IDs/titles from Plex.
+		// Details/images are fetched later via explicit admin actions.
+		var seeds = libraryItems
+			.GroupBy(x => x.TmdbId)
+			.Select(g =>
+			{
+				var title = g.Select(x => x.Title).FirstOrDefault(t => !string.IsNullOrWhiteSpace(t));
+				return new TmdbDiscoverMovieRecord(
+					Id: g.Key,
+					Title: title,
+					OriginalTitle: null,
+					Overview: null,
+					PosterPath: null,
+					BackdropPath: null,
+					ReleaseDate: null,
+					OriginalLanguage: null,
+					VoteAverage: null,
+					GenreIds: null);
+			})
+			.ToList();
+
+		try
 		{
-			await EnrichTmdbAsync(tmdbIds.Take(warmCount).ToList(), cancellationToken).ConfigureAwait(false);
+			await tmdbMetadataStore.UpsertMoviesAsync(seeds, cancellationToken).ConfigureAwait(false);
 		}
+		catch
+		{
+			// best-effort; library sync should still succeed even if seeding fails
+		}
+
+		progress?.Report(new PlexLibrarySyncProgress(
+			TotalSections: totalSections,
+			ProcessedSections: processedSections,
+			TotalItems: totalItems,
+			ProcessedItems: processedItems,
+			TmdbIdsFound: tmdbIds.Count,
+			CurrentSectionTitle: null));
 
 		return new PlexLibrarySyncResult(tmdbIds.Count, now);
 	}
@@ -239,7 +311,7 @@ public sealed class PlexService(
 			return [];
 		}
 
-		return await BuildLibraryFromTmdbIdsAsync(ids, preferences, limit, cancellationToken).ConfigureAwait(false);
+		return await BuildLibraryFromTmdbIdsAsync(scope, ids, preferences, limit, cancellationToken).ConfigureAwait(false);
 	}
 
 	public async Task<IReadOnlyList<MovieDetailsDto>> GetCachedLibraryAsync(
@@ -264,38 +336,44 @@ public sealed class PlexService(
 			return [];
 		}
 
-		return await BuildLibraryFromTmdbIdsAsync(ids, preferences, limit, cancellationToken).ConfigureAwait(false);
+		return await BuildLibraryFromTmdbIdsAsync(scope, ids, preferences, limit, cancellationToken).ConfigureAwait(false);
 	}
 
 	private async Task<IReadOnlyList<MovieDetailsDto>> BuildLibraryFromTmdbIdsAsync(
+		ServiceScope scope,
 		IReadOnlyCollection<int> ids,
 		UserPreferencesRecord preferences,
 		int limit,
 		CancellationToken cancellationToken)
 	{
-
-		var detailsTtlSeconds = Math.Clamp(_tmdbOptions.DetailsCacheSeconds, 1, 60 * 60 * 24 * 30);
-		var detailsTtl = TimeSpan.FromSeconds(detailsTtlSeconds);
-
+		var settings = await tmdbMetadataStore.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
 		var results = new List<MovieDetailsDto>(limit);
+
 		foreach (var tmdbId in ids)
 		{
-			var cacheKey = $"tmdb:movie_details:{tmdbId}";
-			var details = await tmdbCache.GetAsync<MovieDetailsDto>(cacheKey, cancellationToken).ConfigureAwait(false);
-			if (details is null)
-			{
-				details = await tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken).ConfigureAwait(false);
-				if (details is not null)
-				{
-					await tmdbCache.SetAsync(cacheKey, details, detailsTtl, cancellationToken).ConfigureAwait(false);
-				}
-			}
-			if (details is null)
+			var stored = await tmdbMetadataStore.GetMovieAsync(tmdbId, cancellationToken).ConfigureAwait(false);
+			if (stored is null)
 			{
 				continue;
 			}
 
-			if (!MatchesPreferences(details, preferences))
+			var details = new MovieDetailsDto(
+				TmdbId: stored.TmdbId,
+				Title: stored.Title,
+				Overview: stored.Overview,
+				PosterUrl: BuildImageUrl(settings, _tmdbOptions.ImageBaseUrl, stored.PosterPath, _tmdbOptions.PosterSize),
+				BackdropUrl: BuildImageUrl(settings, _tmdbOptions.ImageBaseUrl, stored.BackdropPath, _tmdbOptions.BackdropSize),
+				ReleaseDate: stored.ReleaseDate,
+				ReleaseYear: stored.ReleaseYear,
+				MpaaRating: stored.MpaaRating,
+				Rating: stored.Rating,
+				VoteCount: stored.VoteCount,
+				Genres: stored.Genres,
+				Regions: stored.Regions,
+				OriginalLanguage: stored.OriginalLanguage,
+				RuntimeMinutes: stored.RuntimeMinutes);
+
+			if (!MatchesPreferencesLoosely(details, preferences))
 			{
 				continue;
 			}
@@ -305,6 +383,19 @@ public sealed class PlexService(
 			{
 				break;
 			}
+		}
+
+		// Legacy optimization: keep the deck index warm when we have enough metadata.
+		try
+		{
+			if (results.Count > 0)
+			{
+				await plexDeckIndex.UpsertAsync(scope, results, DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+			}
+		}
+		catch
+		{
+			// best-effort
 		}
 
 		return results;
@@ -525,35 +616,11 @@ public sealed class PlexService(
 		return discovered;
 	}
 
-	private async Task EnrichTmdbAsync(IReadOnlyCollection<int> tmdbIds, CancellationToken cancellationToken)
-	{
-		if (tmdbIds.Count == 0)
-		{
-			return;
-		}
-
-		var maxConcurrency = Math.Clamp(_options.EnrichmentConcurrency, 1, 32);
-		await Parallel.ForEachAsync(
-			tmdbIds,
-			new ParallelOptions { MaxDegreeOfParallelism = maxConcurrency, CancellationToken = cancellationToken },
-			async (id, ct) =>
-			{
-				try
-				{
-					_ = await tmdbClient.GetMovieDetailsAsync(id, ct).ConfigureAwait(false);
-				}
-				catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-				{
-					logger.LogWarning(ex, "tmdb enrichment failed. TmdbId={TmdbId}", id);
-				}
-			});
-	}
-
-	private static bool MatchesPreferences(MovieDetailsDto details, UserPreferencesRecord preferences)
+	private static bool MatchesPreferencesLoosely(MovieDetailsDto details, UserPreferencesRecord preferences)
 	{
 		if (preferences.MinReleaseYear is { } minYear)
 		{
-			if (details.ReleaseYear is null || details.ReleaseYear.Value < minYear)
+			if (details.ReleaseYear is { } year && year < minYear)
 			{
 				return false;
 			}
@@ -561,7 +628,7 @@ public sealed class PlexService(
 
 		if (preferences.MaxReleaseYear is { } maxYear)
 		{
-			if (details.ReleaseYear is null || details.ReleaseYear.Value > maxYear)
+			if (details.ReleaseYear is { } year && year > maxYear)
 			{
 				return false;
 			}
@@ -569,7 +636,7 @@ public sealed class PlexService(
 
 		if (preferences.MinRating is { } minRating)
 		{
-			if (details.Rating is null || details.Rating.Value < minRating)
+			if (details.Rating is { } rating && rating < minRating)
 			{
 				return false;
 			}
@@ -577,7 +644,7 @@ public sealed class PlexService(
 
 		if (preferences.MaxRating is { } maxRating)
 		{
-			if (details.Rating is null || details.Rating.Value > maxRating)
+			if (details.Rating is { } rating && rating > maxRating)
 			{
 				return false;
 			}
@@ -590,6 +657,13 @@ public sealed class PlexService(
 
 		if (preferences.PreferredGenres is { Count: > 0 })
 		{
+			// Plex cards are built from a lightweight TMDB metadata store that does not currently
+			// persist genres. If genres are unknown, do not filter out candidates.
+			if (details.Genres.Count == 0)
+			{
+				return true;
+			}
+
 			var preferred = MapGenreNames(preferences.PreferredGenres);
 			if (preferred.Count > 0 && !details.Genres.Any(g => preferred.Contains(g)))
 			{
@@ -606,7 +680,7 @@ public sealed class PlexService(
 			}
 		}
 
-		if (preferences.PreferredRegions is { Count: > 0 })
+		if (preferences.PreferredRegions is { Count: > 0 } && details.Regions.Count > 0)
 		{
 			if (!MatchesRegions(details.Regions, preferences.PreferredRegions))
 			{
@@ -614,7 +688,7 @@ public sealed class PlexService(
 			}
 		}
 
-		if (preferences.ExcludedRegions is { Count: > 0 })
+		if (preferences.ExcludedRegions is { Count: > 0 } && details.Regions.Count > 0)
 		{
 			if (MatchesRegions(details.Regions, preferences.ExcludedRegions))
 			{
@@ -626,7 +700,7 @@ public sealed class PlexService(
 		{
 			if (string.IsNullOrWhiteSpace(details.OriginalLanguage))
 			{
-				return false;
+				return true;
 			}
 
 			if (!preferences.PreferredOriginalLanguages.Contains(details.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
@@ -644,6 +718,34 @@ public sealed class PlexService(
 		}
 
 		return true;
+	}
+
+	private static string? BuildImageUrl(TmdbMetadataSettings settings, string imageBaseUrl, string? path, string size)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return null;
+		}
+
+		var normalizedPath = path.Trim();
+		if (normalizedPath.StartsWith('/'))
+		{
+			normalizedPath = normalizedPath.TrimStart('/');
+		}
+
+		var normalizedSize = (size ?? string.Empty).Trim().Trim('/');
+		if (string.IsNullOrWhiteSpace(normalizedSize))
+		{
+			normalizedSize = "original";
+		}
+
+		if (settings.PosterMode == TmdbPosterMode.LocalProxy && settings.ImageCacheMaxMb > 0)
+		{
+			return $"/api/v1/tmdb/images/{normalizedSize}/{normalizedPath}";
+		}
+
+		var normalizedBase = (imageBaseUrl ?? string.Empty).TrimEnd('/');
+		return $"{normalizedBase}/{normalizedSize}/{normalizedPath}";
 	}
 
 	private static bool MatchesRegions(IReadOnlyList<string> regions, IReadOnlyList<string> preferredRegions)

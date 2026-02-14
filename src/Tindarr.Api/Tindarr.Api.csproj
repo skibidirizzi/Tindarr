@@ -3,6 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+	<SpaDistDir>..\..\ui\dist\</SpaDistDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,5 +20,18 @@
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="8.0.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.0" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
+
+	<Target Name="CopySpaDistToWwwroot" AfterTargets="Build">
+		<ItemGroup Condition="Exists('$(SpaDistDir)')">
+			<SpaDistFiles Include="$(SpaDistDir)**\*.*" />
+		</ItemGroup>
+
+		<Copy
+			SourceFiles="@(SpaDistFiles)"
+			DestinationFiles="@(SpaDistFiles->'$(MSBuildProjectDirectory)\wwwroot\%(RecursiveDir)%(Filename)%(Extension)')"
+			SkipUnchangedFiles="true"
+			Condition="@(SpaDistFiles) != ''" />
+	</Target>
 </Project>

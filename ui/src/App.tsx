@@ -11,6 +11,7 @@ import RoomPage from "./pages/RoomPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import { useAuth } from "./auth/AuthContext";
 import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
+import PlexBulkJobToast from "./components/PlexBulkJobToast";
 import { fetchConfiguredScopes } from "./api/client";
 import type { ServiceScopeOptionDto } from "./api/contracts";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, type ServiceScope } from "./serviceScope";
@@ -210,6 +211,7 @@ function AppLayout() {
       </main>
 
       <TmdbBulkJobToast />
+      <PlexBulkJobToast />
     </div>
   );
 }
