@@ -22,6 +22,8 @@ import type {
   PlexPinCreateResponse,
   PlexPinStatusResponse,
   PlexServerDto,
+  PlexLibrarySyncStatusDto,
+  PlexLibraryMissingDetailsResponse,
   RadarrQualityProfileDto,
   RadarrRootFolderDto,
   RadarrSettingsDto,
@@ -52,7 +54,9 @@ import type {
   JoinRoomResponse,
   RoomJoinUrlResponse,
   RoomMatchesResponse,
-  RoomStateResponse
+  RoomStateResponse,
+  CastDeviceDto,
+  CastMovieRequest
 } from "./contracts";
 import { ApiError, apiRequest } from "./http";
 import { getCachedJson, setCachedJson } from "./localCache";
@@ -66,6 +70,7 @@ function resolveScope(serviceType?: string, serverId?: string) {
 }
 
 export async function fetchConfiguredScopes(): Promise<ServiceScopeOptionDto[]> {
+
   return apiRequest<ServiceScopeOptionDto[]>({
     path: "/api/v1/scopes"
   });
@@ -245,6 +250,28 @@ export async function fetchRoomSwipeDeck(roomId: string, limit = 10): Promise<Sw
 export async function getRoomMatches(roomId: string): Promise<RoomMatchesResponse> {
   return apiRequest<RoomMatchesResponse>({
     path: `/api/v1/rooms/${encodeURIComponent(roomId)}/matches`
+  });
+}
+
+export async function listCastDevices(): Promise<CastDeviceDto[]> {
+  return apiRequest<CastDeviceDto[]>({
+    path: "/api/v1/casting/devices"
+  });
+}
+
+export async function castRoomQr(roomId: string, deviceId: string): Promise<void> {
+  await apiRequest<void>({
+    path: `/api/v1/casting/rooms/${encodeURIComponent(roomId)}/qr`,
+    method: "POST",
+    body: { deviceId }
+  });
+}
+
+export async function castMovie(request: CastMovieRequest): Promise<void> {
+  await apiRequest<void>({
+    path: "/api/v1/casting/movie",
+    method: "POST",
+    body: request
   });
 }
 
@@ -467,6 +494,51 @@ export async function plexSyncLibrary(serviceType: string, serverId: string) {
     path: "/api/v1/plex/library/sync",
     method: "POST",
     query: { serviceType, serverId }
+  });
+}
+
+export async function plexStartLibrarySync(serviceType: string, serverId: string): Promise<PlexLibrarySyncStatusDto> {
+  return apiRequest<PlexLibrarySyncStatusDto>({
+    path: "/api/v1/plex/library/sync/async",
+    method: "POST",
+    query: { serviceType, serverId }
+  });
+}
+
+export async function plexGetLibrarySyncStatus(serviceType: string, serverId: string): Promise<PlexLibrarySyncStatusDto> {
+  return apiRequest<PlexLibrarySyncStatusDto>({
+    path: "/api/v1/plex/library/sync/status",
+    query: { serviceType, serverId }
+  });
+}
+
+export async function plexListLibraryCacheMovies(
+  serviceType: string,
+  serverId: string,
+  params: {
+    skip?: number;
+    take?: number;
+    missingDetailsOnly?: boolean;
+    missingImagesOnly?: boolean;
+  } = {}
+): Promise<TmdbStoredMovieAdminListResponse> {
+  return apiRequest<TmdbStoredMovieAdminListResponse>({
+    path: "/api/v1/plex/library/cache/movies",
+    query: {
+      serviceType,
+      serverId,
+      skip: params.skip ?? 0,
+      take: params.take ?? 50,
+      missingDetailsOnly: params.missingDetailsOnly ?? false,
+      missingImagesOnly: params.missingImagesOnly ?? false
+    }
+  });
+}
+
+export async function plexListLibraryMissingDetails(serviceType: string, serverId: string, take = 100): Promise<PlexLibraryMissingDetailsResponse> {
+  return apiRequest<PlexLibraryMissingDetailsResponse>({
+    path: "/api/v1/plex/library/missing-details",
+    query: { serviceType, serverId, take }
   });
 }
 

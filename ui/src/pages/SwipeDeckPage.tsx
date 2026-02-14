@@ -333,7 +333,7 @@ export default function SwipeDeckPage() {
         <div className="deck__state">
           No movies returned.
           <div style={{ marginTop: "0.5rem", color: "#8c93a6" }}>
-            If this is unexpected, check your TMDB configuration (TMDB_API_KEY) and preferences, then refresh.
+            If this is unexpected, check your service configuration (TMDB/Plex/Jellyfin/Emby), library sync status, and preferences, then refresh.
           </div>
         </div>
       ) : null}

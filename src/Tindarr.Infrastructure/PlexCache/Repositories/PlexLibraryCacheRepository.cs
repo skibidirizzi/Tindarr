@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Domain.Common;
 using Tindarr.Infrastructure.PlexCache.Entities;
@@ -25,6 +26,58 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 		return ids;
 	}
 
+	public async Task<IReadOnlyList<PlexLibraryItem>> ListItemsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return Array.Empty<PlexLibraryItem>();
+		}
+
+		skip = Math.Max(0, skip);
+		take = Math.Clamp(take, 1, 500);
+
+		var rows = await db.LibraryItems
+			.AsNoTracking()
+			.Where(x => x.ServerId == scope.ServerId)
+			.OrderByDescending(x => x.UpdatedAtUtc)
+			.ThenBy(x => x.TmdbId)
+			.Skip(skip)
+			.Take(take)
+			.Select(x => new { x.TmdbId, x.Title, x.RatingKey })
+			.ToListAsync(cancellationToken)
+			.ConfigureAwait(false);
+
+		return rows
+			.Where(x => x.TmdbId > 0)
+			.Select(x => new PlexLibraryItem(
+				TmdbId: x.TmdbId,
+				Title: string.IsNullOrWhiteSpace(x.Title) ? $"TMDB:{x.TmdbId}" : x.Title!,
+				RatingKey: string.IsNullOrWhiteSpace(x.RatingKey) ? null : x.RatingKey,
+				Guid: null))
+			.ToList();
+	}
+
+	public async Task<string?> TryGetRatingKeyAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return null;
+		}
+		if (tmdbId <= 0)
+		{
+			return null;
+		}
+
+		// Prefer a non-null rating key if present.
+		return await db.LibraryItems
+			.AsNoTracking()
+			.Where(x => x.ServerId == scope.ServerId && x.TmdbId == tmdbId)
+			.OrderByDescending(x => x.RatingKey != null)
+			.Select(x => x.RatingKey)
+			.FirstOrDefaultAsync(cancellationToken)
+			.ConfigureAwait(false);
+	}
+
 	public async Task ReplaceTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
 	{
 		if (scope.ServiceType != ServiceType.Plex)
@@ -37,6 +90,56 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 			.ExecuteDeleteAsync(cancellationToken);
 
 		await AddTmdbIdsAsync(scope, tmdbIds, syncedAtUtc, cancellationToken);
+	}
+
+	public async Task ReplaceItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return;
+		}
+
+		await db.LibraryItems
+			.Where(x => x.ServerId == scope.ServerId)
+			.ExecuteDeleteAsync(cancellationToken)
+			.ConfigureAwait(false);
+
+		if (items.Count == 0)
+		{
+			return;
+		}
+
+		var rows = items
+			.Where(x => x.TmdbId > 0)
+			.GroupBy(x => x.TmdbId)
+			.Select(g =>
+			{
+				var best = g.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.RatingKey)) ?? g.First();
+				return new PlexLibraryCacheItemEntity
+				{
+					ServerId = scope.ServerId,
+					TmdbId = g.Key,
+					RatingKey = string.IsNullOrWhiteSpace(best.RatingKey) ? null : best.RatingKey!.Trim(),
+					Title = string.IsNullOrWhiteSpace(best.Title) ? null : best.Title.Trim(),
+					UpdatedAtUtc = syncedAtUtc
+				};
+			})
+			.ToList();
+
+		if (rows.Count == 0)
+		{
+			return;
+		}
+
+		db.LibraryItems.AddRange(rows);
+		try
+		{
+			await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+		}
+		catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+		{
+			// Ignore duplicates (unique constraint).
+		}
 	}
 
 	public async Task AddTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)

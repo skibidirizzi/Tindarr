@@ -42,6 +42,7 @@ public static class PlexCacheServiceCollectionExtensions
 		});
 
 		services.AddScoped<IPlexLibraryCacheRepository, PlexLibraryCacheRepository>();
+		services.AddScoped<IPlexDeckIndexRepository, PlexDeckIndexRepository>();
 		return services;
 	}
 

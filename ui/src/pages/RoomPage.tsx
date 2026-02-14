@@ -4,8 +4,8 @@ import QRCode from "qrcode";
 import SwipeCardComponent from "../components/SwipeCard";
 import MovieDetailsModal from "../components/MovieDetailsModal";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
-import { closeRoom, createRoom, fetchRoomSwipeDeck, fetchSwipeDeck, getRoom, getRoomJoinUrl, getRoomMatches, joinRoom, sendRoomSwipe } from "../api/client";
-import type { RoomJoinUrlResponse, RoomMatchesResponse, RoomStateResponse } from "../api/contracts";
+import { castRoomQr, closeRoom, createRoom, fetchRoomSwipeDeck, fetchSwipeDeck, getRoom, getRoomJoinUrl, getRoomMatches, joinRoom, listCastDevices, sendRoomSwipe } from "../api/client";
+import type { CastDeviceDto, RoomJoinUrlResponse, RoomMatchesResponse, RoomStateResponse } from "../api/contracts";
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 import type { SwipeAction, SwipeCard } from "../types";
@@ -23,6 +23,12 @@ export default function RoomPage() {
   const [matches, setMatches] = useState<RoomMatchesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const [castDevices, setCastDevices] = useState<CastDeviceDto[]>([]);
+  const [castDeviceId, setCastDeviceId] = useState<string>("");
+  const [castLoading, setCastLoading] = useState(false);
+  const [casting, setCasting] = useState(false);
+  const [castMessage, setCastMessage] = useState<string | null>(null);
 
   const [cards, setCards] = useState<SwipeCard[]>([]);
   const [deckLoading, setDeckLoading] = useState(false);
@@ -213,6 +219,51 @@ export default function RoomPage() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function onLoadCastDevices() {
+    setCastLoading(true);
+    setCastMessage(null);
+    setError(null);
+    try {
+      const devices = await listCastDevices();
+      setCastDevices(devices);
+      if (devices.length && !castDeviceId) {
+        setCastDeviceId(devices[0].id);
+      }
+      if (!devices.length) {
+        setCastMessage("No cast devices found.");
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message);
+      } else {
+        setError("Failed to discover cast devices.");
+      }
+    } finally {
+      setCastLoading(false);
+    }
+  }
+
+  async function onCastQr() {
+    if (!roomId) return;
+    if (!castDeviceId) return;
+
+    setCasting(true);
+    setCastMessage(null);
+    setError(null);
+    try {
+      await castRoomQr(roomId, castDeviceId);
+      setCastMessage("Casting QR…");
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message);
+      } else {
+        setError("Failed to cast QR.");
+      }
+    } finally {
+      setCasting(false);
     }
   }
 
@@ -435,6 +486,33 @@ export default function RoomPage() {
               <img src={qrDataUrl} width={240} height={240} alt="Room join QR code" />
             </div>
           ) : null}
+
+          <div style={{ marginTop: "0.75rem" }}>
+            <div className="field__label">Cast QR</div>
+            <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+              <button type="button" className="button button--ghost" onClick={onLoadCastDevices} disabled={castLoading || casting}>
+                {castLoading ? "Finding devices…" : "Find devices"}
+              </button>
+              <select
+                className="field__input"
+                style={{ minWidth: 220 }}
+                value={castDeviceId}
+                onChange={(e) => setCastDeviceId(e.target.value)}
+                disabled={castLoading || casting || castDevices.length === 0}
+              >
+                {castDevices.length === 0 ? <option value="">No devices</option> : null}
+                {castDevices.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="button" onClick={onCastQr} disabled={casting || castLoading || !castDeviceId}>
+                {casting ? "Casting…" : "Cast QR"}
+              </button>
+            </div>
+            {castMessage ? <div style={{ marginTop: "0.5rem" }}>{castMessage}</div> : null}
+          </div>
         </div>
       ) : null}
 

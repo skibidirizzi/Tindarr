@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError } from "../api/http";
-import { fetchMovieDetails } from "../api/client";
-import type { MovieDetailsDto } from "../api/contracts";
+import { castMovie, fetchMovieDetails, listCastDevices } from "../api/client";
+import type { CastDeviceDto, MovieDetailsDto } from "../api/contracts";
+import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
 
 type MovieDetailsModalProps = {
   tmdbId: number;
@@ -12,6 +13,14 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<MovieDetailsDto | null>(null);
+
+  const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
+
+  const [castDevices, setCastDevices] = useState<CastDeviceDto[]>([]);
+  const [castDeviceId, setCastDeviceId] = useState<string>("");
+  const [castLoading, setCastLoading] = useState(false);
+  const [casting, setCasting] = useState(false);
+  const [castMessage, setCastMessage] = useState<string | null>(null);
 
   const posterUrl = details?.posterUrl ?? null;
 
@@ -41,6 +50,76 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
       }
     })();
   }, [tmdbId]);
+
+  useEffect(() => {
+    function handleScopeUpdated() {
+      setCurrentScope(getServiceScope());
+    }
+
+    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
+  }, []);
+
+  useEffect(() => {
+    // Reset cast state when scope changes.
+    setCastDevices([]);
+    setCastDeviceId("");
+    setCastMessage(null);
+  }, [currentScope.serviceType, currentScope.serverId]);
+
+  const isMediaServerScope = useMemo(() => {
+    return currentScope.serviceType === "plex" || currentScope.serviceType === "jellyfin" || currentScope.serviceType === "emby";
+  }, [currentScope.serviceType]);
+
+  async function onLoadCastDevices() {
+    setCastLoading(true);
+    setCastMessage(null);
+    setError(null);
+    try {
+      const devices = await listCastDevices();
+      setCastDevices(devices);
+      if (devices.length && !castDeviceId) {
+        setCastDeviceId(devices[0].id);
+      }
+      if (!devices.length) {
+        setCastMessage("No cast devices found.");
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message);
+      } else {
+        setError("Failed to discover cast devices.");
+      }
+    } finally {
+      setCastLoading(false);
+    }
+  }
+
+  async function onCastMovie() {
+    if (!castDeviceId) return;
+
+    setCasting(true);
+    setCastMessage(null);
+    setError(null);
+    try {
+      await castMovie({
+        deviceId: castDeviceId,
+        serviceType: currentScope.serviceType,
+        serverId: currentScope.serverId,
+        tmdbId,
+        title: details?.title ?? null
+      });
+      setCastMessage("Casting…");
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message);
+      } else {
+        setError("Failed to cast movie.");
+      }
+    } finally {
+      setCasting(false);
+    }
+  }
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -97,6 +176,35 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
                           <span className="pill__label">{g}</span>
                         </span>
                       ))}
+                    </div>
+                  ) : null}
+
+                  {isMediaServerScope ? (
+                    <div style={{ marginTop: "1rem" }}>
+                      <div className="field__label">Cast</div>
+                      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
+                        <button type="button" className="button button--ghost" onClick={onLoadCastDevices} disabled={castLoading || casting}>
+                          {castLoading ? "Finding devices…" : "Find devices"}
+                        </button>
+                        <select
+                          className="field__input"
+                          style={{ minWidth: 220 }}
+                          value={castDeviceId}
+                          onChange={(e) => setCastDeviceId(e.target.value)}
+                          disabled={castLoading || casting || castDevices.length === 0}
+                        >
+                          {castDevices.length === 0 ? <option value="">No devices</option> : null}
+                          {castDevices.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button type="button" className="button" onClick={onCastMovie} disabled={casting || castLoading || !castDeviceId}>
+                          {casting ? "Casting…" : "Cast"}
+                        </button>
+                      </div>
+                      {castMessage ? <div style={{ marginTop: "0.5rem" }}>{castMessage}</div> : null}
                     </div>
                   ) : null}
                 </div>

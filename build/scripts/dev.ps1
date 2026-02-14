@@ -59,6 +59,26 @@ function Find-FreePort([int]$startPort) {
 	throw "No free TCP port found starting at $startPort."
 }
 
+function Get-PrivateIPv4 {
+	try {
+		$addrs = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+			Where-Object {
+				$ip = $_.IPAddress
+				$ip -and $ip -ne "127.0.0.1" -and (
+					$ip.StartsWith("10.") -or
+					$ip.StartsWith("192.168.") -or
+					($ip.StartsWith("172.") -and ([int]($ip.Split('.')[1])) -ge 16 -and ([int]($ip.Split('.')[1])) -le 31)
+				)
+			} |
+			Select-Object -First 1
+
+		return $addrs.IPAddress
+	}
+	catch {
+		return $null
+	}
+}
+
 function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 	$uiDir = Join-Path $repoRoot "ui"
 	if (-not (Test-Path $uiDir)) { throw "UI directory not found: $uiDir" }
@@ -84,14 +104,23 @@ function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 	}
 }
 
-function Start-Api([string]$repoRoot, [string]$apiUrl, [string]$environment) {
+function Start-Api([string]$repoRoot, [string]$listenUrl, [string]$environment, [string]$lanBaseUrl) {
 	$apiDir = Join-Path $repoRoot "src\Tindarr.Api"
 	if (-not (Test-Path $apiDir)) { throw "API directory not found: $apiDir" }
 
-	Write-Host "Starting API (dotnet watch) at $apiUrl ($environment)..."
+	Write-Host "Starting API (dotnet watch) listening at $listenUrl ($environment)..."
+	if ($lanBaseUrl) {
+		Write-Host "BaseUrl:Lan -> $lanBaseUrl"
+	}
 
-	$env:ASPNETCORE_URLS = $apiUrl
+	$env:ASPNETCORE_URLS = $listenUrl
 	$env:ASPNETCORE_ENVIRONMENT = $environment
+	if ($lanBaseUrl) {
+		$env:BaseUrl__Lan = $lanBaseUrl
+		if (-not $env:BaseUrl__Wan) {
+			$env:BaseUrl__Wan = $lanBaseUrl
+		}
+	}
 
 	Push-Location $apiDir
 	try {
@@ -130,17 +159,41 @@ if (-not $UiOnly) {
 $uiProc = $null
 $apiProc = $null
 
+$uri = [Uri]$effectiveApiUrl
+$apiPort = $uri.Port
+$scheme = $uri.Scheme
+
+# Bind API to all interfaces by default (Chromecast must reach the host).
+$listenHost = $uri.Host
+if ($listenHost -eq "localhost" -or $listenHost -eq "127.0.0.1" -or $listenHost -eq "::1") {
+	$listenHost = "0.0.0.0"
+}
+$listenUrl = "{0}://{1}:{2}" -f $scheme, $listenHost, $apiPort
+
+# Keep Vite proxy target on localhost for easiest browser dev.
+$proxyTarget = $effectiveApiUrl
+if ($uri.Host -eq "0.0.0.0") {
+	$proxyTarget = "{0}://localhost:{1}" -f $scheme, $apiPort
+}
+
+$lanIp = Get-PrivateIPv4
+$lanBaseUrl = $null
+if ($lanIp) {
+	$lanBaseUrl = "{0}://{1}:{2}" -f $scheme, $lanIp, $apiPort
+}
+
 try {
 	if (-not $UiOnly) {
-		$apiProc = Start-Api -repoRoot $repoRoot -apiUrl $effectiveApiUrl -environment $Environment
+		$apiProc = Start-Api -repoRoot $repoRoot -listenUrl $listenUrl -environment $Environment -lanBaseUrl $lanBaseUrl
 	}
 
 	if (-not $ApiOnly) {
-		$uiProc = Start-Ui -repoRoot $repoRoot -apiUrl $effectiveApiUrl -uiPort $UiPort
+		$uiProc = Start-Ui -repoRoot $repoRoot -apiUrl $proxyTarget -uiPort $UiPort
 	}
 
 	Write-Host ""
-	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  ($effectiveApiUrl)" }
+	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  (listen: $listenUrl)" }
+	if ($lanBaseUrl) { Write-Host "LAN Base: $lanBaseUrl" }
 	if ($uiProc)  { Write-Host "UI  PID: $($uiProc.Id)  (http://localhost:$UiPort)" }
 	Write-Host "Press Ctrl+C to stop."
 

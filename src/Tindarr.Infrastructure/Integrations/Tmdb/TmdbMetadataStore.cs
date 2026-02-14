@@ -124,10 +124,14 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 					backdrop_path TEXT NULL,
 					release_date TEXT NULL,
 					release_year INTEGER NULL,
+					mpaa_rating TEXT NULL,
 					original_language TEXT NULL,
 					rating REAL NULL,
+					vote_count INTEGER NULL,
+					runtime_minutes INTEGER NULL,
 					genre_ids_json TEXT NULL,
 					genres_json TEXT NULL,
+					regions_json TEXT NULL,
 					details_fetched_at_utc TEXT NULL,
 					updated_at_utc TEXT NOT NULL
 				);
@@ -156,6 +160,13 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			""";
 
 			await ExecuteNonQueryWithRetryAsync(cmd, cancellationToken).ConfigureAwait(false);
+
+			// Schema evolution: CREATE TABLE IF NOT EXISTS won't add columns for existing installs.
+			// Add columns idempotently.
+			await TryAddColumnAsync(conn, "tmdb_movies", "mpaa_rating TEXT NULL", cancellationToken).ConfigureAwait(false);
+			await TryAddColumnAsync(conn, "tmdb_movies", "vote_count INTEGER NULL", cancellationToken).ConfigureAwait(false);
+			await TryAddColumnAsync(conn, "tmdb_movies", "runtime_minutes INTEGER NULL", cancellationToken).ConfigureAwait(false);
+			await TryAddColumnAsync(conn, "tmdb_movies", "regions_json TEXT NULL", cancellationToken).ConfigureAwait(false);
 
 			await SeedDefaultSettingAsync(conn, SettingsKeyMaxMovies, DefaultMaxMovies.ToString(), cancellationToken).ConfigureAwait(false);
 			await SeedDefaultSettingAsync(conn, SettingsKeyMaxPoolPerUser, DefaultMaxPoolPerUser.ToString(), cancellationToken).ConfigureAwait(false);
@@ -323,6 +334,94 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		};
 
 		return new TmdbMetadataStats(MovieCount: count, ImageCacheBytes: 0);
+	}
+
+	public async Task UpsertMoviesAsync(IReadOnlyList<TmdbDiscoverMovieRecord> movies, CancellationToken cancellationToken)
+	{
+		if (movies.Count == 0)
+		{
+			return;
+		}
+
+		await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+		await using var conn = CreateConnection();
+		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await ApplyConnectionPragmasAsync(conn, cancellationToken).ConfigureAwait(false);
+		await MaybeRunMaintenanceAsync(conn, cancellationToken).ConfigureAwait(false);
+
+		using var tx = conn.BeginTransaction();
+		try
+		{
+			var now = DateTimeOffset.UtcNow.ToString("O");
+			foreach (var m in movies)
+			{
+				if (m.Id <= 0)
+				{
+					continue;
+				}
+
+				var title = (m.Title ?? m.OriginalTitle ?? $"TMDB:{m.Id}").Trim();
+				if (string.IsNullOrWhiteSpace(title))
+				{
+					title = $"TMDB:{m.Id}";
+				}
+
+				var year = TryParseYear(m.ReleaseDate);
+				var genreIdsJson = m.GenreIds is { Count: > 0 } ? JsonSerializer.Serialize(m.GenreIds, Json) : null;
+
+				var upsertMovie = conn.CreateCommand();
+				upsertMovie.Transaction = tx;
+				upsertMovie.CommandText = """
+					INSERT INTO tmdb_movies (
+						tmdb_id, title, original_title, overview, poster_path, backdrop_path,
+						release_date, release_year, original_language, rating, genre_ids_json, updated_at_utc
+					)
+					VALUES (
+						$tmdbId, $title, $originalTitle, $overview, $posterPath, $backdropPath,
+						$releaseDate, $releaseYear, $originalLanguage, $rating, $genreIdsJson, $updatedAt
+					)
+					ON CONFLICT(tmdb_id) DO UPDATE SET
+						title = excluded.title,
+						original_title = COALESCE(excluded.original_title, tmdb_movies.original_title),
+						overview = COALESCE(excluded.overview, tmdb_movies.overview),
+						poster_path = COALESCE(excluded.poster_path, tmdb_movies.poster_path),
+						backdrop_path = COALESCE(excluded.backdrop_path, tmdb_movies.backdrop_path),
+						release_date = COALESCE(excluded.release_date, tmdb_movies.release_date),
+						release_year = COALESCE(excluded.release_year, tmdb_movies.release_year),
+						original_language = COALESCE(excluded.original_language, tmdb_movies.original_language),
+						rating = COALESCE(excluded.rating, tmdb_movies.rating),
+						genre_ids_json = COALESCE(excluded.genre_ids_json, tmdb_movies.genre_ids_json),
+						updated_at_utc = excluded.updated_at_utc;
+				""";
+				upsertMovie.Parameters.AddWithValue("$tmdbId", m.Id);
+				upsertMovie.Parameters.AddWithValue("$title", title);
+				upsertMovie.Parameters.AddWithValue("$originalTitle", (object?)m.OriginalTitle ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$overview", (object?)m.Overview ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$posterPath", (object?)m.PosterPath ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$backdropPath", (object?)m.BackdropPath ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$releaseDate", (object?)m.ReleaseDate ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$releaseYear", (object?)year ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$originalLanguage", (object?)m.OriginalLanguage ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$rating", (object?)m.VoteAverage ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$genreIdsJson", (object?)genreIdsJson ?? DBNull.Value);
+				upsertMovie.Parameters.AddWithValue("$updatedAt", now);
+				await ExecuteNonQueryWithRetryAsync(upsertMovie, cancellationToken).ConfigureAwait(false);
+			}
+
+			tx.Commit();
+		}
+		catch
+		{
+			try
+			{
+				tx.Rollback();
+			}
+			catch
+			{
+				// ignore
+			}
+			throw;
+		}
 	}
 
 	public async Task AddToUserPoolAsync(string userId, IReadOnlyList<TmdbDiscoverMovieRecord> discovered, CancellationToken cancellationToken)
@@ -575,18 +674,47 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		await ApplyConnectionPragmasAsync(conn, cancellationToken).ConfigureAwait(false);
 		await MaybeRunMaintenanceAsync(conn, cancellationToken).ConfigureAwait(false);
 
+		var now = DateTimeOffset.UtcNow.ToString("O");
 		var genresJson = details.Genres is { Count: > 0 } ? JsonSerializer.Serialize(details.Genres, Json) : null;
+		var regionsJson = details.Regions is { Count: > 0 } ? JsonSerializer.Serialize(details.Regions, Json) : null;
+
+		var posterPath = TryExtractImagePath(details.PosterUrl);
+		var backdropPath = TryExtractImagePath(details.BackdropUrl);
 
 		var cmd = conn.CreateCommand();
 		cmd.CommandText = """
 			UPDATE tmdb_movies
-			SET genres_json = $genresJson,
+			SET title = COALESCE($title, title),
+				overview = COALESCE($overview, overview),
+				release_date = COALESCE($releaseDate, release_date),
+				release_year = COALESCE($releaseYear, release_year),
+				original_language = COALESCE($originalLanguage, original_language),
+				rating = COALESCE($rating, rating),
+				mpaa_rating = COALESCE($mpaaRating, mpaa_rating),
+				vote_count = COALESCE($voteCount, vote_count),
+				runtime_minutes = COALESCE($runtimeMinutes, runtime_minutes),
+				poster_path = COALESCE($posterPath, poster_path),
+				backdrop_path = COALESCE($backdropPath, backdrop_path),
+				genres_json = COALESCE($genresJson, genres_json),
+				regions_json = COALESCE($regionsJson, regions_json),
 				details_fetched_at_utc = $now,
 				updated_at_utc = $now
 			WHERE tmdb_id = $tmdbId;
 		""";
+		cmd.Parameters.AddWithValue("$title", (object?)NullIfWhiteSpace(details.Title) ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$overview", (object?)NullIfWhiteSpace(details.Overview) ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$releaseDate", (object?)NullIfWhiteSpace(details.ReleaseDate) ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$releaseYear", (object?)details.ReleaseYear ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$originalLanguage", (object?)NullIfWhiteSpace(details.OriginalLanguage) ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$rating", (object?)details.Rating ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$mpaaRating", (object?)NullIfWhiteSpace(details.MpaaRating) ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$voteCount", (object?)details.VoteCount ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$runtimeMinutes", (object?)details.RuntimeMinutes ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$posterPath", (object?)posterPath ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$backdropPath", (object?)backdropPath ?? DBNull.Value);
 		cmd.Parameters.AddWithValue("$genresJson", (object?)genresJson ?? DBNull.Value);
-		cmd.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+		cmd.Parameters.AddWithValue("$regionsJson", (object?)regionsJson ?? DBNull.Value);
+		cmd.Parameters.AddWithValue("$now", now);
 		cmd.Parameters.AddWithValue("$tmdbId", details.TmdbId);
 		await ExecuteNonQueryWithRetryAsync(cmd, cancellationToken).ConfigureAwait(false);
 	}
@@ -606,7 +734,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 
 		var cmd = conn.CreateCommand();
 		cmd.CommandText = """
-			SELECT tmdb_id, title, release_year, poster_path, backdrop_path,
+			SELECT tmdb_id, title, overview, release_date, release_year, poster_path, backdrop_path,
+				mpaa_rating, rating, vote_count, genres_json, regions_json, original_language, runtime_minutes,
 				details_fetched_at_utc, updated_at_utc
 			FROM tmdb_movies
 			WHERE tmdb_id = $id
@@ -622,11 +751,23 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 
 		var id = reader.GetInt32(0);
 		var title = reader.IsDBNull(1) ? $"TMDB:{id}" : reader.GetString(1);
-		int? year = reader.IsDBNull(2) ? null : reader.GetInt32(2);
-		var posterPath = reader.IsDBNull(3) ? null : reader.GetString(3);
-		var backdropPath = reader.IsDBNull(4) ? null : reader.GetString(4);
-		var detailsFetchedRaw = reader.IsDBNull(5) ? null : reader.GetString(5);
-		var updatedRaw = reader.IsDBNull(6) ? null : reader.GetString(6);
+		var overview = reader.IsDBNull(2) ? null : reader.GetString(2);
+		var releaseDate = reader.IsDBNull(3) ? null : reader.GetString(3);
+		int? year = reader.IsDBNull(4) ? null : reader.GetInt32(4);
+		var posterPath = reader.IsDBNull(5) ? null : reader.GetString(5);
+		var backdropPath = reader.IsDBNull(6) ? null : reader.GetString(6);
+		var mpaaRating = reader.IsDBNull(7) ? null : reader.GetString(7);
+		double? rating = reader.IsDBNull(8) ? null : reader.GetDouble(8);
+		int? voteCount = reader.IsDBNull(9) ? null : reader.GetInt32(9);
+		var genresJsonRaw = reader.IsDBNull(10) ? null : reader.GetString(10);
+		var regionsJsonRaw = reader.IsDBNull(11) ? null : reader.GetString(11);
+		var originalLanguage = reader.IsDBNull(12) ? null : reader.GetString(12);
+		int? runtimeMinutes = reader.IsDBNull(13) ? null : reader.GetInt32(13);
+		var detailsFetchedRaw = reader.IsDBNull(14) ? null : reader.GetString(14);
+		var updatedRaw = reader.IsDBNull(15) ? null : reader.GetString(15);
+
+		var genres = ParseStringListJson(genresJsonRaw);
+		var regions = ParseStringListJson(regionsJsonRaw);
 
 		DateTimeOffset? detailsFetchedAt = null;
 		if (!string.IsNullOrWhiteSpace(detailsFetchedRaw) && DateTimeOffset.TryParse(detailsFetchedRaw, out var parsedDetails))
@@ -643,9 +784,18 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		return new TmdbStoredMovie(
 			TmdbId: id,
 			Title: title,
+			Overview: overview,
+			ReleaseDate: releaseDate,
 			ReleaseYear: year,
 			PosterPath: posterPath,
 			BackdropPath: backdropPath,
+			MpaaRating: mpaaRating,
+			Rating: rating,
+			VoteCount: voteCount,
+			Genres: genres,
+			Regions: regions,
+			OriginalLanguage: originalLanguage,
+			RuntimeMinutes: runtimeMinutes,
 			DetailsFetchedAtUtc: detailsFetchedAt,
 			UpdatedAtUtc: updatedAt);
 	}
@@ -685,7 +835,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 
 		var cmd = conn.CreateCommand();
 		cmd.CommandText = $"""
-			SELECT tmdb_id, title, release_year, poster_path, backdrop_path,
+			SELECT tmdb_id, title, overview, release_date, release_year, poster_path, backdrop_path,
+				mpaa_rating, rating, vote_count, genres_json, regions_json, original_language, runtime_minutes,
 				details_fetched_at_utc, updated_at_utc
 			FROM tmdb_movies
 			{whereSql}
@@ -705,11 +856,23 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		{
 			var id = reader.GetInt32(0);
 			var title = reader.IsDBNull(1) ? $"TMDB:{id}" : reader.GetString(1);
-			int? year = reader.IsDBNull(2) ? null : reader.GetInt32(2);
-			var posterPath = reader.IsDBNull(3) ? null : reader.GetString(3);
-			var backdropPath = reader.IsDBNull(4) ? null : reader.GetString(4);
-			var detailsFetchedRaw = reader.IsDBNull(5) ? null : reader.GetString(5);
-			var updatedRaw = reader.IsDBNull(6) ? null : reader.GetString(6);
+			var overview = reader.IsDBNull(2) ? null : reader.GetString(2);
+			var releaseDate = reader.IsDBNull(3) ? null : reader.GetString(3);
+			int? year = reader.IsDBNull(4) ? null : reader.GetInt32(4);
+			var posterPath = reader.IsDBNull(5) ? null : reader.GetString(5);
+			var backdropPath = reader.IsDBNull(6) ? null : reader.GetString(6);
+			var mpaaRating = reader.IsDBNull(7) ? null : reader.GetString(7);
+			double? rating = reader.IsDBNull(8) ? null : reader.GetDouble(8);
+			int? voteCount = reader.IsDBNull(9) ? null : reader.GetInt32(9);
+			var genresJsonRaw = reader.IsDBNull(10) ? null : reader.GetString(10);
+			var regionsJsonRaw = reader.IsDBNull(11) ? null : reader.GetString(11);
+			var originalLanguage = reader.IsDBNull(12) ? null : reader.GetString(12);
+			int? runtimeMinutes = reader.IsDBNull(13) ? null : reader.GetInt32(13);
+			var detailsFetchedRaw = reader.IsDBNull(14) ? null : reader.GetString(14);
+			var updatedRaw = reader.IsDBNull(15) ? null : reader.GetString(15);
+
+			var genres = ParseStringListJson(genresJsonRaw);
+			var regions = ParseStringListJson(regionsJsonRaw);
 
 			DateTimeOffset? detailsFetchedAt = null;
 			if (!string.IsNullOrWhiteSpace(detailsFetchedRaw) && DateTimeOffset.TryParse(detailsFetchedRaw, out var parsedDetails))
@@ -726,14 +889,133 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			results.Add(new TmdbStoredMovie(
 				TmdbId: id,
 				Title: title,
+				Overview: overview,
+				ReleaseDate: releaseDate,
 				ReleaseYear: year,
 				PosterPath: posterPath,
 				BackdropPath: backdropPath,
+				MpaaRating: mpaaRating,
+				Rating: rating,
+				VoteCount: voteCount,
+				Genres: genres,
+				Regions: regions,
+				OriginalLanguage: originalLanguage,
+				RuntimeMinutes: runtimeMinutes,
 				DetailsFetchedAtUtc: detailsFetchedAt,
 				UpdatedAtUtc: updatedAt));
 		}
 
 		return results;
+	}
+
+	private static async Task TryAddColumnAsync(SqliteConnection conn, string tableName, string columnSql, CancellationToken cancellationToken)
+	{
+		try
+		{
+			var cmd = conn.CreateCommand();
+			cmd.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnSql};";
+			await ExecuteNonQueryWithRetryAsync(cmd, cancellationToken).ConfigureAwait(false);
+		}
+		catch (SqliteException ex) when (ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+		{
+			// already added
+		}
+		catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+		{
+			// already added (alt message)
+		}
+	}
+
+	private static string? NullIfWhiteSpace(string? value)
+	{
+		return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+	}
+
+	private static IReadOnlyList<string> ParseStringListJson(string? raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+		{
+			return Array.Empty<string>();
+		}
+
+		try
+		{
+			var parsed = JsonSerializer.Deserialize<List<string>>(raw, Json);
+			return parsed?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToArray()
+				?? Array.Empty<string>();
+		}
+		catch
+		{
+			return Array.Empty<string>();
+		}
+	}
+
+	private static string? TryExtractImagePath(string? url)
+	{
+		if (string.IsNullOrWhiteSpace(url))
+		{
+			return null;
+		}
+
+		var trimmed = url.Trim();
+		var q = trimmed.IndexOf('?', StringComparison.Ordinal);
+		if (q >= 0)
+		{
+			trimmed = trimmed[..q];
+		}
+
+		string path;
+		if (Uri.TryCreate(trimmed, UriKind.Absolute, out var abs))
+		{
+			path = abs.AbsolutePath;
+		}
+		else
+		{
+			// relative URL (e.g., /api/v1/tmdb/images/w500/xyz.jpg)
+			path = trimmed.StartsWith('/') ? trimmed : "/" + trimmed;
+		}
+
+		// LocalProxy: /api/v1/tmdb/images/{size}/{path...}
+		var marker = "/api/v1/tmdb/images/";
+		var idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+		if (idx >= 0)
+		{
+			var rest = path[(idx + marker.Length)..].TrimStart('/');
+			var parts = rest.Split('/', StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length >= 2)
+			{
+				return "/" + string.Join('/', parts.Skip(1));
+			}
+			return null;
+		}
+
+		// TMDB: /t/p/{size}/{path...}
+		marker = "/t/p/";
+		idx = path.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+		if (idx >= 0)
+		{
+			var rest = path[(idx + marker.Length)..].TrimStart('/');
+			var parts = rest.Split('/', StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length >= 2)
+			{
+				return "/" + string.Join('/', parts.Skip(1));
+			}
+			return null;
+		}
+
+		// Raw path support: callers may already pass "/abc.jpg" or "/w500/abc.jpg".
+		if (path.StartsWith("/", StringComparison.Ordinal))
+		{
+			var parts = path.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+			if (parts.Length >= 2 && (parts[0].StartsWith("w", StringComparison.OrdinalIgnoreCase) || parts[0].Equals("original", StringComparison.OrdinalIgnoreCase)))
+			{
+				return "/" + string.Join('/', parts.Skip(1));
+			}
+
+			return path;
+		}
+
+		return null;
 	}
 
 	private static int? TryParseYear(string? releaseDate)

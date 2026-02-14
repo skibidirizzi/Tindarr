@@ -18,6 +18,11 @@ public interface IPlexService
 
 	Task<PlexLibrarySyncResult> SyncLibraryAsync(ServiceScope scope, CancellationToken cancellationToken);
 
+	Task<PlexLibrarySyncResult> SyncLibraryWithProgressAsync(
+		ServiceScope scope,
+		IProgress<PlexLibrarySyncProgress> progress,
+		CancellationToken cancellationToken);
+
 	Task<PlexLibrarySyncResult?> EnsureLibrarySyncAsync(ServiceScope scope, CancellationToken cancellationToken);
 
 	Task<IReadOnlyList<MovieDetailsDto>> GetLibraryAsync(
@@ -32,6 +37,14 @@ public interface IPlexService
 		int limit,
 		CancellationToken cancellationToken);
 }
+
+public sealed record PlexLibrarySyncProgress(
+	int TotalSections,
+	int ProcessedSections,
+	int TotalItems,
+	int ProcessedItems,
+	int TmdbIdsFound,
+	string? CurrentSectionTitle);
 
 public sealed record PlexPinCreateResult(
 	long PinId,

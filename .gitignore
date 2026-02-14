@@ -17,6 +17,10 @@ ui/dist/
 ui/.vite/
 ui/.turbo/
 
+# Generated UI build output copied into API wwwroot
+src/Tindarr.Api/wwwroot/assets/
+src/Tindarr.Api/wwwroot/index.html
+
 # Build artifacts (local publish, MSI outputs, logs)
 artifacts/
 
