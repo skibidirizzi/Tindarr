@@ -82,6 +82,58 @@ public sealed class PlexPlaybackProviderStreamSelectionTests
 	}
 
 	[Fact]
+	public async Task TryBuildDirectMovieStreamUrlAsync_AppendsPlexTokenQuery()
+	{
+		var metadataXml = """
+		<MediaContainer size="1">
+		  <Video ratingKey="999" type="movie">
+		    <Media id="1" selected="1">
+		      <Part id="10" selected="1" />
+		    </Media>
+		  </Video>
+		</MediaContainer>
+		""";
+
+		var httpClient = new HttpClient(new PlexMetadataHandler(metadataXml));
+
+		var settingsRepo = new FakeServiceSettingsRepository(
+			server: CreateServiceSettingsRecord(
+				serviceType: ServiceType.Plex,
+				serverId: "server-1",
+				plexServerUri: "http://127.0.0.1:32400",
+				plexServerAccessToken: "server-token",
+				plexClientIdentifier: "client-1"),
+			account: CreateServiceSettingsRecord(
+				serviceType: ServiceType.Plex,
+				serverId: PlexConstants.AccountServerId,
+				plexServerUri: "http://127.0.0.1:32400",
+				plexAuthToken: "account-token",
+				plexClientIdentifier: "client-1"));
+
+		var castingSettingsRepo = new FakeCastingSettingsRepository(null);
+		var plexCache = new FakePlexLibraryCacheRepository(ratingKey: "999");
+		var options = Options.Create(new PlexOptions());
+
+		var provider = new PlexPlaybackProvider(
+			settingsRepo,
+			castingSettingsRepo,
+			plexCache,
+			httpClient,
+			options,
+			NullLogger<PlexPlaybackProvider>.Instance);
+
+		var uri = await provider.TryBuildDirectMovieStreamUrlAsync(new ServiceScope(ServiceType.Plex, "server-1"), 123, CancellationToken.None);
+		Assert.NotNull(uri);
+		var s = uri!.ToString();
+		Assert.Contains("X-Plex-Token=server-token", s, StringComparison.Ordinal);
+		Assert.Contains("X-Plex-Platform=Chromecast", s, StringComparison.Ordinal);
+		Assert.Contains("X-Plex-Device=Chromecast", s, StringComparison.Ordinal);
+		Assert.Contains("X-Plex-Model=Chromecast", s, StringComparison.Ordinal);
+		Assert.Contains("X-Plex-Platform-Version=1", s, StringComparison.Ordinal);
+		Assert.Contains("X-Plex-Client-Identifier=client-1", s, StringComparison.Ordinal);
+	}
+
+	[Fact]
 	public async Task BuildMovieStreamRequestAsync_RespectsAudioTrackKindCommentary()
 	{
 		var metadataXml = """
@@ -229,6 +281,9 @@ public sealed class PlexPlaybackProviderStreamSelectionTests
 			throw new NotSupportedException();
 
 		public Task ReplaceItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken) =>
+			throw new NotSupportedException();
+
+		public Task SyncItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken) =>
 			throw new NotSupportedException();
 
 		public Task AddTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken) =>

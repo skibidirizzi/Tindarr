@@ -26,6 +26,7 @@ public sealed class CastingController(
 	ICastClient castClient,
 	ICastUrlTokenService castUrlTokenService,
 	IPlaybackTokenService playbackTokenService,
+	IEnumerable<IPlaybackProvider> playbackProviders,
 	IRoomService roomService,
 	IBaseUrlResolver baseUrlResolver,
 	IJoinAddressSettingsRepository joinAddressSettings,
@@ -127,6 +128,45 @@ public sealed class CastingController(
 		return Ok();
 	}
 
+	[HttpGet("rooms/{roomId}/qr/cast-url")]
+	[Authorize]
+	public async Task<ActionResult<CastMediaUrlDto>> GetRoomQrCastUrl(
+		[FromRoute] string roomId,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(roomId))
+		{
+			return BadRequest("Room id is required.");
+		}
+
+		var room = await roomService.GetAsync(roomId, cancellationToken).ConfigureAwait(false);
+		if (room is null)
+		{
+			return NotFound("Room not found.");
+		}
+
+		var baseUri = await ResolveCastFetchBaseUriAsync(cancellationToken).ConfigureAwait(false);
+		if (baseUri is null)
+		{
+			return BadRequest("LAN cast base URL is not configured. Ask an admin to set LAN join address in Admin Console or configure 'BaseUrl:Lan'.");
+		}
+
+		if (!IsServerListeningOnNonLoopback())
+		{
+			return BadRequest("API is only listening on localhost. Chromecast cannot reach it. Start the API with '--urls http://0.0.0.0:<port>' (or bind to your LAN IP) and allow the port through Windows Firewall.");
+		}
+
+		var token = castUrlTokenService.IssueRoomQrToken(roomId, DateTimeOffset.UtcNow);
+		var qrUrl = new Uri(baseUri, $"api/v1/casting/rooms/{Uri.EscapeDataString(roomId)}/qr.png?token={Uri.EscapeDataString(token)}");
+		Response.Headers["X-Tindarr-Cast-Url"] = qrUrl.ToString();
+
+		return Ok(new CastMediaUrlDto(
+			Url: qrUrl.ToString(),
+			ContentType: "image/png",
+			Title: "Join room",
+			SubTitle: roomId));
+	}
+
 	[HttpPost("movie")]
 	[Authorize]
 	public async Task<IActionResult> CastMovie([FromBody] CastMovieRequest request, CancellationToken cancellationToken)
@@ -146,6 +186,18 @@ public sealed class CastingController(
 		}
 
 		var title = string.IsNullOrWhiteSpace(request.Title) ? $"TMDB:{request.TmdbId}" : request.Title.Trim();
+
+		var directUrl = await TryBuildDirectMovieCastUrlAsync(scope, request.TmdbId, cancellationToken).ConfigureAwait(false);
+		if (directUrl is not null)
+		{
+			logger.LogInformation("Casting movie to device {DeviceId} via direct {ServiceType} URL.", request.DeviceId, scope.ServiceType);
+			await castClient.CastAsync(request.DeviceId, new CastMedia(
+				ContentUrl: directUrl.ToString(),
+				ContentType: "video/mp4",
+				Title: title,
+				SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
+			return Ok();
+		}
 
 		var baseUri = await ResolveCastFetchBaseUriAsync(cancellationToken).ConfigureAwait(false);
 		if (baseUri is null)
@@ -167,21 +219,92 @@ public sealed class CastingController(
 			return BadRequest("API is only listening on localhost. Chromecast cannot reach it. Start the API with '--urls http://0.0.0.0:<port>' (or bind to your LAN IP) and allow the port through Windows Firewall.");
 		}
 
-		try
+		await castClient.CastAsync(request.DeviceId, new CastMedia(
+			ContentUrl: playbackUrl.ToString(),
+			ContentType: "video/mp4",
+			Title: title,
+			SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
+
+		return Ok();
+	}
+
+	[HttpPost("movie/cast-url")]
+	[Authorize]
+	public async Task<ActionResult<CastMediaUrlDto>> GetMovieCastUrl([FromBody] GetMovieCastUrlRequest request, CancellationToken cancellationToken)
+	{
+		if (request.TmdbId <= 0)
 		{
-			await castClient.CastAsync(request.DeviceId, new CastMedia(
-				ContentUrl: playbackUrl.ToString(),
+			return BadRequest("TmdbId must be positive.");
+		}
+
+		if (!ServiceScope.TryCreate(request.ServiceType, request.ServerId, out var scope) || scope is null)
+		{
+			return BadRequest("ServiceType and ServerId are required.");
+		}
+
+		var title = string.IsNullOrWhiteSpace(request.Title) ? $"TMDB:{request.TmdbId}" : request.Title.Trim();
+
+		var directUrl = await TryBuildDirectMovieCastUrlAsync(scope, request.TmdbId, cancellationToken).ConfigureAwait(false);
+		if (directUrl is not null)
+		{
+			return Ok(new CastMediaUrlDto(
+				Url: directUrl.ToString(),
 				ContentType: "video/mp4",
 				Title: title,
-				SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
+				SubTitle: scope.ServiceType.ToString()));
+		}
+
+		var baseUri = await ResolveCastFetchBaseUriAsync(cancellationToken).ConfigureAwait(false);
+		if (baseUri is null)
+		{
+			return BadRequest("LAN cast base URL is not configured. Ask an admin to set LAN join address in Admin Console or configure 'BaseUrl:Lan'.");
+		}
+
+		if (!IsServerListeningOnNonLoopback())
+		{
+			return BadRequest("API is only listening on localhost. Chromecast cannot reach it. Start the API with '--urls http://0.0.0.0:<port>' (or bind to your LAN IP) and allow the port through Windows Firewall.");
+		}
+
+		var token = playbackTokenService.IssueMovieToken(scope, request.TmdbId, DateTimeOffset.UtcNow);
+		var playbackUrl = new Uri(baseUri, $"api/v1/playback/movie/{Uri.EscapeDataString(scope.ServiceType.ToString().ToLowerInvariant())}/{Uri.EscapeDataString(scope.ServerId)}/{request.TmdbId}?token={Uri.EscapeDataString(token)}");
+		Response.Headers["X-Tindarr-Cast-Url"] = playbackUrl.ToString();
+
+		return Ok(new CastMediaUrlDto(
+			Url: playbackUrl.ToString(),
+			ContentType: "video/mp4",
+			Title: title,
+			SubTitle: scope.ServiceType.ToString()));
+	}
+
+	private async Task<Uri?> TryBuildDirectMovieCastUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var provider = playbackProviders.FirstOrDefault(p => p.ServiceType == scope.ServiceType);
+		if (provider is not IDirectPlaybackProvider direct)
+		{
+			return null;
+		}
+
+		try
+		{
+			var uri = await direct.TryBuildDirectMovieStreamUrlAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+			if (uri is null)
+			{
+				return null;
+			}
+
+			// If upstream is configured as localhost/loopback, Chromecast won't be able to reach it.
+			if (IsLoopbackHost(uri.Host))
+			{
+				return null;
+			}
+
+			return uri;
 		}
 		catch (Exception ex)
 		{
-			logger.LogWarning(ex, "cast movie failed");
-			throw;
+			logger.LogDebug(ex, "Failed to build direct movie stream URL; falling back to playback gateway. ServiceType={ServiceType} ServerId={ServerId} TmdbId={TmdbId}", scope.ServiceType, scope.ServerId, tmdbId);
+			return null;
 		}
-
-		return Ok();
 	}
 
 	private async Task<string?> BuildJoinUrlAsync(string roomId, CancellationToken cancellationToken)

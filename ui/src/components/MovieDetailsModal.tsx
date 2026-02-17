@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError } from "../api/http";
-import { castMovie, fetchMovieDetails, listCastDevices } from "../api/client";
+import { castMovie, fetchMovieDetails, getMovieCastUrl, listCastDevices } from "../api/client";
 import type { CastDeviceDto, MovieDetailsDto } from "../api/contracts";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
+import { ensureGoogleCastSdkLoaded, getCurrentCastDevice, initGoogleCastContext, loadMediaToCastSession, requestCastSession, shouldUseGoogleCastSdk } from "../casting/googleCast";
 
 type MovieDetailsModalProps = {
   tmdbId: number;
@@ -21,6 +22,7 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
   const [castLoading, setCastLoading] = useState(false);
   const [casting, setCasting] = useState(false);
   const [castMessage, setCastMessage] = useState<string | null>(null);
+  const [castUiMode, setCastUiMode] = useState<"sdk" | "fallback">(() => (shouldUseGoogleCastSdk() ? "sdk" : "fallback"));
 
   const posterUrl = details?.posterUrl ?? null;
 
@@ -72,6 +74,7 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
   }, [currentScope.serviceType]);
 
   async function onLoadCastDevices() {
+    if (castUiMode === "sdk") return;
     setCastLoading(true);
     setCastMessage(null);
     setError(null);
@@ -96,12 +99,45 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
   }
 
   async function onCastMovie() {
-    if (!castDeviceId) return;
+    if (castUiMode === "fallback" && !castDeviceId) return;
 
     setCasting(true);
     setCastMessage(null);
     setError(null);
     try {
+      if (castUiMode === "sdk") {
+        const ok = await ensureGoogleCastSdkLoaded();
+        if (!ok) {
+          setCastUiMode("fallback");
+          setCastMessage("Google Cast isn’t available in this browser. Use the device picker below.");
+          return;
+        }
+
+        initGoogleCastContext();
+
+        const current = getCurrentCastDevice();
+        if (!current) {
+          await requestCastSession();
+        }
+
+        const media = await getMovieCastUrl({
+          serviceType: currentScope.serviceType,
+          serverId: currentScope.serverId,
+          tmdbId,
+          title: details?.title ?? null,
+        });
+
+        await loadMediaToCastSession({
+          url: media.url,
+          contentType: media.contentType,
+          title: media.title,
+          subTitle: media.subTitle,
+        });
+
+        setCastMessage("Casting…");
+        return;
+      }
+
       await castMovie({
         deviceId: castDeviceId,
         serviceType: currentScope.serviceType,
@@ -114,7 +150,9 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
       if (e instanceof ApiError) {
         setError(e.message);
       } else {
-        setError("Failed to cast movie.");
+        setError(
+          "Failed to cast movie. If you are running on localhost, configure a LAN join address (Admin Console) and ensure the API is reachable from your Chromecast (bind to 0.0.0.0 / LAN IP).",
+        );
       }
     } finally {
       setCasting(false);
@@ -183,26 +221,34 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
                     <div style={{ marginTop: "1rem" }}>
                       <div className="field__label">Cast</div>
                       <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-                        <button type="button" className="button button--ghost" onClick={onLoadCastDevices} disabled={castLoading || casting}>
-                          {castLoading ? "Finding devices…" : "Find devices"}
-                        </button>
-                        <select
-                          className="field__input"
-                          style={{ minWidth: 220 }}
-                          value={castDeviceId}
-                          onChange={(e) => setCastDeviceId(e.target.value)}
-                          disabled={castLoading || casting || castDevices.length === 0}
-                        >
-                          {castDevices.length === 0 ? <option value="">No devices</option> : null}
-                          {castDevices.map((d) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button type="button" className="button" onClick={onCastMovie} disabled={casting || castLoading || !castDeviceId}>
-                          {casting ? "Casting…" : "Cast"}
-                        </button>
+                        {castUiMode === "sdk" ? (
+                          <button type="button" className="button" onClick={onCastMovie} disabled={casting}>
+                            {casting ? "Casting…" : "Cast"}
+                          </button>
+                        ) : (
+                          <>
+                            <button type="button" className="button button--ghost" onClick={onLoadCastDevices} disabled={castLoading || casting}>
+                              {castLoading ? "Finding devices…" : "Find devices"}
+                            </button>
+                            <select
+                              className="field__input"
+                              style={{ minWidth: 220 }}
+                              value={castDeviceId}
+                              onChange={(e) => setCastDeviceId(e.target.value)}
+                              disabled={castLoading || casting || castDevices.length === 0}
+                            >
+                              {castDevices.length === 0 ? <option value="">No devices</option> : null}
+                              {castDevices.map((d) => (
+                                <option key={d.id} value={d.id}>
+                                  {d.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="button" className="button" onClick={onCastMovie} disabled={casting || castLoading || !castDeviceId}>
+                              {casting ? "Casting…" : "Cast"}
+                            </button>
+                          </>
+                        )}
                       </div>
                       {castMessage ? <div style={{ marginTop: "0.5rem" }}>{castMessage}</div> : null}
                     </div>

@@ -43,6 +43,8 @@ public sealed class SwipeDeckServiceTests
 
 		public Task<Interaction?> UndoLastAsync(string userId, ServiceScope scope, CancellationToken cancellationToken) => throw new NotSupportedException();
 
+		public Task ClearHistoryAsync(string userId, ServiceScope scope, CancellationToken cancellationToken) => throw new NotSupportedException();
+
 		public Task<IReadOnlyCollection<int>> GetInteractedTmdbIdsAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
 		{
 			return Task.FromResult(interacted);

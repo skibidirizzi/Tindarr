@@ -49,6 +49,13 @@ public sealed class EfCoreInteractionStore(TindarrDbContext db) : IInteractionSt
 			last.CreatedAtUtc);
 	}
 
+	public async Task ClearHistoryAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
+	{
+		await db.Interactions
+			.Where(x => x.UserId == userId && x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId)
+			.ExecuteDeleteAsync(cancellationToken);
+	}
+
 	public async Task<IReadOnlyCollection<int>> GetInteractedTmdbIdsAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
 	{
 		// We keep this as a distinct list to avoid pulling unnecessary rows into memory.

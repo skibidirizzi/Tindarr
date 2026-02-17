@@ -34,6 +34,11 @@ public sealed class RoutingInteractionStore(
 		return Resolve(scope).UndoLastAsync(userId, scope, cancellationToken);
 	}
 
+	public Task ClearHistoryAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
+	{
+		return Resolve(scope).ClearHistoryAsync(userId, scope, cancellationToken);
+	}
+
 	public Task<IReadOnlyCollection<int>> GetInteractedTmdbIdsAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
 	{
 		return Resolve(scope).GetInteractedTmdbIdsAsync(userId, scope, cancellationToken);

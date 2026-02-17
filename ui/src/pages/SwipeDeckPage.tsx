@@ -294,12 +294,16 @@ export default function SwipeDeckPage() {
 
   // Live-reload swipedeck when preferences are saved (Preferences modal dispatches this).
   useEffect(() => {
-    function handlePreferencesUpdated() {
+    function handleDeckInputsUpdated() {
       void loadDeck();
     }
 
-    window.addEventListener("tindarr:preferencesUpdated", handlePreferencesUpdated);
-    return () => window.removeEventListener("tindarr:preferencesUpdated", handlePreferencesUpdated);
+    window.addEventListener("tindarr:preferencesUpdated", handleDeckInputsUpdated);
+    window.addEventListener("tindarr:interactionHistoryCleared", handleDeckInputsUpdated);
+    return () => {
+      window.removeEventListener("tindarr:preferencesUpdated", handleDeckInputsUpdated);
+      window.removeEventListener("tindarr:interactionHistoryCleared", handleDeckInputsUpdated);
+    };
   }, [loadDeck]);
 
   // Live-reload when service scope changes (e.g., tmdb -> plex/server).

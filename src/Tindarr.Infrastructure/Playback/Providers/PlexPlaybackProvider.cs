@@ -17,7 +17,7 @@ public sealed class PlexPlaybackProvider(
 	IPlexLibraryCacheRepository plexCache,
 	HttpClient httpClient,
 	IOptions<PlexOptions> plexOptions,
-	ILogger<PlexPlaybackProvider> logger) : IPlaybackProvider
+	ILogger<PlexPlaybackProvider> logger) : IDirectPlaybackProvider
 {
 	private readonly PlexOptions _plexOptions = plexOptions.Value;
 
@@ -29,6 +29,34 @@ public sealed class PlexPlaybackProvider(
 	private const string ChromecastPlatformVersion = "1";
 
 	public ServiceType ServiceType => ServiceType.Plex;
+
+	public async Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var upstream = await BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+
+		// Cast devices can't send our custom headers, so push the relevant Plex identification headers into the URL.
+		var plexQuery = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var header in upstream.Headers)
+		{
+			if (!header.Key.StartsWith("X-Plex-", StringComparison.OrdinalIgnoreCase))
+			{
+				continue;
+			}
+			if (string.IsNullOrWhiteSpace(header.Value))
+			{
+				continue;
+			}
+
+			plexQuery[header.Key] = header.Value;
+		}
+
+		if (!plexQuery.TryGetValue("X-Plex-Token", out var token) || string.IsNullOrWhiteSpace(token))
+		{
+			return null;
+		}
+
+		return AppendOrReplaceQuery(upstream.Uri, plexQuery);
+	}
 
 	public async Task<UpstreamPlaybackRequest> BuildMovieStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
 	{
@@ -138,6 +166,72 @@ public sealed class PlexPlaybackProvider(
 		return new UpstreamPlaybackRequest(
 			Uri: upstreamUri,
 			Headers: headers);
+	}
+
+	private static Uri AppendOrReplaceQuery(Uri uri, IReadOnlyDictionary<string, string> queryToUpsert)
+	{
+		if (uri is null)
+		{
+			throw new ArgumentNullException(nameof(uri));
+		}
+		if (queryToUpsert is null)
+		{
+			throw new ArgumentNullException(nameof(queryToUpsert));
+		}
+
+		var builder = new UriBuilder(uri);
+		var all = ParseQuery(builder.Query);
+
+		foreach (var kvp in queryToUpsert)
+		{
+			if (string.IsNullOrWhiteSpace(kvp.Key) || string.IsNullOrWhiteSpace(kvp.Value))
+			{
+				continue;
+			}
+
+			all[kvp.Key] = kvp.Value;
+		}
+		builder.Query = string.Join("&", all.Select(kvp => $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
+		return builder.Uri;
+	}
+
+	private static Dictionary<string, string> ParseQuery(string? query)
+	{
+		var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		if (string.IsNullOrWhiteSpace(query))
+		{
+			return dict;
+		}
+
+		var q = query.Trim();
+		if (q.StartsWith("?", StringComparison.Ordinal))
+		{
+			q = q[1..];
+		}
+		if (string.IsNullOrWhiteSpace(q))
+		{
+			return dict;
+		}
+
+		foreach (var part in q.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		{
+			var kv = part.Split('=', 2);
+			if (kv.Length == 0 || string.IsNullOrWhiteSpace(kv[0]))
+			{
+				continue;
+			}
+
+			var k = Uri.UnescapeDataString(kv[0]);
+			if (dict.ContainsKey(k))
+			{
+				continue;
+			}
+
+			var v = kv.Length == 2 ? Uri.UnescapeDataString(kv[1]) : string.Empty;
+			dict[k] = v;
+		}
+
+		return dict;
 	}
 
 	private sealed record PlexStreamSelection(int? AudioStreamId, int? SubtitleStreamId);

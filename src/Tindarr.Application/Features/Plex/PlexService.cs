@@ -222,7 +222,7 @@ public sealed class PlexService(
 		}
 
 		var now = DateTimeOffset.UtcNow;
-		await plexLibraryCache.ReplaceItemsAsync(scope, libraryItems, now, cancellationToken).ConfigureAwait(false);
+		await plexLibraryCache.SyncItemsAsync(scope, libraryItems, now, cancellationToken).ConfigureAwait(false);
 		await UpdateServerAsync(settings, plexLastLibrarySyncUtc: now, cancellationToken: cancellationToken).ConfigureAwait(false);
 
 		// Seed local TMDB metadata store with IDs/titles from Plex.

@@ -120,6 +120,23 @@ public sealed class InteractionsController(
 		return Ok(new UndoResponse(true, interaction.TmdbId, MapAction(interaction.Action), interaction.CreatedAtUtc));
 	}
 
+	[Authorize]
+	[HttpDelete]
+	public async Task<IActionResult> ClearHistory(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		CancellationToken cancellationToken)
+	{
+		if (!ServiceScope.TryCreate(serviceType, serverId, out var scope))
+		{
+			return BadRequest("ServiceType and ServerId are required.");
+		}
+
+		var userId = User.GetUserId();
+		await interactionService.ClearHistoryAsync(userId, scope!, cancellationToken);
+		return NoContent();
+	}
+
 	private static InteractionAction MapAction(SwipeActionDto action)
 	{
 		return action switch

@@ -62,7 +62,9 @@ import type {
   RoomMatchesResponse,
   RoomStateResponse,
   CastDeviceDto,
-  CastMovieRequest
+  CastMovieRequest,
+  CastMediaUrlDto,
+  GetMovieCastUrlRequest
 } from "./contracts";
 import { ApiError, apiRequest } from "./http";
 import { getCachedJson, setCachedJson } from "./localCache";
@@ -117,6 +119,14 @@ export async function undoSwipe(
     path: "/api/v1/interactions/undo",
     method: "POST",
     query: { serviceType: scope.serviceType, serverId: scope.serverId }
+  });
+}
+
+export async function clearInteractionHistory(serviceType: string, serverId: string): Promise<void> {
+  return apiRequest<void>({
+    path: "/api/v1/interactions",
+    method: "DELETE",
+    query: { serviceType: serviceType.trim().toLowerCase(), serverId: serverId.trim() || "default" }
   });
 }
 
@@ -310,9 +320,24 @@ export async function castRoomQr(roomId: string, deviceId: string): Promise<void
   });
 }
 
+export async function getRoomQrCastUrl(roomId: string): Promise<CastMediaUrlDto> {
+  return apiRequest<CastMediaUrlDto>({
+    path: `/api/v1/casting/rooms/${encodeURIComponent(roomId)}/qr/cast-url`,
+    method: "GET"
+  });
+}
+
 export async function castMovie(request: CastMovieRequest): Promise<void> {
   await apiRequest<void>({
     path: "/api/v1/casting/movie",
+    method: "POST",
+    body: request
+  });
+}
+
+export async function getMovieCastUrl(request: GetMovieCastUrlRequest): Promise<CastMediaUrlDto> {
+  return apiRequest<CastMediaUrlDto>({
+    path: "/api/v1/casting/movie/cast-url",
     method: "POST",
     body: request
   });

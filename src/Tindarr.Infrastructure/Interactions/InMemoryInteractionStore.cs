@@ -56,6 +56,13 @@ public sealed class InMemoryInteractionStore : IInteractionStore
         }
     }
 
+    public Task ClearHistoryAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
+    {
+        var key = BuildKey(userId, scope);
+        _interactions.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+
     public Task<IReadOnlyCollection<int>> GetInteractedTmdbIdsAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
     {
         var key = BuildKey(userId, scope);
