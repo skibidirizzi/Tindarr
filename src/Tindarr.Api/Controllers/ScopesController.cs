@@ -20,7 +20,7 @@ public sealed class ScopesController(IServiceSettingsRepository settingsRepo) : 
 			new(
 				ServiceType.Tmdb.ToString().ToLowerInvariant(),
 				"tmdb",
-				"TMDB (tmdb)")
+				"TMDB")
 		};
 
 		static string NormalizeServiceType(ServiceType serviceType) => serviceType.ToString().ToLowerInvariant();
@@ -33,19 +33,16 @@ public sealed class ScopesController(IServiceSettingsRepository settingsRepo) : 
 		{
 			var service = NormalizeServiceType(serviceType);
 			var label = !string.IsNullOrWhiteSpace(name)
-				? $"{name} ({serverId})"
+				? name.Trim()
 				: !string.IsNullOrWhiteSpace(baseUrl)
-					? $"{service} {baseUrl} ({serverId})"
-					: $"{service} ({serverId})";
+					? $"{service} {baseUrl.Trim()}"
+					: service;
 
 			return new ServiceScopeOptionDto(service, serverId, label);
 		}
 
-		var radarrRows = await settingsRepo.ListAsync(ServiceType.Radarr, cancellationToken).ConfigureAwait(false);
-		options.AddRange(radarrRows
-			.Where(x => !string.IsNullOrWhiteSpace(x.ServerId))
-			.Where(x => !string.IsNullOrWhiteSpace(x.RadarrBaseUrl))
-			.Select(x => Map(ServiceType.Radarr, x.ServerId, name: null, baseUrl: x.RadarrBaseUrl)));
+		// NOTE: Radarr is intentionally not exposed as a swipe scope.
+		// Primary flow is swiping TMDB discover and sending matched/superliked movies to Radarr.
 
 		var plexRows = await settingsRepo.ListAsync(ServiceType.Plex, cancellationToken).ConfigureAwait(false);
 		options.AddRange(plexRows

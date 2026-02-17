@@ -132,6 +132,31 @@ function Start-Api([string]$repoRoot, [string]$listenUrl, [string]$environment, 
 	}
 }
 
+function Start-Workers([string]$repoRoot, [string]$environment, [string]$lanBaseUrl) {
+	$workersDir = Join-Path $repoRoot "src\Tindarr.Workers"
+	if (-not (Test-Path $workersDir)) { throw "Workers directory not found: $workersDir" }
+
+	Write-Host "Starting Workers (dotnet watch) ($environment)..."
+
+	# Generic Host uses DOTNET_ENVIRONMENT.
+	$env:DOTNET_ENVIRONMENT = $environment
+	if ($lanBaseUrl) {
+		$env:BaseUrl__Lan = $lanBaseUrl
+		if (-not $env:BaseUrl__Wan) {
+			$env:BaseUrl__Wan = $lanBaseUrl
+		}
+	}
+
+	Push-Location $workersDir
+	try {
+		# Run in a child process so we can terminate it when needed.
+		return Start-Process -FilePath "dotnet" -ArgumentList @("watch", "run") -WorkingDirectory $workersDir -PassThru
+	}
+	finally {
+		Pop-Location
+	}
+}
+
 $repoRoot = Resolve-RepoRoot
 Write-Host "RepoRoot: $repoRoot"
 
@@ -158,6 +183,7 @@ if (-not $UiOnly) {
 
 $uiProc = $null
 $apiProc = $null
+$workersProc = $null
 
 $uri = [Uri]$effectiveApiUrl
 $apiPort = $uri.Port
@@ -185,6 +211,7 @@ if ($lanIp) {
 try {
 	if (-not $UiOnly) {
 		$apiProc = Start-Api -repoRoot $repoRoot -listenUrl $listenUrl -environment $Environment -lanBaseUrl $lanBaseUrl
+		$workersProc = Start-Workers -repoRoot $repoRoot -environment $Environment -lanBaseUrl $lanBaseUrl
 	}
 
 	if (-not $ApiOnly) {
@@ -193,6 +220,7 @@ try {
 
 	Write-Host ""
 	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  (listen: $listenUrl)" }
+	if ($workersProc) { Write-Host "WRK PID: $($workersProc.Id)" }
 	if ($lanBaseUrl) { Write-Host "LAN Base: $lanBaseUrl" }
 	if ($uiProc)  { Write-Host "UI  PID: $($uiProc.Id)  (http://localhost:$UiPort)" }
 	Write-Host "Press Ctrl+C to stop."
@@ -201,6 +229,7 @@ try {
 	while ($true) {
 		Start-Sleep -Seconds 1
 		if ($apiProc -and $apiProc.HasExited) { throw "API process exited (code $($apiProc.ExitCode))." }
+		if ($workersProc -and $workersProc.HasExited) { throw "Workers process exited (code $($workersProc.ExitCode))." }
 		if ($uiProc -and $uiProc.HasExited) { throw "UI process exited (code $($uiProc.ExitCode))." }
 	}
 }
@@ -208,6 +237,10 @@ finally {
 	if ($uiProc -and -not $uiProc.HasExited) {
 		Write-Host "Stopping UI..."
 		try { Stop-Process -Id $uiProc.Id -Force -ErrorAction SilentlyContinue } catch { }
+	}
+	if ($workersProc -and -not $workersProc.HasExited) {
+		Write-Host "Stopping Workers..."
+		try { Stop-Process -Id $workersProc.Id -Force -ErrorAction SilentlyContinue } catch { }
 	}
 	if ($apiProc -and -not $apiProc.HasExited) {
 		Write-Host "Stopping API..."

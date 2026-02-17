@@ -9,9 +9,14 @@ public sealed class MatchingEngine : IMatchingEngine
 	public IReadOnlyList<int> ComputeLikedByAllMatches(
 		ServiceScope scope,
 		IReadOnlyList<Interaction> interactions,
-		int minUsers = 2)
+		int minUsers = 2,
+		int? minUserPercent = null)
 	{
-		minUsers = Math.Max(2, minUsers);
+		minUsers = Math.Max(0, minUsers);
+		if (minUserPercent is not null && (minUserPercent.Value < 1 || minUserPercent.Value > 100))
+		{
+			minUserPercent = null;
+		}
 
 		if (interactions.Count == 0)
 		{
@@ -26,9 +31,32 @@ public sealed class MatchingEngine : IMatchingEngine
 		}
 
 		var users = scoped.Select(x => x.UserId).Distinct().ToArray();
-		if (users.Length < minUsers)
+		if (users.Length < 2)
 		{
 			return Array.Empty<int>();
+		}
+
+		var normalizedMinUsers = minUsers;
+		if (normalizedMinUsers > 0)
+		{
+			normalizedMinUsers = Math.Clamp(normalizedMinUsers, 2, 50);
+		}
+		else if (minUserPercent is null)
+		{
+			normalizedMinUsers = 2;
+		}
+
+		int? requiredByCount = null;
+		if (normalizedMinUsers > 0)
+		{
+			requiredByCount = normalizedMinUsers;
+		}
+
+		int? requiredByPercent = null;
+		if (minUserPercent is not null)
+		{
+			requiredByPercent = (int)Math.Ceiling(users.Length * (minUserPercent.Value / 100.0));
+			requiredByPercent = Math.Clamp(requiredByPercent.Value, 1, 50);
 		}
 
 		// Reduce to "current stance" per (UserId, TmdbId) by taking the latest timestamp.
@@ -61,18 +89,11 @@ public sealed class MatchingEngine : IMatchingEngine
 			likedCounts[entry.TmdbId] = count + 1;
 		}
 
-		var superliked = latest.Values
-			.Where(x => x.Action == InteractionAction.Superlike)
-			.Select(x => x.TmdbId)
-			.Distinct();
-
-		// "Match": a movie is matched if at least minUsers distinct users currently Like/Superlike it.
-		var required = minUsers;
 		return likedCounts
-			.Where(kvp => kvp.Value >= required)
+			.Where(kvp =>
+				(requiredByCount is not null && kvp.Value >= requiredByCount.Value)
+				|| (requiredByPercent is not null && kvp.Value >= requiredByPercent.Value))
 			.Select(kvp => kvp.Key)
-			.Concat(superliked)
-			.Distinct()
 			.OrderBy(x => x)
 			.ToList();
 	}

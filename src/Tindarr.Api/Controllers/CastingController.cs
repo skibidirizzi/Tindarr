@@ -26,7 +26,6 @@ public sealed class CastingController(
 	ICastClient castClient,
 	ICastUrlTokenService castUrlTokenService,
 	IPlaybackTokenService playbackTokenService,
-	IEnumerable<IPlaybackProvider> playbackProviders,
 	IRoomService roomService,
 	IBaseUrlResolver baseUrlResolver,
 	IJoinAddressSettingsRepository joinAddressSettings,
@@ -148,43 +147,6 @@ public sealed class CastingController(
 
 		var title = string.IsNullOrWhiteSpace(request.Title) ? $"TMDB:{request.TmdbId}" : request.Title.Trim();
 
-		// Plex special-case:
-		// Prefer casting a *direct Plex transcode URL* so Plex streams bytes straight to the Chromecast.
-		// This avoids Tindarr proxying the media.
-		if (scope.ServiceType == ServiceType.Plex)
-		{
-			var provider = playbackProviders.FirstOrDefault(p => p.ServiceType == ServiceType.Plex);
-			if (provider is null)
-			{
-				return BadRequest("Unsupported playback provider.");
-			}
-
-			UpstreamPlaybackRequest upstream;
-			try
-			{
-				upstream = await provider.BuildMovieStreamRequestAsync(scope, request.TmdbId, cancellationToken).ConfigureAwait(false);
-			}
-			catch (InvalidOperationException ex)
-			{
-				return BadRequest(ex.Message);
-			}
-
-			// Chromecast won't send our headers, so encode the essential X-Plex-* headers as query params.
-			// IMPORTANT: Do not echo the token back in response headers/logs.
-			var plexDirectUrl = BuildPlexDirectCastUrl(upstream);
-			var redacted = new UriBuilder(plexDirectUrl) { Query = string.Empty }.Uri;
-			logger.LogInformation("Casting Plex movie directly to device {DeviceId}: {Url}", request.DeviceId, redacted);
-			Response.Headers["X-Tindarr-Cast-Url"] = redacted.ToString();
-
-			await castClient.CastAsync(request.DeviceId, new CastMedia(
-				ContentUrl: plexDirectUrl.ToString(),
-				ContentType: "video/mp4",
-				Title: title,
-				SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
-
-			return Ok();
-		}
-
 		var baseUri = await ResolveCastFetchBaseUriAsync(cancellationToken).ConfigureAwait(false);
 		if (baseUri is null)
 		{
@@ -220,29 +182,6 @@ public sealed class CastingController(
 		}
 
 		return Ok();
-	}
-
-	private static Uri BuildPlexDirectCastUrl(UpstreamPlaybackRequest upstream)
-	{
-		// Plex endpoints accept X-Plex-Token as a query parameter; encoding the client identity/profile
-		// similarly allows Plex to select the right transcode profile without relying on request headers.
-		var queryParams = new Dictionary<string, string>(StringComparer.Ordinal);
-		foreach (var header in upstream.Headers)
-		{
-			if (!header.Key.StartsWith("X-Plex-", StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-			if (string.IsNullOrWhiteSpace(header.Value))
-			{
-				continue;
-			}
-
-			queryParams[header.Key] = header.Value;
-		}
-
-		var url = QueryHelpers.AddQueryString(upstream.Uri.ToString(), queryParams);
-		return new Uri(url, UriKind.Absolute);
 	}
 
 	private async Task<string?> BuildJoinUrlAsync(string roomId, CancellationToken cancellationToken)

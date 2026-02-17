@@ -8,6 +8,7 @@ public interface IMatchingEngine
 	IReadOnlyList<int> ComputeLikedByAllMatches(
 		ServiceScope scope,
 		IReadOnlyList<Interaction> interactions,
-		int minUsers = 2);
+		int minUsers = 2,
+		int? minUserPercent = null);
 }
 

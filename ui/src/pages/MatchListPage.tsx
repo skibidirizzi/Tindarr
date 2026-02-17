@@ -18,7 +18,6 @@ export default function MatchListPage() {
   const [error, setError] = useState<string | null>(null);
   const [tmdbIds, setTmdbIds] = useState<number[]>([]);
   const [selectedTmdbId, setSelectedTmdbId] = useState<number | null>(null);
-  const [minUsers, setMinUsers] = useState(2);
   const [detailsByTmdbId, setDetailsByTmdbId] = useState<Record<number, MovieDetailsDto>>({});
 
   const isMediaServerScope = useMemo(() => {
@@ -38,7 +37,7 @@ export default function MatchListPage() {
     try {
       setLoading(true);
       setError(null);
-      const resp = await fetchMatches({ minUsers: isMediaServerScope ? 1 : minUsers });
+      const resp = await fetchMatches({ minUsers: isMediaServerScope ? 1 : null });
       setTmdbIds(resp.items.map((m) => m.tmdbId));
     } catch (err) {
       if (err instanceof ApiError) setError(err.message);
@@ -53,18 +52,6 @@ export default function MatchListPage() {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (isMediaServerScope) {
-      setMinUsers(1);
-    }
-  }, [isMediaServerScope]);
-
-  useEffect(() => {
-    if (isMediaServerScope) return;
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minUsers]);
 
   useEffect(() => {
     function handleScopeUpdated() {
@@ -147,7 +134,7 @@ export default function MatchListPage() {
             {isMediaServerScope ? (
               <p className="modal__subtitle">Movies you liked or superliked (click for details).</p>
             ) : (
-              <p className="modal__subtitle">Movies liked by at least {minUsers} users (click for details).</p>
+					<p className="modal__subtitle">Movies liked by the group (click for details).</p>
             )}
           </div>
           <button type="button" className="button button--ghost modal__close" onClick={handleClose}>
@@ -156,27 +143,9 @@ export default function MatchListPage() {
         </div>
 
         <div className="modal__body">
-          {!isMediaServerScope ? (
-            <div className="deck__toolbar" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={`button button--ghost ${minUsers === n ? "is-active" : ""}`}
-                    onClick={() => setMinUsers(n)}
-                  >
-                    {n}+
-                  </button>
-                ))}
-              </div>
-              <div style={{ color: "#8c93a6", fontWeight: 600 }}>{tmdbIds.length} items</div>
-            </div>
-          ) : (
-            <div className="deck__toolbar" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
-              <div style={{ color: "#8c93a6", fontWeight: 600 }}>{tmdbIds.length} items</div>
-            </div>
-          )}
+			<div className="deck__toolbar" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+				<div style={{ color: "#8c93a6", fontWeight: 600 }}>{tmdbIds.length} items</div>
+			</div>
 
           {loading ? <div className="deck__state">Loading matches…</div> : null}
           {!loading && error ? <div className="deck__state deck__state--error">{error}</div> : null}
@@ -185,7 +154,7 @@ export default function MatchListPage() {
             isMediaServerScope ? (
               <div className="deck__state">No liked movies yet.</div>
             ) : (
-              <div className="deck__state">No matches yet. When {minUsers}+ users like the same movie, it will show up here.</div>
+					<div className="deck__state">No matches yet. When multiple users like the same movie, it will show up here.</div>
             )
           ) : null}
 

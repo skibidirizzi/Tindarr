@@ -47,8 +47,12 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 				RadarrTagLabel = upsert.RadarrTagLabel,
 				RadarrTagId = upsert.RadarrTagId,
 				RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled,
+				RadarrAutoAddIntervalMinutes = upsert.RadarrAutoAddIntervalMinutes,
+				RadarrLastAutoAddRunUtc = upsert.RadarrLastAutoAddRunUtc,
 				RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId,
 				RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc,
+				MatchMinUsers = upsert.MatchMinUsers,
+				MatchMinUserPercent = upsert.MatchMinUserPercent,
 				JellyfinBaseUrl = upsert.JellyfinBaseUrl,
 				JellyfinApiKey = upsert.JellyfinApiKey,
 				JellyfinServerName = upsert.JellyfinServerName,
@@ -83,8 +87,12 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrTagLabel = upsert.RadarrTagLabel;
 			entity.RadarrTagId = upsert.RadarrTagId;
 			entity.RadarrAutoAddEnabled = upsert.RadarrAutoAddEnabled;
+			entity.RadarrAutoAddIntervalMinutes = upsert.RadarrAutoAddIntervalMinutes;
+			entity.RadarrLastAutoAddRunUtc = upsert.RadarrLastAutoAddRunUtc;
 			entity.RadarrLastAutoAddAcceptedId = upsert.RadarrLastAutoAddAcceptedId;
 			entity.RadarrLastLibrarySyncUtc = upsert.RadarrLastLibrarySyncUtc;
+			entity.MatchMinUsers = upsert.MatchMinUsers;
+			entity.MatchMinUserPercent = upsert.MatchMinUserPercent;
 			entity.JellyfinBaseUrl = upsert.JellyfinBaseUrl;
 			entity.JellyfinApiKey = upsert.JellyfinApiKey;
 			entity.JellyfinServerName = upsert.JellyfinServerName;
@@ -123,8 +131,12 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 			entity.RadarrTagLabel,
 			entity.RadarrTagId,
 			entity.RadarrAutoAddEnabled,
+			entity.RadarrAutoAddIntervalMinutes,
+			entity.RadarrLastAutoAddRunUtc,
 			entity.RadarrLastAutoAddAcceptedId,
 			entity.RadarrLastLibrarySyncUtc,
+			entity.MatchMinUsers,
+			entity.MatchMinUserPercent,
 			entity.JellyfinBaseUrl,
 			entity.JellyfinApiKey,
 			entity.JellyfinServerName,

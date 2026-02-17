@@ -104,31 +104,28 @@ public sealed class PlaybackTokenService(
 		}
 
 		var keys = keyStore.GetAllSigningKeys();
-		foreach (var key in keys)
+		if (keys.Count == 0)
 		{
-			if (!string.IsNullOrWhiteSpace(payload.Kid)
-				&& !string.Equals(key.KeyId, payload.Kid, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
+			return false;
+		}
 
+		IEnumerable<SigningKey> candidateKeys;
+		if (!string.IsNullOrWhiteSpace(payload.Kid))
+		{
+			var matched = keys.Where(k => string.Equals(k.KeyId, payload.Kid, StringComparison.OrdinalIgnoreCase)).ToList();
+			candidateKeys = matched.Count > 0 ? matched : keys;
+		}
+		else
+		{
+			candidateKeys = keys;
+		}
+
+		foreach (var key in candidateKeys)
+		{
 			var expectedSig = Sign(payloadB64, key.KeyMaterial);
 			if (CryptographicOperations.FixedTimeEquals(expectedSig, sigBytes))
 			{
 				return true;
-			}
-		}
-
-		// Rotation support: if kid is missing/unknown, try all keys.
-		if (string.IsNullOrWhiteSpace(payload.Kid))
-		{
-			foreach (var key in keys)
-			{
-				var expectedSig = Sign(payloadB64, key.KeyMaterial);
-				if (CryptographicOperations.FixedTimeEquals(expectedSig, sigBytes))
-				{
-					return true;
-				}
 			}
 		}
 

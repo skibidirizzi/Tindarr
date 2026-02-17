@@ -50,7 +50,8 @@ public sealed class RadarrController(IRadarrService radarrService) : ControllerB
 					request.QualityProfileId,
 					request.RootFolderPath,
 					request.TagLabel,
-					request.AutoAddEnabled),
+					request.AutoAddEnabled,
+					request.AutoAddIntervalMinutes),
 				cancellationToken);
 
 			return Ok(MapSettings(scope!, updated));
@@ -206,6 +207,7 @@ public sealed class RadarrController(IRadarrService radarrService) : ControllerB
 			settings?.RadarrRootFolderPath,
 			settings?.RadarrTagLabel,
 			settings?.RadarrAutoAddEnabled ?? false,
+			settings?.RadarrAutoAddIntervalMinutes,
 			hasApiKey,
 			settings?.RadarrLastLibrarySyncUtc,
 			settings?.UpdatedAtUtc);

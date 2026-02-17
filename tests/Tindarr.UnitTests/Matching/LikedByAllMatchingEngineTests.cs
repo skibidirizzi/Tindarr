@@ -121,7 +121,7 @@ public sealed class LikedByAllMatchingEngineTests
 	}
 
 	[Fact]
-	public void Superlike_is_an_automatic_match_when_at_least_two_users_exist_in_scope()
+	public void Superlike_is_not_an_automatic_match()
 	{
 		var engine = new MatchingEngine();
 		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
@@ -135,7 +135,7 @@ public sealed class LikedByAllMatchingEngineTests
 		};
 
 		var matches = engine.ComputeLikedByAllMatches(scope, interactions, minUsers: 2);
-		Assert.Equal(new[] { 555 }, matches);
+		Assert.Empty(matches);
 	}
 }
 

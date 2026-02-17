@@ -77,8 +77,12 @@ public sealed class RadarrService(
 			RadarrTagLabel: tagLabel,
 			RadarrTagId: tagId,
 			RadarrAutoAddEnabled: upsert.AutoAddEnabled,
+			RadarrAutoAddIntervalMinutes: upsert.AutoAddIntervalMinutes,
+			RadarrLastAutoAddRunUtc: existing?.RadarrLastAutoAddRunUtc,
 			RadarrLastAutoAddAcceptedId: existing?.RadarrLastAutoAddAcceptedId,
 			RadarrLastLibrarySyncUtc: lastLibrarySyncUtc,
+			MatchMinUsers: existing?.MatchMinUsers,
+			MatchMinUserPercent: existing?.MatchMinUserPercent,
 			JellyfinBaseUrl: existing?.JellyfinBaseUrl,
 			JellyfinApiKey: existing?.JellyfinApiKey,
 			JellyfinServerName: existing?.JellyfinServerName,
@@ -251,7 +255,25 @@ public sealed class RadarrService(
 			return new RadarrAddMovieResult(false, false, "Radarr default profile/root folder not set.");
 		}
 
-		return await AddMovieInternalAsync(settings, BuildConnection(settings), tmdbId, cancellationToken);
+		// The point of syncing the Radarr library is to avoid attempting to add movies that already exist.
+		await EnsureLibrarySyncAsync(scope, cancellationToken).ConfigureAwait(false);
+		var existingIds = await libraryCache.GetTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+		if (existingIds.Count > 0)
+		{
+			var set = new HashSet<int>(existingIds);
+			if (set.Contains(tmdbId))
+			{
+				return new RadarrAddMovieResult(false, true, "Movie already exists.");
+			}
+		}
+
+		var result = await AddMovieInternalAsync(settings, BuildConnection(settings), tmdbId, cancellationToken).ConfigureAwait(false);
+		if (result.Added || result.AlreadyExists)
+		{
+			await libraryCache.AddTmdbIdsAsync(scope, [tmdbId], DateTimeOffset.UtcNow, cancellationToken).ConfigureAwait(false);
+		}
+
+		return result;
 	}
 
 	private async Task<RadarrAddMovieResult> AddMovieInternalAsync(ServiceSettingsRecord settings, RadarrConnection connection, int tmdbId, CancellationToken cancellationToken)
@@ -268,12 +290,12 @@ public sealed class RadarrService(
 		if (tagId is null && !string.IsNullOrWhiteSpace(tagLabel))
 		{
 			tagId = await client.EnsureTagAsync(connection, tagLabel, cancellationToken);
-			if (tagId is null)
+			// Tagging is optional. If Radarr can't create/read tags (permissions/version/etc),
+			// we still want to add the movie rather than fail the whole operation.
+			if (tagId is not null)
 			{
-				return new RadarrAddMovieResult(false, false, "Unable to ensure Radarr tag.");
+				await UpdateSettingsAsync(settings, radarrTagId: tagId, cancellationToken: cancellationToken);
 			}
-
-			await UpdateSettingsAsync(settings, radarrTagId: tagId, cancellationToken: cancellationToken);
 		}
 
 		var request = new RadarrAddMovieRequest(
@@ -324,8 +346,12 @@ public sealed class RadarrService(
 			settings.RadarrTagLabel,
 			radarrTagId ?? settings.RadarrTagId,
 			settings.RadarrAutoAddEnabled,
+			settings.RadarrAutoAddIntervalMinutes,
+			settings.RadarrLastAutoAddRunUtc,
 			radarrLastAutoAddAcceptedId ?? settings.RadarrLastAutoAddAcceptedId,
 			radarrLastLibrarySyncUtc ?? settings.RadarrLastLibrarySyncUtc,
+			settings.MatchMinUsers,
+			settings.MatchMinUserPercent,
 			settings.JellyfinBaseUrl,
 			settings.JellyfinApiKey,
 			settings.JellyfinServerName,

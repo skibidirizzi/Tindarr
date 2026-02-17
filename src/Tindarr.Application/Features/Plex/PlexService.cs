@@ -1,5 +1,4 @@
 using System.Net;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
@@ -21,8 +20,7 @@ public sealed class PlexService(
 	ITmdbMetadataStore tmdbMetadataStore,
 	IOptions<TmdbOptions> tmdbOptions,
 	ILanAddressResolver lanAddressResolver,
-	IOptions<PlexOptions> options,
-	ILogger<PlexService> logger) : IPlexService
+	IOptions<PlexOptions> options) : IPlexService
 {
 	private static readonly IReadOnlyDictionary<int, string> TmdbGenreMap = new Dictionary<int, string>
 	{
@@ -520,8 +518,12 @@ public sealed class PlexService(
 			RadarrTagLabel: existing?.RadarrTagLabel,
 			RadarrTagId: existing?.RadarrTagId,
 			RadarrAutoAddEnabled: existing?.RadarrAutoAddEnabled ?? false,
+			RadarrAutoAddIntervalMinutes: existing?.RadarrAutoAddIntervalMinutes,
+			RadarrLastAutoAddRunUtc: existing?.RadarrLastAutoAddRunUtc,
 			RadarrLastAutoAddAcceptedId: existing?.RadarrLastAutoAddAcceptedId,
 			RadarrLastLibrarySyncUtc: existing?.RadarrLastLibrarySyncUtc,
+			MatchMinUsers: existing?.MatchMinUsers,
+			MatchMinUserPercent: existing?.MatchMinUserPercent,
 			JellyfinBaseUrl: existing?.JellyfinBaseUrl,
 			JellyfinApiKey: existing?.JellyfinApiKey,
 			JellyfinServerName: existing?.JellyfinServerName,

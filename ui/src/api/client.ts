@@ -40,8 +40,13 @@ import type {
   UpdateUserPreferencesRequest,
   UserDto,
   UserPreferencesDto,
-  ServiceScopeOptionDto
-  ,
+  ServiceScopeOptionDto,
+  JoinAddressSettingsDto,
+  UpdateJoinAddressSettingsRequest,
+  CastingSettingsDto,
+  UpdateCastingSettingsRequest,
+  MatchSettingsDto,
+  UpdateMatchSettingsRequest,
   TmdbCacheSettingsDto,
   UpdateTmdbCacheSettingsRequest,
   StartTmdbBuildRequest,
@@ -185,16 +190,40 @@ export async function listInteractions(
 
 export async function fetchMatches(
   {
-    minUsers = 2,
+    minUsers,
     interactionLimit = 20000
-  }: { minUsers?: number; interactionLimit?: number } = {},
+  }: { minUsers?: number | null; interactionLimit?: number } = {},
   serviceType?: string,
   serverId?: string
 ): Promise<MatchesResponse> {
   const scope = resolveScope(serviceType, serverId);
+  const query: Record<string, unknown> = { serviceType: scope.serviceType, serverId: scope.serverId, interactionLimit };
+  if (minUsers !== undefined && minUsers !== null) {
+    query.minUsers = minUsers;
+  }
   return apiRequest<MatchesResponse>({
     path: "/api/v1/matches",
-    query: { serviceType: scope.serviceType, serverId: scope.serverId, minUsers, interactionLimit }
+    query
+  });
+}
+
+export async function adminGetMatchSettings(serviceType: string, serverId: string): Promise<MatchSettingsDto> {
+  return apiRequest<MatchSettingsDto>({
+    path: "/api/v1/admin/matching",
+    query: { serviceType: serviceType.trim().toLowerCase(), serverId: serverId.trim() || "default" }
+  });
+}
+
+export async function adminUpdateMatchSettings(
+  serviceType: string,
+  serverId: string,
+  request: UpdateMatchSettingsRequest
+): Promise<MatchSettingsDto> {
+  return apiRequest<MatchSettingsDto>({
+    path: "/api/v1/admin/matching",
+    method: "PUT",
+    query: { serviceType: serviceType.trim().toLowerCase(), serverId: serverId.trim() || "default" },
+    body: request
   });
 }
 
@@ -388,9 +417,24 @@ export async function adminGetJoinAddressSettings(): Promise<JoinAddressSettings
   });
 }
 
+export async function adminGetCastingSettings(): Promise<CastingSettingsDto> {
+  return apiRequest<CastingSettingsDto>({
+    path: "/api/v1/admin/casting",
+    method: "GET"
+  });
+}
+
 export async function adminUpdateJoinAddressSettings(request: UpdateJoinAddressSettingsRequest): Promise<JoinAddressSettingsDto> {
   return apiRequest<JoinAddressSettingsDto>({
     path: "/api/v1/admin/join-address",
+    method: "PUT",
+    body: request
+  });
+}
+
+export async function adminUpdateCastingSettings(request: UpdateCastingSettingsRequest): Promise<CastingSettingsDto> {
+  return apiRequest<CastingSettingsDto>({
+    path: "/api/v1/admin/casting",
     method: "PUT",
     body: request
   });

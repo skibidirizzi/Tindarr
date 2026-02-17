@@ -23,8 +23,13 @@ public sealed class ServiceSettingsEntityConfiguration : IEntityTypeConfiguratio
 		builder.Property(x => x.RadarrTagLabel);
 		builder.Property(x => x.RadarrTagId);
 		builder.Property(x => x.RadarrAutoAddEnabled).IsRequired();
+		builder.Property(x => x.RadarrAutoAddIntervalMinutes);
+		builder.Property(x => x.RadarrLastAutoAddRunUtc);
 		builder.Property(x => x.RadarrLastAutoAddAcceptedId);
 		builder.Property(x => x.RadarrLastLibrarySyncUtc);
+
+		builder.Property(x => x.MatchMinUsers);
+		builder.Property(x => x.MatchMinUserPercent);
 
 		builder.Property(x => x.JellyfinBaseUrl);
 		builder.Property(x => x.JellyfinApiKey);

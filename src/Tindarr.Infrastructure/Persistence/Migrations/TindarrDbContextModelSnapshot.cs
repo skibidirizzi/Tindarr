@@ -49,6 +49,56 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.ToTable("accepted_movies", (string)null);
                 });
 
+            modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.CastingSettingsEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AudioFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudioLanguageFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudioTrackKindFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredAudioLanguage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredAudioStyle")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredAudioTrackKind")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredSubtitleLanguage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredSubtitleSource")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredSubtitleTrackSource")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubtitleFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubtitleLanguageFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubtitleTrackSourceFallback")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("casting_settings", (string)null);
+                });
+
             modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.InteractionEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -135,6 +185,53 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.ToTable("library_cache", (string)null);
                 });
 
+            modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.RadarrPendingAddEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("CanceledAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ProcessedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("ReadyAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServerId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ServiceType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TmdbId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceType", "ServerId", "ReadyAtUtc");
+
+                    b.HasIndex("ServiceType", "ServerId", "UserId", "TmdbId");
+
+                    b.ToTable("radarr_pending_adds", (string)null);
+                });
+
             modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.RoleEntity", b =>
                 {
                     b.Property<string>("Name")
@@ -202,6 +299,12 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("JellyfinServerVersion")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("MatchMinUserPercent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MatchMinUsers")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("PlexAuthToken")
                         .HasColumnType("TEXT");
 
@@ -239,12 +342,18 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.Property<bool>("RadarrAutoAddEnabled")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("RadarrAutoAddIntervalMinutes")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("RadarrBaseUrl")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<long?>("RadarrLastAutoAddAcceptedId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("RadarrLastAutoAddRunUtc")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset?>("RadarrLastLibrarySyncUtc")
                         .HasColumnType("TEXT");
