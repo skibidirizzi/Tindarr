@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/http";
 import {
+  adminDbListMovies,
   adminCreateUser,
   adminDeleteUser,
   adminGetCastingSettings,
@@ -35,6 +36,7 @@ import {
   radarrSyncLibrary,
   radarrTestConnection,
   radarrUpsertSettings,
+  fetchMovieDetails,
   tmdbGetCacheSettings,
   tmdbUpdateCacheSettings,
   tmdbCancelBuild,
@@ -58,6 +60,7 @@ import type {
   TmdbCacheSettingsDto,
   TmdbBuildStatusDto,
   TmdbStoredMovieAdminDto,
+  MovieDetailsDto,
   UserDto
 } from "../api/contracts";
 import {
@@ -67,6 +70,7 @@ import {
   subscribeTmdbBulkJob,
   type TmdbBulkJob
 } from "../tmdb/tmdbBulkJob";
+import { TMDB_LANGUAGES, TMDB_REGIONS } from "../tmdb/knownValues";
 import {
 	getPlexBulkJob,
 	startPlexBulkFetchAllDetails,
@@ -74,6 +78,9 @@ import {
 	subscribePlexBulkJob,
 	type PlexBulkJob
 } from "../plex/plexBulkJob";
+
+import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
+import PosterGallery from "../components/PosterGallery";
 
 type AdminUserRowState = {
   displayName: string;
@@ -107,7 +114,7 @@ function roleButtonClass(role: AppRole) {
 }
 
 export default function AdminConsolePage() {
-  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms" | "casting">("users");
+  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms" | "casting" | "db">("users");
 
   return (
     <section className="deck">
@@ -116,6 +123,7 @@ export default function AdminConsolePage() {
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" className={tabButtonClass(tab === "users")} onClick={() => setTab("users")}>Users</button>
           <button type="button" className={tabButtonClass(tab === "rooms")} onClick={() => setTab("rooms")}>Rooms</button>
+          <button type="button" className={tabButtonClass(tab === "db")} onClick={() => setTab("db")}>DB</button>
           <button type="button" className={tabButtonClass(tab === "casting")} onClick={() => setTab("casting")}>Casting</button>
           <button type="button" className={tabButtonClass(tab === "plex")} onClick={() => setTab("plex")}>Plex</button>
           <button type="button" className={tabButtonClass(tab === "radarr")} onClick={() => setTab("radarr")}>Radarr</button>
@@ -127,12 +135,210 @@ export default function AdminConsolePage() {
 
       {tab === "users" ? <UsersTab /> : null}
       {tab === "rooms" ? <RoomsTab /> : null}
+      {tab === "db" ? <DbTab /> : null}
       {tab === "casting" ? <CastingTab /> : null}
       {tab === "plex" ? <PlexTab /> : null}
       {tab === "radarr" ? <RadarrTab /> : null}
       {tab === "jellyfin" ? <JellyfinTab /> : null}
       {tab === "emby" ? <EmbyTab /> : null}
       {tab === "tmdb" ? <TmdbTab /> : null}
+    </section>
+  );
+}
+
+function DbTab() {
+  const [scope, setScope] = useState(() => getServiceScope());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [movies, setMovies] = useState<TmdbStoredMovieAdminDto[]>([]);
+  const [moviesSkip, setMoviesSkip] = useState(0);
+  const [moviesNextSkip, setMoviesNextSkip] = useState(0);
+  const [moviesHasMore, setMoviesHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [view, setView] = useState<"table" | "gallery">("table");
+  const [detailsByTmdbId, setDetailsByTmdbId] = useState<Record<number, MovieDetailsDto>>({});
+
+  const load = async (skip: number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await adminDbListMovies({ skip, take: 50 });
+      setMovies(res.items);
+      setMoviesSkip(res.skip);
+      setMoviesNextSkip(res.nextSkip);
+      setMoviesHasMore(res.hasMore);
+      setTotalCount(res.totalCount ?? 0);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load DB movie records.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pageSize = 50;
+  const currentPage = Math.floor(moviesSkip / pageSize) + 1;
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, totalCount) / pageSize));
+
+  const formatCompactUtc = (value: string | null | undefined) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  };
+
+  useEffect(() => {
+    void load(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onScope = () => {
+      const next = getServiceScope();
+      setScope(next);
+      setDetailsByTmdbId({});
+      void load(0);
+    };
+    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, onScope);
+    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, onScope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (view !== "gallery") return;
+
+    const ids = movies.map((m) => m.tmdbId);
+    const missing = ids.filter((id) => detailsByTmdbId[id] === undefined).slice(0, 40);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const concurrency = 6;
+      for (let i = 0; i < missing.length; i += concurrency) {
+        const batch = missing.slice(i, i + concurrency);
+        const results = await Promise.allSettled(batch.map((id) => fetchMovieDetails(id)));
+        if (cancelled) return;
+
+        setDetailsByTmdbId((prev) => {
+          const next = { ...prev };
+          for (const r of results) {
+            if (r.status === "fulfilled") {
+              next[r.value.tmdbId] = r.value;
+            }
+          }
+          return next;
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsByTmdbId, movies, view]);
+
+  const galleryItems = useMemo(() => {
+    return movies.map((m) => {
+      const details = detailsByTmdbId[m.tmdbId];
+      const title = details?.title ?? m.title ?? `TMDB #${m.tmdbId}`;
+      return {
+        key: String(m.tmdbId),
+        tmdbId: m.tmdbId,
+        title,
+        year: details?.releaseYear ?? m.releaseYear ?? null,
+        posterUrl: details?.posterUrl ?? null,
+        ribbon: { label: "DB", variant: "matched" as const }
+      };
+    });
+  }, [detailsByTmdbId, movies]);
+
+  return (
+    <section style={{ marginTop: "1rem" }}>
+      <h3 style={{ marginTop: 0 }}>DB</h3>
+      <div className="deck__state" style={{ textAlign: "left" }}>
+        <p style={{ marginTop: 0 }}>
+          Lists movie records for the current scope: <span className="adminTable__mono">{scope.serviceType}:{scope.serverId}</span>.
+        </p>
+
+        {loading ? <div className="deck__state">Loading movies…</div> : null}
+        {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+
+        <div className="deck__toolbar" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <button type="button" className={`button button--ghost ${view === "table" ? "is-active" : ""}`.trim()} onClick={() => setView("table")}>
+              Table
+            </button>
+            <button type="button" className={`button button--ghost ${view === "gallery" ? "is-active" : ""}`.trim()} onClick={() => setView("gallery")}>
+              Gallery
+            </button>
+          </div>
+          <div style={{ color: "#8c93a6", fontWeight: 600 }}>
+            Page {currentPage} of {totalPages}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <button type="button" className="button button--neutral" onClick={() => load(0)} disabled={loading}>
+            Refresh list
+          </button>
+          <button
+            type="button"
+            className="button button--neutral"
+            onClick={() => load(Math.max(0, moviesSkip - 50))}
+            disabled={loading || moviesSkip <= 0}
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            className="button button--neutral"
+            onClick={() => load(moviesNextSkip)}
+            disabled={loading || !moviesHasMore}
+          >
+            Next
+          </button>
+        </div>
+
+        {view === "gallery" ? (
+          !loading && movies.length > 0 ? (
+            <PosterGallery items={galleryItems} onSelect={() => {}} />
+          ) : null
+        ) : (
+          <div style={{ marginTop: "0.75rem", overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>TMDB</th>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Title</th>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Details fetched</th>
+                  <th style={{ textAlign: "left", padding: "0.5rem" }}>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movies.map((m) => (
+                  <tr key={m.tmdbId} style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                    <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>{m.tmdbId}</td>
+                    <td style={{ padding: "0.5rem" }}>{m.title}{m.releaseYear ? ` (${m.releaseYear})` : ""}</td>
+                    <td style={{ padding: "0.5rem" }}>{m.detailsFetchedAtUtc ? "Yes" : "No"}</td>
+                    <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>{formatCompactUtc(m.updatedAtUtc)}</td>
+                  </tr>
+                ))}
+
+                {!loading && movies.length === 0 ? (
+                  <tr>
+                    <td style={{ padding: "0.5rem" }} colSpan={4}>No movies found.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -261,23 +467,6 @@ function CastingTab() {
       setError(e instanceof ApiError ? e.message : "Failed to save casting settings.");
     } finally {
       setSaving(false);
-    }
-  };
-
-  const onSaveMatching = async () => {
-    setMatchSaving(true);
-    setError(null);
-    try {
-      const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
-      const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
-      const updated = await adminUpdateMatchSettings("tmdb", "tmdb", { minUsers, minUserPercent });
-      setMatchSettings(updated);
-      setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");
-      setMatchMinUserPercent(updated.minUserPercent != null ? String(updated.minUserPercent) : "");
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to save matching settings.");
-    } finally {
-      setMatchSaving(false);
     }
   };
 
@@ -434,6 +623,9 @@ function RoomsTab() {
   const [lanHostPort, setLanHostPort] = useState("");
   const [wanHostPort, setWanHostPort] = useState("");
 
+	const [roomLifetimeMinutes, setRoomLifetimeMinutes] = useState("");
+	const [guestSessionLifetimeMinutes, setGuestSessionLifetimeMinutes] = useState("");
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -442,6 +634,8 @@ function RoomsTab() {
       setSettings(s);
       setLanHostPort(s.lanHostPort ?? "");
       setWanHostPort(s.wanHostPort ?? "");
+		setRoomLifetimeMinutes(s.roomLifetimeMinutes != null ? String(s.roomLifetimeMinutes) : "");
+		setGuestSessionLifetimeMinutes(s.guestSessionLifetimeMinutes != null ? String(s.guestSessionLifetimeMinutes) : "");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to load room settings.");
     } finally {
@@ -458,9 +652,20 @@ function RoomsTab() {
     setSaving(true);
     setError(null);
     try {
+		const roomLifetime = roomLifetimeMinutes.trim() ? Number(roomLifetimeMinutes.trim()) : null;
+		const guestLifetime = guestSessionLifetimeMinutes.trim() ? Number(guestSessionLifetimeMinutes.trim()) : null;
+		if (roomLifetime !== null && (!Number.isFinite(roomLifetime) || roomLifetime <= 0)) {
+			throw new ApiError(400, "Room lifetime minutes must be blank or a number >= 1.");
+		}
+		if (guestLifetime !== null && (!Number.isFinite(guestLifetime) || guestLifetime <= 0)) {
+			throw new ApiError(400, "Guest session lifetime minutes must be blank or a number >= 1.");
+		}
+
       const updated = await adminUpdateJoinAddressSettings({
         lanHostPort: lanHostPort.trim() ? lanHostPort.trim() : null,
-        wanHostPort: wanHostPort.trim() ? wanHostPort.trim() : null
+			wanHostPort: wanHostPort.trim() ? wanHostPort.trim() : null,
+			roomLifetimeMinutes: roomLifetime,
+			guestSessionLifetimeMinutes: guestLifetime
       });
       setSettings(updated);
       await load();
@@ -499,6 +704,24 @@ function RoomsTab() {
           </div>
         </div>
 
+    <div style={{ marginTop: "1rem" }}>
+      <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Lifetimes</h3>
+      <div style={{ color: "#8c93a6", marginBottom: "0.75rem" }}>
+        Set how long rooms and guest sessions stay valid (minutes). Leave blank to use defaults.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <div>
+          <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>Room lifetime (minutes)</div>
+          <input className="input" value={roomLifetimeMinutes} onChange={(e) => setRoomLifetimeMinutes(e.target.value)} placeholder="120" inputMode="numeric" />
+        </div>
+        <div>
+          <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>Guest session lifetime (minutes)</div>
+          <input className="input" value={guestSessionLifetimeMinutes} onChange={(e) => setGuestSessionLifetimeMinutes(e.target.value)} placeholder="60" inputMode="numeric" />
+        </div>
+      </div>
+    </div>
+
         <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSave()} disabled={loading || saving}>
             Save
@@ -525,6 +748,8 @@ function TmdbTab() {
   const [maxMovies, setMaxMovies] = useState("20000");
   const [imageCacheMaxMb, setImageCacheMaxMb] = useState("512");
   const [posterMode, setPosterMode] = useState("Tmdb");
+  const [prewarmOriginalLanguage, setPrewarmOriginalLanguage] = useState("");
+  const [prewarmRegion, setPrewarmRegion] = useState("");
 
   const [moviesLoading, setMoviesLoading] = useState(false);
   const [moviesError, setMoviesError] = useState<string | null>(null);
@@ -558,6 +783,8 @@ function TmdbTab() {
       setMaxMovies(String(s.maxMovies));
       setImageCacheMaxMb(String(s.imageCacheMaxMb));
       setPosterMode(String(s.posterMode || "Tmdb"));
+      setPrewarmOriginalLanguage(s.prewarmOriginalLanguage ?? "");
+      setPrewarmRegion(s.prewarmRegion ?? "");
 
 		try {
 			const m = await adminGetMatchSettings("tmdb", "tmdb");
@@ -671,13 +898,17 @@ function TmdbTab() {
         maxRows: parsed,
         maxMovies: parsedMaxMovies,
         imageCacheMaxMb: parsedImageMax,
-        posterMode
+        posterMode,
+        prewarmOriginalLanguage: prewarmOriginalLanguage.trim() ? prewarmOriginalLanguage.trim() : null,
+        prewarmRegion: prewarmRegion.trim() ? prewarmRegion.trim() : null
       });
       setSettings(updated);
       setMaxRows(String(updated.maxRows));
       setMaxMovies(String(updated.maxMovies));
       setImageCacheMaxMb(String(updated.imageCacheMaxMb));
       setPosterMode(String(updated.posterMode || "Tmdb"));
+      setPrewarmOriginalLanguage(updated.prewarmOriginalLanguage ?? "");
+      setPrewarmRegion(updated.prewarmRegion ?? "");
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to update TMDB cache settings.";
       setError(msg);
@@ -690,8 +921,13 @@ function TmdbTab() {
 		setMatchSaving(true);
 		setError(null);
 		try {
-			const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
-			const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+      const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
+      const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+      if (minUsers === 0)
+      {
+        setError("Min users must be blank or between 1 and 50.");
+        return;
+      }
 			const updated = await adminUpdateMatchSettings("tmdb", "tmdb", { minUsers, minUserPercent });
 			setMatchSettings(updated);
 			setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");
@@ -887,6 +1123,40 @@ function TmdbTab() {
                 <option value="LocalProxy">Cache images locally (proxy)</option>
               </select>
             </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Prewarm original language</span>
+              <input
+                className="input"
+                value={prewarmOriginalLanguage}
+                onChange={(e) => setPrewarmOriginalLanguage(e.target.value)}
+                placeholder="(use user preferences)"
+                list="tmdb_prewarm_language"
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Prewarm region</span>
+              <input
+                className="input"
+                value={prewarmRegion}
+                onChange={(e) => setPrewarmRegion(e.target.value)}
+                placeholder="(use user preferences)"
+                list="tmdb_prewarm_region"
+              />
+            </label>
+
+            <datalist id="tmdb_prewarm_language">
+              {TMDB_LANGUAGES.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </datalist>
+
+            <datalist id="tmdb_prewarm_region">
+              {TMDB_REGIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </datalist>
 
             <label style={{ display: "grid", gap: "0.25rem" }}>
               <span>Max image cache (MB)</span>
@@ -2060,6 +2330,11 @@ function RadarrTab() {
       const sid = serverId.trim() || "default";
       const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
       const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+			if (minUsers === 0)
+			{
+				setError("Min users must be blank or between 1 and 50.");
+				return;
+			}
       const updated = await adminUpdateMatchSettings("radarr", sid, { minUsers, minUserPercent });
       setMatchSettings(updated);
       setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");

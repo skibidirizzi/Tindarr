@@ -27,6 +27,8 @@ public sealed class JoinAddressSettingsRepository(TindarrDbContext db) : IJoinAd
 			{
 				LanHostPort = upsert.LanHostPort,
 				WanHostPort = upsert.WanHostPort,
+				RoomLifetimeMinutes = upsert.RoomLifetimeMinutes,
+				GuestSessionLifetimeMinutes = upsert.GuestSessionLifetimeMinutes,
 				UpdatedAtUtc = now
 			};
 			db.JoinAddressSettings.Add(entity);
@@ -35,15 +37,17 @@ public sealed class JoinAddressSettingsRepository(TindarrDbContext db) : IJoinAd
 		{
 			entity.LanHostPort = upsert.LanHostPort;
 			entity.WanHostPort = upsert.WanHostPort;
+			entity.RoomLifetimeMinutes = upsert.RoomLifetimeMinutes;
+			entity.GuestSessionLifetimeMinutes = upsert.GuestSessionLifetimeMinutes;
 			entity.UpdatedAtUtc = now;
 		}
 
 		await db.SaveChangesAsync(cancellationToken);
-		return new JoinAddressSettingsRecord(entity.LanHostPort, entity.WanHostPort, entity.UpdatedAtUtc);
+		return new JoinAddressSettingsRecord(entity.LanHostPort, entity.WanHostPort, entity.RoomLifetimeMinutes, entity.GuestSessionLifetimeMinutes, entity.UpdatedAtUtc);
 	}
 
 	private static JoinAddressSettingsRecord Map(JoinAddressSettingsEntity entity)
 	{
-		return new JoinAddressSettingsRecord(entity.LanHostPort, entity.WanHostPort, entity.UpdatedAtUtc);
+		return new JoinAddressSettingsRecord(entity.LanHostPort, entity.WanHostPort, entity.RoomLifetimeMinutes, entity.GuestSessionLifetimeMinutes, entity.UpdatedAtUtc);
 	}
 }

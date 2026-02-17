@@ -4,4 +4,6 @@ public sealed record UpdateTmdbCacheSettingsRequest(
 	int MaxRows,
 	int MaxMovies,
 	int ImageCacheMaxMb,
-	string PosterMode);
+	string PosterMode,
+	string? PrewarmOriginalLanguage,
+	string? PrewarmRegion);

@@ -23,6 +23,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 	private const string SettingsKeyMaxPoolPerUser = "pool_max_per_user";
 	private const string SettingsKeyImageCacheMaxMb = "image_cache_max_mb";
 	private const string SettingsKeyPosterMode = "poster_mode";
+	private const string SettingsKeyPrewarmOriginalLanguage = "prewarm_original_language";
+	private const string SettingsKeyPrewarmRegion = "prewarm_region";
 
 	private const int DefaultMaxMovies = 20_000;
 	private const int MinMaxMovies = 500;
@@ -37,6 +39,9 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 	private const int MaxImageCacheMaxMb = 100_000;
 
 	private const TmdbPosterMode DefaultPosterMode = TmdbPosterMode.Tmdb;
+
+	private const string? DefaultPrewarmOriginalLanguage = null;
+	private const string? DefaultPrewarmRegion = null;
 
 	private SqliteConnection CreateConnection()
 	{
@@ -172,6 +177,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			await SeedDefaultSettingAsync(conn, SettingsKeyMaxPoolPerUser, DefaultMaxPoolPerUser.ToString(), cancellationToken).ConfigureAwait(false);
 			await SeedDefaultSettingAsync(conn, SettingsKeyImageCacheMaxMb, DefaultImageCacheMaxMb.ToString(), cancellationToken).ConfigureAwait(false);
 			await SeedDefaultSettingAsync(conn, SettingsKeyPosterMode, DefaultPosterMode.ToString(), cancellationToken).ConfigureAwait(false);
+			await SeedDefaultSettingAsync(conn, SettingsKeyPrewarmOriginalLanguage, DefaultPrewarmOriginalLanguage ?? string.Empty, cancellationToken).ConfigureAwait(false);
+			await SeedDefaultSettingAsync(conn, SettingsKeyPrewarmRegion, DefaultPrewarmRegion ?? string.Empty, cancellationToken).ConfigureAwait(false);
 
 			_initialized = true;
 		}
@@ -218,6 +225,40 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		}
 
 		return Enum.TryParse<TmdbPosterMode>(raw, ignoreCase: true, out var parsed) ? parsed : DefaultPosterMode;
+	}
+
+	private static string? NormalizeLanguage(string? raw)
+	{
+		var v = (raw ?? string.Empty).Trim();
+		if (string.IsNullOrWhiteSpace(v))
+		{
+			return null;
+		}
+
+		if (v.Length > 10)
+		{
+			v = v[..10];
+		}
+
+		// TMDB expects e.g. "en".
+		return v.ToLowerInvariant();
+	}
+
+	private static string? NormalizeRegion(string? raw)
+	{
+		var v = (raw ?? string.Empty).Trim();
+		if (string.IsNullOrWhiteSpace(v))
+		{
+			return null;
+		}
+
+		if (v.Length > 10)
+		{
+			v = v[..10];
+		}
+
+		// TMDB expects ISO-3166-1 like "US".
+		return v.ToUpperInvariant();
 	}
 
 	private static async ValueTask<string?> GetSettingRawAsync(SqliteConnection conn, string key, CancellationToken cancellationToken)
@@ -287,8 +328,10 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			DefaultImageCacheMaxMb);
 
 		var posterMode = ParsePosterMode(await GetSettingRawAsync(conn, SettingsKeyPosterMode, cancellationToken));
+		var prewarmOriginalLanguage = NormalizeLanguage(await GetSettingRawAsync(conn, SettingsKeyPrewarmOriginalLanguage, cancellationToken));
+		var prewarmRegion = NormalizeRegion(await GetSettingRawAsync(conn, SettingsKeyPrewarmRegion, cancellationToken));
 
-		return new TmdbMetadataSettings(maxMovies, maxPool, maxMb, posterMode);
+		return new TmdbMetadataSettings(maxMovies, maxPool, maxMb, posterMode, prewarmOriginalLanguage, prewarmRegion);
 	}
 
 	public async ValueTask<TmdbMetadataSettings> SetSettingsAsync(TmdbMetadataSettings settings, CancellationToken cancellationToken)
@@ -299,7 +342,9 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			MaxMovies: Clamp(settings.MaxMovies, MinMaxMovies, MaxMaxMovies, DefaultMaxMovies),
 			MaxPoolPerUser: Clamp(settings.MaxPoolPerUser, MinMaxPoolPerUser, MaxMaxPoolPerUser, DefaultMaxPoolPerUser),
 			ImageCacheMaxMb: Clamp(settings.ImageCacheMaxMb, MinImageCacheMaxMb, MaxImageCacheMaxMb, DefaultImageCacheMaxMb),
-			PosterMode: settings.PosterMode);
+			PosterMode: settings.PosterMode,
+			PrewarmOriginalLanguage: NormalizeLanguage(settings.PrewarmOriginalLanguage),
+			PrewarmRegion: NormalizeRegion(settings.PrewarmRegion));
 
 		await using var conn = CreateConnection();
 		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -309,6 +354,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		await SetSettingRawAsync(conn, SettingsKeyMaxPoolPerUser, normalized.MaxPoolPerUser.ToString(), cancellationToken).ConfigureAwait(false);
 		await SetSettingRawAsync(conn, SettingsKeyImageCacheMaxMb, normalized.ImageCacheMaxMb.ToString(), cancellationToken).ConfigureAwait(false);
 		await SetSettingRawAsync(conn, SettingsKeyPosterMode, normalized.PosterMode.ToString(), cancellationToken).ConfigureAwait(false);
+		await SetSettingRawAsync(conn, SettingsKeyPrewarmOriginalLanguage, normalized.PrewarmOriginalLanguage ?? string.Empty, cancellationToken).ConfigureAwait(false);
+		await SetSettingRawAsync(conn, SettingsKeyPrewarmRegion, normalized.PrewarmRegion ?? string.Empty, cancellationToken).ConfigureAwait(false);
 
 		await MaybeRunMaintenanceAsync(conn, cancellationToken).ConfigureAwait(false);
 		return normalized;
@@ -798,6 +845,77 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			RuntimeMinutes: runtimeMinutes,
 			DetailsFetchedAtUtc: detailsFetchedAt,
 			UpdatedAtUtc: updatedAt);
+	}
+
+	public async Task<IReadOnlyList<TmdbDiscoverMovieRecord>> ListDeckCandidatesAsync(int take, CancellationToken cancellationToken)
+	{
+		await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+		take = Math.Clamp(take, 1, 5_000);
+
+		await using var conn = CreateConnection();
+		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await ApplyConnectionPragmasAsync(conn, cancellationToken).ConfigureAwait(false);
+
+		var cmd = conn.CreateCommand();
+		cmd.CommandText = """
+			SELECT
+				tmdb_id,
+				title,
+				original_title,
+				overview,
+				poster_path,
+				backdrop_path,
+				release_date,
+				original_language,
+				rating,
+				genre_ids_json
+			FROM tmdb_movies
+			ORDER BY updated_at_utc DESC
+			LIMIT $take;
+		""";
+		cmd.Parameters.AddWithValue("$take", take);
+
+		var results = new List<TmdbDiscoverMovieRecord>(capacity: take);
+		await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+		while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+		{
+			var tmdbId = reader.GetInt32(0);
+			var title = reader.IsDBNull(1) ? null : reader.GetString(1);
+			var originalTitle = reader.IsDBNull(2) ? null : reader.GetString(2);
+			var overview = reader.IsDBNull(3) ? null : reader.GetString(3);
+			var posterPath = reader.IsDBNull(4) ? null : reader.GetString(4);
+			var backdropPath = reader.IsDBNull(5) ? null : reader.GetString(5);
+			var releaseDate = reader.IsDBNull(6) ? null : reader.GetString(6);
+			var originalLanguage = reader.IsDBNull(7) ? null : reader.GetString(7);
+			double? rating = reader.IsDBNull(8) ? null : reader.GetDouble(8);
+			var genreIdsJson = reader.IsDBNull(9) ? null : reader.GetString(9);
+			IReadOnlyList<int>? genreIds = null;
+			if (!string.IsNullOrWhiteSpace(genreIdsJson))
+			{
+				try
+				{
+					genreIds = JsonSerializer.Deserialize<IReadOnlyList<int>>(genreIdsJson, Json);
+				}
+				catch
+				{
+					genreIds = null;
+				}
+			}
+
+			results.Add(new TmdbDiscoverMovieRecord(
+				Id: tmdbId,
+				Title: title,
+				OriginalTitle: originalTitle,
+				Overview: overview,
+				PosterPath: posterPath,
+				BackdropPath: backdropPath,
+				ReleaseDate: releaseDate,
+				OriginalLanguage: originalLanguage,
+				VoteAverage: rating,
+				GenreIds: genreIds));
+		}
+
+		return results;
 	}
 
 	public async Task<IReadOnlyList<TmdbStoredMovie>> ListMoviesAsync(

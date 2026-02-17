@@ -10,8 +10,12 @@ public interface IJoinAddressSettingsRepository
 public sealed record JoinAddressSettingsRecord(
 	string? LanHostPort,
 	string? WanHostPort,
+	int? RoomLifetimeMinutes,
+	int? GuestSessionLifetimeMinutes,
 	DateTimeOffset UpdatedAtUtc);
 
 public sealed record JoinAddressSettingsUpsert(
 	string? LanHostPort,
-	string? WanHostPort);
+	string? WanHostPort,
+	int? RoomLifetimeMinutes,
+	int? GuestSessionLifetimeMinutes);

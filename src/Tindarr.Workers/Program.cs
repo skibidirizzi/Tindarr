@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Hosting.WindowsServices;
@@ -45,6 +46,20 @@ var tmdbApiKeyEnv = Environment.GetEnvironmentVariable("TMDB_API_KEY");
 if (!string.IsNullOrWhiteSpace(tmdbApiKeyEnv) && string.IsNullOrWhiteSpace(builder.Configuration["Tmdb:ApiKey"]))
 {
 	builder.Configuration["Tmdb:ApiKey"] = tmdbApiKeyEnv;
+}
+
+static string ResolveTmdbMetadataDbPath(IConfiguration config, string? dataDirOverride, IHostEnvironment env)
+{
+	var configuredDbPath = config["Tmdb:MetadataDbPath"];
+	if (!string.IsNullOrWhiteSpace(configuredDbPath))
+	{
+		return Path.IsPathRooted(configuredDbPath)
+			? configuredDbPath
+			: Path.GetFullPath(Path.Combine(dataDirOverride ?? config["Database:DataDir"] ?? env.ContentRootPath, configuredDbPath));
+	}
+
+	var dataRoot = dataDirOverride ?? config["Database:DataDir"] ?? env.ContentRootPath;
+	return Path.Combine(dataRoot, "tmdbmetadata.db");
 }
 
 if (isWindowsService)
@@ -110,6 +125,8 @@ var defaultDataDirOverride = string.IsNullOrWhiteSpace(configuredDataDir) && Dir
 	? devApiDataDir
 	: null;
 
+var tmdbMetadataDbPath = ResolveTmdbMetadataDbPath((IConfiguration)builder.Configuration, defaultDataDirOverride, builder.Environment);
+
 builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: defaultDataDirOverride);
 builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: defaultDataDirOverride);
 
@@ -139,21 +156,18 @@ builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ITmdbCache>(sp =>
 {
-	var tmdbMetadataDbPath = Path.Combine(builder.Environment.ContentRootPath, "tmdbmetadata.db");
 	return new MemoryOrDbTmdbCache(sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(), tmdbMetadataDbPath);
 });
 builder.Services.AddSingleton<ITmdbCacheAdmin>(sp => (ITmdbCacheAdmin)sp.GetRequiredService<ITmdbCache>());
 
 builder.Services.AddSingleton<ITmdbMetadataStore>(sp =>
 {
-	var tmdbMetadataDbPath = Path.Combine(builder.Environment.ContentRootPath, "tmdbmetadata.db");
 	return new TmdbMetadataStore(tmdbMetadataDbPath);
 });
 
 builder.Services.AddHttpClient("tmdb-images");
 builder.Services.AddSingleton<ITmdbImageCache>(sp =>
 {
-	var tmdbMetadataDbPath = Path.Combine(builder.Environment.ContentRootPath, "tmdbmetadata.db");
 	var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient("tmdb-images");
 	return new TmdbImageCache(client, sp.GetRequiredService<IOptions<TmdbOptions>>(), tmdbMetadataDbPath);
 });

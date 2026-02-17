@@ -225,7 +225,9 @@ public sealed class TmdbController(
 			CurrentMovies: stats.MovieCount,
 			ImageCacheMaxMb: settings.ImageCacheMaxMb,
 			ImageCacheBytes: imageBytes,
-			PosterMode: settings.PosterMode.ToString()));
+			PosterMode: settings.PosterMode.ToString(),
+			PrewarmOriginalLanguage: settings.PrewarmOriginalLanguage,
+			PrewarmRegion: settings.PrewarmRegion));
 	}
 
 	[Authorize(Policy = Policies.AdminOnly)]
@@ -254,11 +256,44 @@ public sealed class TmdbController(
 			return BadRequest("PosterMode must be 'Tmdb' or 'LocalProxy'.");
 		}
 
+		var prewarmLang = string.IsNullOrWhiteSpace(request.PrewarmOriginalLanguage) ? null : request.PrewarmOriginalLanguage.Trim();
+		if (!string.IsNullOrWhiteSpace(prewarmLang))
+		{
+			if (prewarmLang.Length is < 2 or > 10)
+			{
+				return BadRequest("PrewarmOriginalLanguage must be blank or 2-10 characters.");
+			}
+			if (prewarmLang.Any(c => !(char.IsLetter(c) || c == '-' || c == '_')))
+			{
+				return BadRequest("PrewarmOriginalLanguage must contain only letters or '-'/'_'.");
+			}
+		}
+
+		var prewarmRegion = string.IsNullOrWhiteSpace(request.PrewarmRegion) ? null : request.PrewarmRegion.Trim();
+		if (!string.IsNullOrWhiteSpace(prewarmRegion))
+		{
+			if (prewarmRegion.Length is < 2 or > 10)
+			{
+				return BadRequest("PrewarmRegion must be blank or 2-10 characters.");
+			}
+			if (prewarmRegion.Any(c => !(char.IsLetter(c) || c == '-' || c == '_')))
+			{
+				return BadRequest("PrewarmRegion must contain only letters or '-'/'_'.");
+			}
+		}
+
 		await cacheAdmin.SetMaxRowsAsync(request.MaxRows, cancellationToken);
 
 		var current = await metadataStore.GetSettingsAsync(cancellationToken);
 		_ = await metadataStore.SetSettingsAsync(
-			current with { MaxMovies = request.MaxMovies, ImageCacheMaxMb = request.ImageCacheMaxMb, PosterMode = posterMode },
+			current with
+			{
+				MaxMovies = request.MaxMovies,
+				ImageCacheMaxMb = request.ImageCacheMaxMb,
+				PosterMode = posterMode,
+				PrewarmOriginalLanguage = prewarmLang,
+				PrewarmRegion = prewarmRegion
+			},
 			cancellationToken);
 
 		// Apply pruning immediately when lowering the limit.

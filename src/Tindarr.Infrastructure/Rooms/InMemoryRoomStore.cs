@@ -4,9 +4,8 @@ using Tindarr.Domain.Rooms;
 
 namespace Tindarr.Infrastructure.Rooms;
 
-public sealed class InMemoryRoomStore : IRoomStore
+public sealed class InMemoryRoomStore(IRoomLifetimeProvider lifetimes) : IRoomStore
 {
-	private static readonly TimeSpan Ttl = TimeSpan.FromHours(2);
 	private readonly ConcurrentDictionary<string, RoomState> _rooms = new(StringComparer.Ordinal);
 
 	public Task CreateAsync(RoomState state, CancellationToken cancellationToken)
@@ -22,13 +21,18 @@ public sealed class InMemoryRoomStore : IRoomStore
 			return Task.FromResult<RoomState?>(null);
 		}
 
-		if (IsExpired(state))
+		return GetOrExpireAsync(roomId, state, cancellationToken);
+	}
+
+	private async Task<RoomState?> GetOrExpireAsync(string roomId, RoomState state, CancellationToken cancellationToken)
+	{
+		if (await IsExpiredAsync(state, cancellationToken).ConfigureAwait(false))
 		{
 			_rooms.TryRemove(roomId, out _);
-			return Task.FromResult<RoomState?>(null);
+			return null;
 		}
 
-		return Task.FromResult<RoomState?>(state);
+		return state;
 	}
 
 	public Task UpdateAsync(RoomState state, CancellationToken cancellationToken)
@@ -39,20 +43,24 @@ public sealed class InMemoryRoomStore : IRoomStore
 
 	public Task CleanupExpiredAsync(CancellationToken cancellationToken)
 	{
+		return CleanupExpiredInnerAsync(cancellationToken);
+	}
+
+	private async Task CleanupExpiredInnerAsync(CancellationToken cancellationToken)
+	{
 		foreach (var kvp in _rooms)
 		{
-			if (IsExpired(kvp.Value))
+			if (await IsExpiredAsync(kvp.Value, cancellationToken).ConfigureAwait(false))
 			{
 				_rooms.TryRemove(kvp.Key, out _);
 			}
 		}
-
-		return Task.CompletedTask;
 	}
 
-	private static bool IsExpired(RoomState state)
+	private async Task<bool> IsExpiredAsync(RoomState state, CancellationToken cancellationToken)
 	{
 		var now = DateTimeOffset.UtcNow;
-		return now - state.LastActivityAtUtc > Ttl;
+		var ttl = await lifetimes.GetRoomTtlAsync(cancellationToken).ConfigureAwait(false);
+		return now - state.LastActivityAtUtc > ttl;
 	}
 }

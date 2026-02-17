@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SwipeCardComponent from "../components/SwipeCard";
 import MovieDetailsModal from "../components/MovieDetailsModal";
@@ -9,6 +9,10 @@ import { isMobileDevice } from "../device";
 import { useAuth } from "../auth/AuthContext";
 import { hasCompletedSwipeTutorial, setSwipeTutorialCompleted } from "../onboarding/swipeTutorial";
 import type { SwipeAction, SwipeCard } from "../types";
+
+const PREFETCH_THRESHOLD = 2;
+const PREFETCH_LIMIT = 10;
+const PREFETCH_EMPTY_RETRIES = 2;
 
 const ACTION_LABELS: Record<SwipeAction, string> = {
   Like: "Like",
@@ -51,6 +55,8 @@ export default function SwipeDeckPage() {
   const [tutorialHistory, setTutorialHistory] = useState<Array<{ card: SwipeCard; action: SwipeAction }>>([]);
   const [tutorialNote, setTutorialNote] = useState<string | null>(null);
 
+  const prefetchInFlightRef = useRef(false);
+
   const activeCard = cards[0];
 
   const loadDeck = useCallback(async () => {
@@ -80,6 +86,45 @@ export default function SwipeDeckPage() {
       setLoading(false);
     }
   }, []);
+
+  const appendUniqueCards = useCallback((incoming: SwipeCard[]) => {
+    if (!incoming.length) return;
+    setCards((prev) => {
+      if (!prev.length) return incoming;
+      const existing = new Set(prev.map((c) => c.tmdbId));
+      const deduped = incoming.filter((c) => !existing.has(c.tmdbId));
+      return deduped.length ? [...prev, ...deduped] : prev;
+    });
+  }, []);
+
+  const prefetchMoreCards = useCallback(async () => {
+    if (prefetchInFlightRef.current) return;
+    if (loading) return;
+    if (error) return;
+
+    prefetchInFlightRef.current = true;
+    try {
+      for (let attempt = 0; attempt <= PREFETCH_EMPTY_RETRIES; attempt++) {
+        const response = await fetchSwipeDeck(PREFETCH_LIMIT);
+        if (response.items.length > 0) {
+          appendUniqueCards(response.items);
+          break;
+        }
+
+        if (attempt !== PREFETCH_EMPTY_RETRIES) {
+          await sleep(250 * (attempt + 1));
+        }
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError("You’re not logged in. Please login and try again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load swipedeck");
+      }
+    } finally {
+      prefetchInFlightRef.current = false;
+    }
+  }, [appendUniqueCards, error, loading]);
 
   const requestSwipe = useCallback(
     (action: SwipeAction, fromOffset?: { x: number; y: number }) => {
@@ -230,6 +275,12 @@ export default function SwipeDeckPage() {
   useEffect(() => {
     loadDeck();
   }, [loadDeck]);
+
+  // When the deck is running low, poll for more cards and append them to the bottom.
+  useEffect(() => {
+    if (cards.length >= PREFETCH_THRESHOLD) return;
+    void prefetchMoreCards();
+  }, [cards.length, prefetchMoreCards]);
 
   // In tutorial mode we don't persist swipes, so the server deck can still be full while the local deck drains.
   // Auto-refresh to keep the tutorial moving.

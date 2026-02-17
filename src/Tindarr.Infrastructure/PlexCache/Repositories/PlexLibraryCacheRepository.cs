@@ -26,6 +26,21 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 		return ids;
 	}
 
+	public async Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return 0;
+		}
+
+		return await db.LibraryItems
+			.AsNoTracking()
+			.Where(x => x.ServerId == scope.ServerId && x.TmdbId > 0)
+			.Select(x => x.TmdbId)
+			.Distinct()
+			.CountAsync(cancellationToken);
+	}
+
 	public async Task<IReadOnlyList<PlexLibraryItem>> ListItemsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken)
 	{
 		if (scope.ServiceType != ServiceType.Plex)

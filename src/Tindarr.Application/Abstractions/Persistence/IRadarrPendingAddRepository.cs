@@ -4,6 +4,12 @@ namespace Tindarr.Application.Abstractions.Persistence;
 
 public interface IRadarrPendingAddRepository
 {
+	/// <summary>
+	/// Returns the next scheduled ReadyAtUtc timestamp for any pending (not canceled, not processed)
+	/// record, or null if no pending records exist.
+	/// </summary>
+	Task<DateTimeOffset?> GetNextReadyAtUtcAsync(CancellationToken cancellationToken);
+
 	Task<bool> TryEnqueueAsync(
 		ServiceScope scope,
 		string userId,

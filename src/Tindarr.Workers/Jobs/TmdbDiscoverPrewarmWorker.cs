@@ -60,8 +60,24 @@ public sealed class TmdbDiscoverPrewarmWorker(
 			try
 			{
 				var prefs = await prefsService.GetOrDefaultAsync(user.Id, stoppingToken).ConfigureAwait(false);
-				var discovered = await tmdbClient.DiscoverMoviesAsync(prefs, page: 1, limit: 50, stoppingToken).ConfigureAwait(false);
-				await metadataStore.AddToUserPoolAsync(user.Id, discovered, stoppingToken).ConfigureAwait(false);
+				var effectivePrefs = prefs;
+				if (!string.IsNullOrWhiteSpace(settings.PrewarmOriginalLanguage))
+				{
+					effectivePrefs = effectivePrefs with
+					{
+						PreferredOriginalLanguages = new[] { settings.PrewarmOriginalLanguage }
+					};
+				}
+				if (!string.IsNullOrWhiteSpace(settings.PrewarmRegion))
+				{
+					effectivePrefs = effectivePrefs with
+					{
+						PreferredRegions = new[] { settings.PrewarmRegion }
+					};
+				}
+
+				var discovered = await tmdbClient.DiscoverMoviesAsync(effectivePrefs, page: 1, limit: 50, stoppingToken).ConfigureAwait(false);
+				await metadataStore.UpsertMoviesAsync(discovered, stoppingToken).ConfigureAwait(false);
 
 				if (settings.PosterMode == TmdbPosterMode.LocalProxy && settings.ImageCacheMaxMb > 0)
 				{

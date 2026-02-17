@@ -1,7 +1,9 @@
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Interfaces.Auth;
+using Tindarr.Application.Interfaces.Rooms;
 using Tindarr.Application.Options;
+using System.Security.Claims;
 
 namespace Tindarr.Application.Features.Auth;
 
@@ -9,33 +11,47 @@ public sealed class AuthService(
 	IUserRepository users,
 	IPasswordHasher passwordHasher,
 	ITokenService tokenService,
+	IRoomService roomService,
+	IRoomLifetimeProvider roomLifetimeProvider,
 	Microsoft.Extensions.Options.IOptions<RegistrationOptions> registrationOptions) : IAuthService
 {
 	private readonly RegistrationOptions registration = registrationOptions.Value;
 
-	public async Task<AuthSession> GuestAsync(string? displayName, CancellationToken cancellationToken)
+	public async Task<AuthSession> GuestAsync(string roomId, string? displayName, CancellationToken cancellationToken)
 	{
-		var normalizedDisplayName = string.IsNullOrWhiteSpace(displayName) ? "Guest" : NormalizeDisplayName(displayName);
-		var now = DateTimeOffset.UtcNow;
-
-		// Try a handful of times to avoid collisions.
-		for (var attempt = 0; attempt < 10; attempt++)
+		if (string.IsNullOrWhiteSpace(roomId))
 		{
-			var id = $"guest-{Guid.NewGuid():N}";
-			if (await users.UserExistsAsync(id, cancellationToken))
-			{
-				continue;
-			}
-
-			await users.CreateAsync(new CreateUserRecord(id, normalizedDisplayName, now), cancellationToken);
-			await users.SetRolesAsync(id, new[] { registration.DefaultRole }, cancellationToken);
-
-			var roles = await users.GetRolesAsync(id, cancellationToken);
-			var token = tokenService.IssueAccessToken(id, roles.ToList());
-			return new AuthSession(token.AccessToken, token.ExpiresAtUtc, id, normalizedDisplayName, roles.ToList());
+			throw new ArgumentException("RoomId is required.");
 		}
 
-		throw new InvalidOperationException("Could not create guest session.");
+		var room = await roomService.GetAsync(roomId, cancellationToken);
+		if (room is null)
+		{
+			throw new InvalidOperationException("Room not found.");
+		}
+
+		if (room.IsClosed)
+		{
+			throw new InvalidOperationException("Room is closed to new users.");
+		}
+
+		var normalizedDisplayName = string.IsNullOrWhiteSpace(displayName) ? "Guest" : NormalizeDisplayName(displayName);
+		var id = $"guest-{Guid.NewGuid():N}";
+
+		var roles = new List<string> { "Guest" };
+		var ttl = await roomLifetimeProvider.GetGuestSessionTtlAsync(cancellationToken).ConfigureAwait(false);
+		var token = tokenService.IssueAccessToken(
+			id,
+			roles,
+			additionalClaims: new[]
+			{
+				new Claim(TindarrClaimTypes.IsGuest, "1"),
+				new Claim(TindarrClaimTypes.RoomId, room.RoomId),
+				new Claim(TindarrClaimTypes.DisplayName, normalizedDisplayName)
+			},
+			lifetimeOverride: ttl);
+
+		return new AuthSession(token.AccessToken, token.ExpiresAtUtc, id, normalizedDisplayName, roles);
 	}
 
 	public async Task<AuthSession> RegisterAsync(string userId, string displayName, string password, CancellationToken cancellationToken)

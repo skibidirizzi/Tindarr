@@ -2,4 +2,6 @@ namespace Tindarr.Contracts.Admin;
 
 public sealed record UpdateJoinAddressSettingsRequest(
 	string? LanHostPort,
-	string? WanHostPort);
+	string? WanHostPort,
+	int? RoomLifetimeMinutes,
+	int? GuestSessionLifetimeMinutes);

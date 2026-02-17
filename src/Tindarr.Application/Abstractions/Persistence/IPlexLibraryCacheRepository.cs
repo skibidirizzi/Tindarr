@@ -7,6 +7,8 @@ public interface IPlexLibraryCacheRepository
 {
 	Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken);
 
+	Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken);
+
 	Task<IReadOnlyList<PlexLibraryItem>> ListItemsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken);
 
 	Task<string?> TryGetRatingKeyAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken);

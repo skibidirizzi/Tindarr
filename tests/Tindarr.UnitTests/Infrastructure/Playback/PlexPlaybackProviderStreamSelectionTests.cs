@@ -216,6 +216,9 @@ public sealed class PlexPlaybackProviderStreamSelectionTests
 		public Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken) =>
 			throw new NotSupportedException();
 
+		public Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken) =>
+			throw new NotSupportedException();
+
 		public Task<IReadOnlyList<PlexLibraryItem>> ListItemsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken) =>
 			throw new NotSupportedException();
 

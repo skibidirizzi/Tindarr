@@ -97,6 +97,7 @@ public sealed class TmdbBuildJob(
 				&& settings.PosterMode == TmdbPosterMode.LocalProxy
 				&& settings.ImageCacheMaxMb > 0;
 			var maxImageBytes = (long)Math.Max(0, settings.ImageCacheMaxMb) * 1024L * 1024L;
+			var discoveredIds = new HashSet<int>();
 
 			var bypass = request.RateLimitOverride;
 			var previousBypass = TmdbRateLimitingHandler.BypassRateLimit.Value;
@@ -112,36 +113,30 @@ public sealed class TmdbBuildJob(
 						Update(s => s with { CurrentUserId = user.Id, LastMessage = "Discovering" });
 
 						var prefs = await prefsService.GetOrDefaultAsync(user.Id, stoppingToken).ConfigureAwait(false);
-						var discovered = await tmdbClient.DiscoverMoviesAsync(prefs, page: 1, limit: discoverLimit, stoppingToken).ConfigureAwait(false);
-						await metadataStore.AddToUserPoolAsync(user.Id, discovered, stoppingToken).ConfigureAwait(false);
+						var effectivePrefs = prefs;
+						if (!string.IsNullOrWhiteSpace(settings.PrewarmOriginalLanguage))
+						{
+							effectivePrefs = effectivePrefs with
+							{
+								PreferredOriginalLanguages = new[] { settings.PrewarmOriginalLanguage }
+							};
+						}
+						if (!string.IsNullOrWhiteSpace(settings.PrewarmRegion))
+						{
+							effectivePrefs = effectivePrefs with
+							{
+								PreferredRegions = new[] { settings.PrewarmRegion }
+							};
+						}
+
+						var discovered = await tmdbClient.DiscoverMoviesAsync(effectivePrefs, page: 1, limit: discoverLimit, stoppingToken).ConfigureAwait(false);
+						await metadataStore.UpsertMoviesAsync(discovered, stoppingToken).ConfigureAwait(false);
+						foreach (var m in discovered)
+						{
+							discoveredIds.Add(m.Id);
+						}
 
 						Update(s => s with { MoviesDiscovered = s.MoviesDiscovered + discovered.Count });
-
-						if (shouldPrefetchImages)
-						{
-							Update(s => s with { LastMessage = "Prefetching images" });
-							foreach (var m in discovered.Take(12))
-							{
-								stoppingToken.ThrowIfCancellationRequested();
-								var fetchedAny = false;
-								if (!string.IsNullOrWhiteSpace(m.PosterPath))
-								{
-									var r = await imageCache.GetOrFetchAsync(tmdb.PosterSize, m.PosterPath!, stoppingToken).ConfigureAwait(false);
-									fetchedAny |= r is not null;
-								}
-								if (!string.IsNullOrWhiteSpace(m.BackdropPath))
-								{
-									var r = await imageCache.GetOrFetchAsync(tmdb.BackdropSize, m.BackdropPath!, stoppingToken).ConfigureAwait(false);
-									fetchedAny |= r is not null;
-								}
-								if (fetchedAny)
-								{
-									Update(s => s with { ImagesFetched = s.ImagesFetched + 1 });
-								}
-							}
-
-							await imageCache.PruneAsync(maxImageBytes, stoppingToken).ConfigureAwait(false);
-						}
 
 						processed++;
 						Update(s => s with { UsersProcessed = processed, LastMessage = "User complete" });
@@ -153,12 +148,16 @@ public sealed class TmdbBuildJob(
 				TmdbRateLimitingHandler.BypassRateLimit.Value = previousBypass;
 			}
 
-			// Backfill a bit of details at the end (genres/etc).
+			// Backfill details for ALL discovered movies.
 			Update(s => s with { LastMessage = "Backfilling details" });
-			var ids = await metadataStore.ListMoviesNeedingDetailsAsync(50, stoppingToken).ConfigureAwait(false);
-			foreach (var id in ids)
+			foreach (var id in discoveredIds)
 			{
 				stoppingToken.ThrowIfCancellationRequested();
+				var existing = await metadataStore.GetMovieAsync(id, stoppingToken).ConfigureAwait(false);
+				if (existing?.DetailsFetchedAtUtc is not null)
+				{
+					continue;
+				}
 				var details = await tmdbClient.GetMovieDetailsAsync(id, stoppingToken).ConfigureAwait(false);
 				if (details is null)
 				{
@@ -166,6 +165,46 @@ public sealed class TmdbBuildJob(
 				}
 				await metadataStore.UpdateMovieDetailsAsync(details, stoppingToken).ConfigureAwait(false);
 				Update(s => s with { DetailsFetched = s.DetailsFetched + 1 });
+			}
+
+			// Cache images for ALL discovered movies (best-effort) when using LocalProxy.
+			if (shouldPrefetchImages)
+			{
+				Update(s => s with { LastMessage = "Fetching images" });
+				var iter = 0;
+				foreach (var id in discoveredIds)
+				{
+					stoppingToken.ThrowIfCancellationRequested();
+					var movie = await metadataStore.GetMovieAsync(id, stoppingToken).ConfigureAwait(false);
+					if (movie is null)
+					{
+						continue;
+					}
+
+					var fetchedAny = false;
+					if (!string.IsNullOrWhiteSpace(movie.PosterPath))
+					{
+						var r = await imageCache.GetOrFetchAsync(tmdb.PosterSize, movie.PosterPath!, stoppingToken).ConfigureAwait(false);
+						fetchedAny |= r is not null;
+					}
+					if (!string.IsNullOrWhiteSpace(movie.BackdropPath))
+					{
+						var r = await imageCache.GetOrFetchAsync(tmdb.BackdropSize, movie.BackdropPath!, stoppingToken).ConfigureAwait(false);
+						fetchedAny |= r is not null;
+					}
+					if (fetchedAny)
+					{
+						Update(s => s with { ImagesFetched = s.ImagesFetched + 1 });
+					}
+
+					iter++;
+					if (iter % 200 == 0)
+					{
+						await imageCache.PruneAsync(maxImageBytes, stoppingToken).ConfigureAwait(false);
+					}
+				}
+
+				await imageCache.PruneAsync(maxImageBytes, stoppingToken).ConfigureAwait(false);
 			}
 
 			Update(s => s.Complete("Done"));

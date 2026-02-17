@@ -17,7 +17,7 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 	{
 		try
 		{
-			var session = await authService.GuestAsync(request.DisplayName, cancellationToken);
+			var session = await authService.GuestAsync(request.RoomId, request.DisplayName, cancellationToken);
 			return Ok(Map(session));
 		}
 		catch (ArgumentException ex)
@@ -70,9 +70,18 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 	}
 
 	[HttpGet("me")]
-	[Authorize]
+	[Authorize(Policy = Tindarr.Api.Auth.Policies.AllowGuests)]
 	public async Task<ActionResult<MeResponse>> Me(CancellationToken cancellationToken)
 	{
+		// Guests are not persisted. For guest sessions, return identity from token claims.
+		if (User.IsInRole(Tindarr.Api.Auth.Policies.GuestRole))
+		{
+			var userId = currentUser.UserId;
+			var displayName = User.FindFirst(Tindarr.Application.Abstractions.Security.TindarrClaimTypes.DisplayName)?.Value
+				?? "Guest";
+			return Ok(new MeResponse(userId, displayName, new[] { Tindarr.Api.Auth.Policies.GuestRole }));
+		}
+
 		var me = await authService.GetMeAsync(currentUser.UserId, cancellationToken);
 		return Ok(new MeResponse(me.UserId, me.DisplayName, me.Roles));
 	}

@@ -14,7 +14,7 @@ using Tindarr.Domain.Interactions;
 namespace Tindarr.Api.Controllers;
 
 [ApiController]
-[Authorize]
+[Authorize(Policy = Policies.RoomAccess)]
 [Route("api/v1/rooms")]
 public sealed class RoomsController(
 	IRoomService roomService,

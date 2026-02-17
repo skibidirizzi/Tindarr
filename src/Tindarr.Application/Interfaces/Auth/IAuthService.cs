@@ -8,7 +8,7 @@ public interface IAuthService
 
 	Task<AuthSession> LoginAsync(string userId, string password, CancellationToken cancellationToken);
 
-	Task<AuthSession> GuestAsync(string? displayName, CancellationToken cancellationToken);
+	Task<AuthSession> GuestAsync(string roomId, string? displayName, CancellationToken cancellationToken);
 
 	Task<AuthUserInfo> GetMeAsync(string userId, CancellationToken cancellationToken);
 

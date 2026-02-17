@@ -7,4 +7,6 @@ public sealed record TmdbCacheSettingsDto(
 	int CurrentMovies,
 	int ImageCacheMaxMb,
 	long ImageCacheBytes,
-	string PosterMode);
+	string PosterMode,
+	string? PrewarmOriginalLanguage,
+	string? PrewarmRegion);
