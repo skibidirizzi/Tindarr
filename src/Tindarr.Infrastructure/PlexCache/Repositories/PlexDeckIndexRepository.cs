@@ -144,7 +144,15 @@ public sealed class PlexDeckIndexRepository(PlexCacheDbContext db) : IPlexDeckIn
 		limit = Math.Clamp(limit, 1, 500);
 
 	var serverId = scope.ServerId;
-	var q = db.DeckEntries.AsNoTracking().Where(x => x.ServerId == serverId);
+	var libraryIds = db.LibraryItems
+		.AsNoTracking()
+		.Where(x => x.ServerId == serverId)
+		.Select(x => x.TmdbId);
+
+	var q = db.DeckEntries
+		.AsNoTracking()
+		.Where(x => x.ServerId == serverId)
+		.Where(x => libraryIds.Contains(x.TmdbId));
 
 		if (preferences.MinReleaseYear is { } minYear)
 		{

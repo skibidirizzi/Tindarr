@@ -12,11 +12,22 @@ public sealed class JellyfinPlaybackProvider(
 	IServiceSettingsRepository settingsRepo,
 	ICastingSettingsRepository castingSettingsRepo,
 	HttpClient httpClient,
-	ILogger<JellyfinPlaybackProvider> logger) : IPlaybackProvider
+	ILogger<JellyfinPlaybackProvider> logger) : IDirectPlaybackProvider
 {
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
 	public ServiceType ServiceType => ServiceType.Jellyfin;
+
+	public async Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var upstream = await BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+		if (!upstream.Headers.TryGetValue("X-Emby-Token", out var token) || string.IsNullOrWhiteSpace(token))
+		{
+			return null;
+		}
+
+		return AppendOrReplaceQuery(upstream.Uri, "api_key", token);
+	}
 
 	public async Task<UpstreamPlaybackRequest> BuildMovieStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
 	{
@@ -65,6 +76,55 @@ public sealed class JellyfinPlaybackProvider(
 			{
 				["X-Emby-Token"] = apiKey
 			});
+	}
+
+	private static Uri AppendOrReplaceQuery(Uri uri, string key, string value)
+	{
+		var builder = new UriBuilder(uri);
+		var all = ParseQuery(builder.Query);
+
+		all[key] = value;
+		builder.Query = string.Join("&", all.Select(kvp => $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
+		return builder.Uri;
+	}
+
+	private static Dictionary<string, string> ParseQuery(string? query)
+	{
+		var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		if (string.IsNullOrWhiteSpace(query))
+		{
+			return dict;
+		}
+
+		var q = query.Trim();
+		if (q.StartsWith("?", StringComparison.Ordinal))
+		{
+			q = q[1..];
+		}
+		if (string.IsNullOrWhiteSpace(q))
+		{
+			return dict;
+		}
+
+		foreach (var part in q.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		{
+			var kv = part.Split('=', 2);
+			if (kv.Length == 0 || string.IsNullOrWhiteSpace(kv[0]))
+			{
+				continue;
+			}
+
+			var k = Uri.UnescapeDataString(kv[0]);
+			if (dict.ContainsKey(k))
+			{
+				continue;
+			}
+
+			var v = kv.Length == 2 ? Uri.UnescapeDataString(kv[1]) : string.Empty;
+			dict[k] = v;
+		}
+
+		return dict;
 	}
 
 	private sealed record StreamSelection(int? AudioStreamIndex, int? SubtitleStreamIndex, string? SubtitleMethod);

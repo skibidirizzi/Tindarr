@@ -20,7 +20,7 @@ public sealed class RadarrPendingAddRepository(TindarrDbContext db) : IRadarrPen
 				.FirstOrDefaultAsync(cancellationToken)
 				.ConfigureAwait(false);
 		}
-		catch (InvalidOperationException)
+		catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
 		{
 			// SQLite provider can have limited DateTimeOffset translation support in LINQ.
 			// Fall back to an in-memory min to avoid runtime translation exceptions.

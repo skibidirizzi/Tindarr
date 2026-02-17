@@ -3,9 +3,9 @@
 
 This document describes how Tindarr proxies and secures media playback so that:
 
-- Clients never talk directly to Plex/Jellyfin/Emby.
-- Cast devices only ever fetch media from Tindarr URLs.
-- Provider credentials never appear in URLs (only in upstream request headers).
+- Playback can be proxied through Tindarr when needed (tokenized gateway URLs).
+- Casting prefers direct media-server URLs when possible (cast devices fetch from Plex/Jellyfin/Emby directly).
+- When direct casting isn't possible, casting falls back to the Tindarr playback gateway.
 
 See also: `docs/architecture/invariants.md`.
 

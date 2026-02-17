@@ -17,6 +17,14 @@ public interface IPlexLibraryCacheRepository
 
 	Task ReplaceItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken);
 
+	/// <summary>
+	/// Incrementally syncs the cached Plex library items for a server.
+	/// - Adds new TMDB IDs found in the Plex response
+	/// - Updates existing rows if title/ratingKey changed
+	/// - Deletes rows whose TMDB IDs are no longer present in the Plex response
+	/// </summary>
+	Task SyncItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken);
+
 	Task AddTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken);
 
 	Task RemoveTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, CancellationToken cancellationToken);

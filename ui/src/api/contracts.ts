@@ -243,6 +243,20 @@ export type CastMovieRequest = {
   title?: string | null;
 };
 
+export type CastMediaUrlDto = {
+  url: string;
+  contentType: string;
+  title: string;
+  subTitle: string | null;
+};
+
+export type GetMovieCastUrlRequest = {
+  serviceType: string;
+  serverId: string;
+  tmdbId: number;
+  title?: string | null;
+};
+
 export type MovieDetailsDto = {
   tmdbId: number;
   title: string;

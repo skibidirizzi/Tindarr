@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, type Location } from "react-router-dom";
 import { ApiError } from "../api/http";
-import { getPreferences, updatePreferences } from "../api/client";
-import type { UserPreferencesDto } from "../api/contracts";
+import { clearInteractionHistory, fetchConfiguredScopes, getPreferences, updatePreferences } from "../api/client";
+import type { ServiceScopeOptionDto, UserPreferencesDto } from "../api/contracts";
 import { TMDB_LANGUAGES, TMDB_MOVIE_GENRES, TMDB_REGIONS, TMDB_SORT_BY } from "../tmdb/knownValues";
 
 type FormState = {
@@ -131,6 +131,12 @@ export default function PreferencesPage() {
   const [prefs, setPrefs] = useState<UserPreferencesDto | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
 
+  const [scopesLoading, setScopesLoading] = useState(false);
+  const [scopes, setScopes] = useState<ServiceScopeOptionDto[] | null>(null);
+  const [clearBusyKey, setClearBusyKey] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
+  const [clearMessage, setClearMessage] = useState<string | null>(null);
+
   const updatedAt = useMemo(() => (prefs?.updatedAtUtc ? new Date(prefs.updatedAtUtc) : null), [prefs?.updatedAtUtc]);
 
   function handleClose() {
@@ -168,6 +174,48 @@ export default function PreferencesPage() {
       }
     })();
   }, []);
+
+  async function loadScopes() {
+    try {
+      setScopesLoading(true);
+      setClearError(null);
+      const next = await fetchConfiguredScopes();
+      setScopes(next);
+    } catch (err) {
+      setClearError(err instanceof Error ? err.message : "Failed to load scopes.");
+    } finally {
+      setScopesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadScopes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleClearHistory(scope: ServiceScopeOptionDto) {
+    const key = `${scope.serviceType}:${scope.serverId}`;
+    try {
+      setClearBusyKey(key);
+      setClearError(null);
+      setClearMessage(null);
+      await clearInteractionHistory(scope.serviceType, scope.serverId);
+      setClearMessage(`Cleared interaction history for ${scope.displayName}.`);
+
+      // Let the background swipedeck refresh immediately after a successful clear.
+      window.dispatchEvent(new Event("tindarr:interactionHistoryCleared"));
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setClearError(err.message);
+      } else if (err instanceof Error) {
+        setClearError(err.message);
+      } else {
+        setClearError("Failed to clear interaction history.");
+      }
+    } finally {
+      setClearBusyKey(null);
+    }
+  }
 
   async function handleSave() {
     if (!form) return;
@@ -416,6 +464,45 @@ export default function PreferencesPage() {
                     {saving ? "Saving…" : "Save preferences"}
                   </button>
                 </div>
+
+        <div className="field">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+            <span className="field__label">Interaction history</span>
+            <button type="button" className="button button--ghost" onClick={() => void loadScopes()} disabled={scopesLoading}>
+              {scopesLoading ? "Refreshing…" : "Refresh scopes"}
+            </button>
+          </div>
+
+          {clearError ? <div className="deck__state deck__state--error">{clearError}</div> : null}
+          {clearMessage ? <div className="deck__state">{clearMessage}</div> : null}
+          {scopesLoading && !scopes ? <div className="deck__state">Loading scopes…</div> : null}
+
+          {!scopesLoading && scopes && scopes.length === 0 ? (
+            <div className="deck__state">No configured scopes found.</div>
+          ) : null}
+
+          {scopes && scopes.length > 0 ? (
+            <div style={{ display: "grid", gap: "0.5rem" }}>
+              {scopes.map((s) => {
+                const key = `${s.serviceType}:${s.serverId}`;
+                const busy = clearBusyKey === key;
+                return (
+                  <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+                    <div style={{ fontWeight: 600 }}>{s.displayName}</div>
+                    <button
+                      type="button"
+                      className="button button--nope"
+                      onClick={() => void handleClearHistory(s)}
+                      disabled={busy}
+                    >
+                      {busy ? "Clearing…" : "Clear history"}
+                    </button>
+                  </div>
+              );
+            })}
+            </div>
+          ) : null}
+        </div>
               </div>
             ) : (
               <div className="deck__state deck__state--error">Preferences failed to load.</div>

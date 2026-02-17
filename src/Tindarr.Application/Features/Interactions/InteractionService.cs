@@ -18,6 +18,11 @@ public sealed class InteractionService(IInteractionStore store) : IInteractionSe
         return store.UndoLastAsync(userId, scope, cancellationToken);
     }
 
+	public Task ClearHistoryAsync(string userId, ServiceScope scope, CancellationToken cancellationToken)
+	{
+		return store.ClearHistoryAsync(userId, scope, cancellationToken);
+	}
+
     public Task<IReadOnlyList<Interaction>> ListAsync(
         string userId,
         ServiceScope scope,

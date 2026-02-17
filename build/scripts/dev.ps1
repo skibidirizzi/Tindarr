@@ -211,6 +211,7 @@ if ($lanIp) {
 try {
 	if (-not $UiOnly) {
 		$apiProc = Start-Api -repoRoot $repoRoot -listenUrl $listenUrl -environment $Environment -lanBaseUrl $lanBaseUrl
+		Start-Sleep -Seconds 5
 		$workersProc = Start-Workers -repoRoot $repoRoot -environment $Environment -lanBaseUrl $lanBaseUrl
 	}
 

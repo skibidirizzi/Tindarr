@@ -9,6 +9,8 @@ namespace Tindarr.Infrastructure.PlexCache.Repositories;
 
 public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLibraryCacheRepository
 {
+	private const int SqliteParameterChunkSize = 400;
+
 	public async Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
 	{
 		if (scope.ServiceType != ServiceType.Plex)
@@ -156,6 +158,133 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 		}
 	}
 
+	public async Task SyncItemsAsync(ServiceScope scope, IReadOnlyCollection<PlexLibraryItem> items, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return;
+		}
+
+		var serverId = scope.ServerId;
+		var normalized = items
+			.Where(x => x.TmdbId > 0)
+			.GroupBy(x => x.TmdbId)
+			.Select(g =>
+			{
+				var best = g.FirstOrDefault(i => !string.IsNullOrWhiteSpace(i.RatingKey)) ?? g.First();
+				return new
+				{
+					TmdbId = g.Key,
+					RatingKey = Normalize(best.RatingKey),
+					Title = Normalize(best.Title)
+				};
+			})
+			.ToDictionary(x => x.TmdbId, x => (x.RatingKey, x.Title));
+
+		await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			if (normalized.Count == 0)
+			{
+				await db.LibraryItems
+					.Where(x => x.ServerId == serverId)
+					.ExecuteDeleteAsync(cancellationToken)
+					.ConfigureAwait(false);
+				await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+				return;
+			}
+
+			var existing = await db.LibraryItems
+				.AsNoTracking()
+				.Where(x => x.ServerId == serverId)
+				.Select(x => new { x.TmdbId, x.RatingKey, x.Title })
+				.ToListAsync(cancellationToken)
+				.ConfigureAwait(false);
+
+			var existingById = existing.ToDictionary(
+				x => x.TmdbId,
+				x => (RatingKey: Normalize(x.RatingKey), Title: Normalize(x.Title)));
+
+			var incomingIds = normalized.Keys.ToHashSet();
+			var existingIds = existingById.Keys.ToHashSet();
+
+			var toDelete = existingIds.Except(incomingIds).ToList();
+			for (var i = 0; i < toDelete.Count; i += SqliteParameterChunkSize)
+			{
+				var chunk = toDelete.Skip(i).Take(SqliteParameterChunkSize).ToList();
+				await db.LibraryItems
+					.Where(x => x.ServerId == serverId && chunk.Contains(x.TmdbId))
+					.ExecuteDeleteAsync(cancellationToken)
+					.ConfigureAwait(false);
+			}
+
+			var toAddIds = incomingIds.Except(existingIds).ToList();
+			if (toAddIds.Count > 0)
+			{
+				var addRows = new List<PlexLibraryCacheItemEntity>(toAddIds.Count);
+				foreach (var tmdbId in toAddIds)
+				{
+					var v = normalized[tmdbId];
+					addRows.Add(new PlexLibraryCacheItemEntity
+					{
+						ServerId = serverId,
+						TmdbId = tmdbId,
+						RatingKey = v.RatingKey,
+						Title = v.Title,
+						UpdatedAtUtc = syncedAtUtc
+					});
+				}
+
+				db.LibraryItems.AddRange(addRows);
+				try
+				{
+					await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+				}
+				catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+				{
+					// Ignore duplicates (unique constraint).
+				}
+			}
+
+			var toUpdate = incomingIds
+				.Intersect(existingIds)
+				.Where(id =>
+				{
+					var inc = normalized[id];
+					var cur = existingById[id];
+					return !string.Equals(inc.RatingKey, cur.RatingKey, StringComparison.Ordinal)
+						|| !string.Equals(inc.Title, cur.Title, StringComparison.Ordinal);
+				})
+				.ToList();
+
+			foreach (var tmdbId in toUpdate)
+			{
+				var inc = normalized[tmdbId];
+				await db.LibraryItems
+					.Where(x => x.ServerId == serverId && x.TmdbId == tmdbId)
+					.ExecuteUpdateAsync(setters => setters
+						.SetProperty(x => x.RatingKey, inc.RatingKey)
+						.SetProperty(x => x.Title, inc.Title)
+						.SetProperty(x => x.UpdatedAtUtc, syncedAtUtc),
+						cancellationToken)
+					.ConfigureAwait(false);
+			}
+
+			// Refresh UpdatedAtUtc for all remaining rows in one statement.
+			await db.LibraryItems
+				.Where(x => x.ServerId == serverId)
+				.ExecuteUpdateAsync(setters => setters.SetProperty(x => x.UpdatedAtUtc, syncedAtUtc), cancellationToken)
+				.ConfigureAwait(false);
+
+			await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+		}
+		catch
+		{
+			await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+			throw;
+		}
+	}
+
 	public async Task AddTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
 	{
 		if (scope.ServiceType != ServiceType.Plex)
@@ -224,5 +353,10 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 		return exception.InnerException is SqliteException sqliteException
 			&& (sqliteException.SqliteExtendedErrorCode == 1555
 				|| sqliteException.SqliteExtendedErrorCode == 2067);
+	}
+
+	private static string? Normalize(string? value)
+	{
+		return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 	}
 }
