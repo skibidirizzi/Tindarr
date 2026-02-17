@@ -17,16 +17,44 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/admin")]
-public sealed class AdminController(
-	IUserRepository users,
-	IInteractionStore interactionStore,
-	IJoinAddressSettingsRepository joinAddressSettings,
-	ICastingSettingsRepository castingSettings,
-	IServiceSettingsRepository serviceSettings,
-	IPasswordHasher passwordHasher,
-	IOptions<RegistrationOptions> registrationOptions) : ControllerBase
+public sealed class AdminController : ControllerBase
 {
-	private readonly RegistrationOptions registration = registrationOptions.Value;
+	private readonly IUserRepository users;
+	private readonly IInteractionStore interactionStore;
+	private readonly IJoinAddressSettingsRepository joinAddressSettings;
+	private readonly ICastingSettingsRepository castingSettings;
+	private readonly IServiceSettingsRepository serviceSettings;
+	private readonly IPasswordHasher passwordHasher;
+	private readonly RegistrationOptions registration;
+	private readonly Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore;
+
+	public AdminController(
+		IUserRepository users,
+		IInteractionStore interactionStore,
+		IJoinAddressSettingsRepository joinAddressSettings,
+		ICastingSettingsRepository castingSettings,
+		IServiceSettingsRepository serviceSettings,
+		IPasswordHasher passwordHasher,
+		IOptions<RegistrationOptions> registrationOptions,
+		Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore)
+	{
+		this.users = users;
+		this.interactionStore = interactionStore;
+		this.joinAddressSettings = joinAddressSettings;
+		this.castingSettings = castingSettings;
+		this.serviceSettings = serviceSettings;
+		this.passwordHasher = passwordHasher;
+		registration = registrationOptions.Value;
+		this.castingSessionStore = castingSessionStore;
+	}
+
+	[HttpGet("casting/diagnostics")]
+	public ActionResult<Tindarr.Contracts.Admin.CastingDiagnosticsDto> GetCastingDiagnostics()
+	{
+		var diagnostics = castingSessionStore.GetDiagnostics();
+		return Ok(diagnostics);
+	}
+
 
 	[HttpGet("join-address")]
 	public async Task<ActionResult<JoinAddressSettingsDto>> GetJoinAddressSettings(CancellationToken cancellationToken)

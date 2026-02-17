@@ -169,6 +169,11 @@ builder.Services.AddOptions<PlaybackOptions>()
 	.Validate(o => o.IsValid(), "Invalid Playback configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<UpdateCheckOptions>()
+	.BindConfiguration(UpdateCheckOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid UpdateCheck configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -188,6 +193,7 @@ builder.Services.AddSingleton<ITokenSigningKeyStore, DbOrFileTokenSigningKeyStor
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<IPlaybackTokenService, PlaybackTokenService>();
 builder.Services.AddSingleton<ICastUrlTokenService, CastUrlTokenService>();
+builder.Services.AddSingleton<Tindarr.Infrastructure.Casting.CastingSessionStore>();
 
 builder.Services.AddSingleton<Tindarr.Application.Interfaces.Casting.ICastClient, SharpCasterCastClient>();
 
@@ -283,6 +289,15 @@ builder.Services.AddScoped<EfCoreInteractionStore>();
 builder.Services.AddSingleton<Tindarr.Infrastructure.Interactions.InMemoryInteractionStore>();
 builder.Services.AddScoped<IInteractionStore, Tindarr.Infrastructure.Interactions.RoutingInteractionStore>();
 builder.Services.AddMemoryCache();
+
+builder.Services.AddHttpClient<Tindarr.Api.Services.IUpdateChecker, Tindarr.Api.Services.GitHubReleaseUpdateChecker>((sp, client) =>
+{
+	client.BaseAddress = new Uri("https://api.github.com/");
+	client.Timeout = TimeSpan.FromSeconds(10);
+	client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+	client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+	client.DefaultRequestHeaders.UserAgent.ParseAdd("Tindarr");
+});
 
 // Persist TMDB metadata separately from the main tindarr.db.
 // This avoids repeated upstream TMDB calls across restarts.

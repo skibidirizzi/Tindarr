@@ -1,3 +1,9 @@
+import type { CastingDiagnosticsDto } from "./contracts-casting-diagnostics";
+export async function adminGetCastingDiagnostics(): Promise<CastingDiagnosticsDto> {
+  return apiRequest<CastingDiagnosticsDto>({
+    path: "/api/v1/admin/casting/diagnostics"
+  });
+}
 import type { SwipeAction, SwipeDeckResponse } from "../types";
 import { getServiceScope } from "../serviceScope";
 import type {

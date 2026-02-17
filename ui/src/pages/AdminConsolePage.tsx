@@ -29,6 +29,7 @@ import {
   plexListServers,
   plexStartLibrarySync,
   plexSyncServers,
+  plexSyncLibrary,
   plexVerifyPin,
   radarrGetQualityProfiles,
   radarrGetRootFolders,
@@ -44,8 +45,14 @@ import {
   tmdbListStoredMovies,
   tmdbFillMovieDetails,
   tmdbFetchMovieImages,
-  tmdbStartBuild
+  tmdbStartBuild,
+  adminGetCastingDiagnostics
 } from "../api/client";
+import type {
+  CastingDiagnosticsDto,
+  CastingSessionDto,
+  CastingEventDto
+} from "../api/contracts-casting-diagnostics";
 import type {
   CastingSettingsDto,
   MatchSettingsDto,
@@ -65,18 +72,18 @@ import type {
 } from "../api/contracts";
 import {
   getTmdbBulkJob,
+  subscribeTmdbBulkJob,
   startTmdbBulkFetchAllDetails,
   startTmdbBulkFetchAllImages,
-  subscribeTmdbBulkJob,
   type TmdbBulkJob
 } from "../tmdb/tmdbBulkJob";
 import { TMDB_LANGUAGES, TMDB_REGIONS } from "../tmdb/knownValues";
 import {
-	getPlexBulkJob,
-	startPlexBulkFetchAllDetails,
-	startPlexBulkFetchAllImages,
-	subscribePlexBulkJob,
-	type PlexBulkJob
+  getPlexBulkJob,
+  startPlexBulkFetchAllDetails,
+  startPlexBulkFetchAllImages,
+  subscribePlexBulkJob,
+  type PlexBulkJob
 } from "../plex/plexBulkJob";
 
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
@@ -348,6 +355,32 @@ function DbTab() {
 }
 
 function CastingTab() {
+  // Diagnostics state
+  const [diagnostics, setDiagnostics] = useState<CastingDiagnosticsDto | null>(null);
+  const [diagError, setDiagError] = useState<string | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+
+  // Poll diagnostics every 5s
+  useEffect(() => {
+    let stop = false;
+    async function poll() {
+      setDiagLoading(true);
+      try {
+        const d = await adminGetCastingDiagnostics();
+        if (!stop) {
+          setDiagnostics(d);
+          setDiagError(null);
+        }
+      } catch (e) {
+        if (!stop) setDiagError("Failed to load diagnostics");
+      } finally {
+        if (!stop) setDiagLoading(false);
+      }
+      if (!stop) setTimeout(poll, 5000);
+    }
+    poll();
+    return () => { stop = true; };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -476,6 +509,41 @@ function CastingTab() {
 
   return (
     <>
+      <section style={{ marginBottom: 32, border: "1px solid #e0e0e0", borderRadius: 8, padding: 16, background: "#0a0a0a" }}>
+        <h3 style={{ marginTop: 0 }}>Casting Diagnostics</h3>
+        {diagError ? <div style={{ color: "#c00" }}>{diagError}</div> : null}
+        {diagLoading && !diagnostics ? <div>Loading…</div> : null}
+        {diagnostics ? (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <b>Active Sessions:</b>
+              {diagnostics.activeSessions.length === 0 ? <span> None</span> : null}
+              <ul style={{ margin: 0, paddingLeft: 20 }}>
+                {diagnostics.activeSessions.map((s: CastingSessionDto) => (
+                  <li key={s.sessionId}>
+                    <b>{s.contentTitle}</b> on <b>{s.deviceId}</b> ({s.sessionState})<br />
+                    Started: {new Date(s.startedAtUtc).toLocaleString()}<br />
+                    Expires: {new Date(s.expiresAtUtc).toLocaleString()}<br />
+                    Runtime: {s.contentRuntimeSeconds}s
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <b>Recent Events:</b>
+              <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 200, overflowY: "auto" }}>
+                {diagnostics.recentEvents.map((e: CastingEventDto) => (
+                  <li key={e.eventId}>
+                    [{new Date(e.occurredAtUtc).toLocaleTimeString()}] <b>{e.eventType}</b>: {e.message}
+                    {e.deviceId ? <> (Device: {e.deviceId})</> : null}
+                    {e.errorDetails ? <div style={{ color: "#c00" }}>{e.errorDetails}</div> : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </>
+        ) : null}
+      </section>
       <div className="deck__toolbar" style={{ justifyContent: "flex-end" }}>
         <button type="button" className="app__navLink" onClick={() => void load()} disabled={loading || saving}>
           Refresh

@@ -31,7 +31,8 @@ public sealed class CastingController(
 	IBaseUrlResolver baseUrlResolver,
 	IJoinAddressSettingsRepository joinAddressSettings,
 	IOptions<BaseUrlOptions> baseUrlOptions,
-	ILogger<CastingController> logger) : ControllerBase
+	ILogger<CastingController> logger,
+	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore) : ControllerBase
 {
 	[HttpGet("devices")]
 	[Authorize]
@@ -172,25 +173,27 @@ public sealed class CastingController(
 	public async Task<IActionResult> CastMovie([FromBody] CastMovieRequest request, CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(request.DeviceId))
-		{
 			return BadRequest("DeviceId is required.");
-		}
 		if (request.TmdbId <= 0)
-		{
 			return BadRequest("TmdbId must be positive.");
-		}
 
 		if (!ServiceScope.TryCreate(request.ServiceType, request.ServerId, out var scope) || scope is null)
-		{
 			return BadRequest("ServiceType and ServerId are required.");
-		}
 
 		var title = string.IsNullOrWhiteSpace(request.Title) ? $"TMDB:{request.TmdbId}" : request.Title.Trim();
+		var contentRuntimeSeconds = 7200; // TODO: Lookup actual runtime if available
 
 		var directUrl = await TryBuildDirectMovieCastUrlAsync(scope, request.TmdbId, cancellationToken).ConfigureAwait(false);
 		if (directUrl is not null)
 		{
 			logger.LogInformation("Casting movie to device {DeviceId} via direct {ServiceType} URL.", request.DeviceId, scope.ServiceType);
+			castingSessionStore.RegisterSession(
+				sessionId: Guid.NewGuid().ToString(),
+				deviceId: request.DeviceId,
+				contentTitle: title,
+				contentSubtitle: scope.ServiceType.ToString(),
+				contentType: "video/mp4",
+				contentRuntimeSeconds: contentRuntimeSeconds);
 			await castClient.CastAsync(request.DeviceId, new CastMedia(
 				ContentUrl: directUrl.ToString(),
 				ContentType: "video/mp4",
@@ -201,9 +204,7 @@ public sealed class CastingController(
 
 		var baseUri = await ResolveCastFetchBaseUriAsync(cancellationToken).ConfigureAwait(false);
 		if (baseUri is null)
-		{
 			return BadRequest("LAN cast base URL is not configured. Ask an admin to set LAN join address in Admin Console or configure 'BaseUrl:Lan'.");
-		}
 
 		var token = playbackTokenService.IssueMovieToken(scope, request.TmdbId, DateTimeOffset.UtcNow);
 		var playbackUrl = new Uri(baseUri, $"api/v1/playback/movie/{Uri.EscapeDataString(scope.ServiceType.ToString().ToLowerInvariant())}/{Uri.EscapeDataString(scope.ServerId)}/{request.TmdbId}?token={Uri.EscapeDataString(token)}");
@@ -211,13 +212,17 @@ public sealed class CastingController(
 		Response.Headers["X-Tindarr-Cast-Url"] = playbackUrl.ToString();
 		var serverUrls = GetServerUrlsHeaderValue();
 		if (!string.IsNullOrWhiteSpace(serverUrls))
-		{
 			Response.Headers["X-Tindarr-Server-Urls"] = serverUrls;
-		}
 		if (!IsServerListeningOnNonLoopback())
-		{
 			return BadRequest("API is only listening on localhost. Chromecast cannot reach it. Start the API with '--urls http://0.0.0.0:<port>' (or bind to your LAN IP) and allow the port through Windows Firewall.");
-		}
+
+		castingSessionStore.RegisterSession(
+			sessionId: Guid.NewGuid().ToString(),
+			deviceId: request.DeviceId,
+			contentTitle: title,
+			contentSubtitle: scope.ServiceType.ToString(),
+			contentType: "video/mp4",
+			contentRuntimeSeconds: contentRuntimeSeconds);
 
 		await castClient.CastAsync(request.DeviceId, new CastMedia(
 			ContentUrl: playbackUrl.ToString(),
