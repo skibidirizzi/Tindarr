@@ -7,7 +7,7 @@ type AuthContextValue = {
   user: MeResponse | null;
   loading: boolean;
   login: (userId: string, password: string) => Promise<void>;
-  guestLogin: (displayName?: string) => Promise<void>;
+  guestLogin: (roomId: string, displayName?: string) => Promise<void>;
   register: (userId: string, displayName: string, password: string) => Promise<void>;
   logout: () => void;
 };
@@ -51,8 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(session);
         setUser(mapAuthToMe(session));
       },
-      guestLogin: async (displayName?: string) => {
-        const session = await apiGuestLogin({ displayName: displayName ?? null });
+      guestLogin: async (roomId: string, displayName?: string) => {
+        const session = await apiGuestLogin({ roomId, displayName: displayName ?? null });
         setSession(session);
         setUser(mapAuthToMe(session));
       },

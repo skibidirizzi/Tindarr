@@ -62,9 +62,9 @@ public sealed class InteractionsController(
 			return BadRequest("Radarr is not a swipe scope. Swipe TMDB discover instead.");
 		}
 
-		if (request.Action == SwipeActionDto.Superlike
-			&& !User.IsInRole(Policies.AdminRole)
-			&& !User.IsInRole(Policies.CuratorRole))
+		var isSuperlikePrivileged = User.IsInRole(Policies.AdminRole) || User.IsInRole(Policies.CuratorRole);
+
+		if (request.Action == SwipeActionDto.Superlike && !isSuperlikePrivileged)
 		{
 			return Forbid();
 		}
@@ -73,7 +73,7 @@ public sealed class InteractionsController(
 		var userId = User.GetUserId();
 		var interaction = await interactionService.AddAsync(userId, scope!, request.TmdbId, action, cancellationToken);
 
-		if (scope!.ServiceType == ServiceType.Tmdb && action == InteractionAction.Superlike)
+		if (scope!.ServiceType == ServiceType.Tmdb && action == InteractionAction.Superlike && isSuperlikePrivileged)
 		{
 			var radarrScope = await TryResolveDefaultRadarrScopeAsync(settingsRepo, cancellationToken).ConfigureAwait(false);
 			if (radarrScope is not null)

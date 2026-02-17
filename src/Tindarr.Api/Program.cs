@@ -79,6 +79,20 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 	WebRootPath = webRoot
 });
 
+static string ResolveTmdbMetadataDbPath(IConfiguration config, string? dataDirOverride, IHostEnvironment env)
+{
+	var configuredDbPath = config["Tmdb:MetadataDbPath"];
+	if (!string.IsNullOrWhiteSpace(configuredDbPath))
+	{
+		return Path.IsPathRooted(configuredDbPath)
+			? configuredDbPath
+			: Path.GetFullPath(Path.Combine(dataDirOverride ?? config["Database:DataDir"] ?? env.ContentRootPath, configuredDbPath));
+	}
+
+	var dataRoot = dataDirOverride ?? config["Database:DataDir"] ?? env.ContentRootPath;
+	return Path.Combine(dataRoot, "tmdbmetadata.db");
+}
+
 // Dev + service convenience: allow TMDB_API_KEY (flat env var) to populate Tmdb:ApiKey.
 // ASP.NET Core's default env var mapping expects "Tmdb__ApiKey".
 var tmdbApiKeyEnv = Environment.GetEnvironmentVariable("TMDB_API_KEY");
@@ -233,10 +247,24 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization(options =>
 {
+	// Default: authenticated non-guest only.
+	options.DefaultPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+		.RequireAuthenticatedUser()
+		.RequireAssertion(ctx => !ctx.User.IsInRole(Policies.GuestRole))
+		.Build();
+
 	options.AddPolicy(Policies.AdminOnly, policy => policy.RequireRole(Policies.AdminRole));
 	options.AddPolicy(Policies.CuratorOnly, policy => policy.RequireRole(Policies.CuratorRole));
 	options.AddPolicy(Policies.ContributorOrCurator, policy => policy.RequireRole(Policies.ContributorRole, Policies.CuratorRole, Policies.AdminRole));
+	options.AddPolicy(Policies.AllowGuests, policy => policy.RequireAuthenticatedUser());
+	options.AddPolicy(Policies.RoomAccess, policy =>
+	{
+		policy.RequireAuthenticatedUser();
+		policy.AddRequirements(new Tindarr.Api.Auth.RoomAccessRequirement());
+	});
 });
+
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, Tindarr.Api.Auth.RoomAccessAuthorizationHandler>();
 
 builder.Services.AddCors(options =>
 {
@@ -249,6 +277,8 @@ builder.Services.AddCors(options =>
 	});
 });
 
+var tmdbMetadataDbPath = ResolveTmdbMetadataDbPath(builder.Configuration, dataDirOverride, builder.Environment);
+
 builder.Services.AddScoped<EfCoreInteractionStore>();
 builder.Services.AddSingleton<Tindarr.Infrastructure.Interactions.InMemoryInteractionStore>();
 builder.Services.AddScoped<IInteractionStore, Tindarr.Infrastructure.Interactions.RoutingInteractionStore>();
@@ -256,7 +286,6 @@ builder.Services.AddMemoryCache();
 
 // Persist TMDB metadata separately from the main tindarr.db.
 // This avoids repeated upstream TMDB calls across restarts.
-var tmdbMetadataDbPath = Path.Combine(dataDirOverride ?? builder.Environment.ContentRootPath, "tmdbmetadata.db");
 builder.Services.AddSingleton<ITmdbCache>(sp =>
 	new MemoryOrDbTmdbCache(sp.GetRequiredService<Microsoft.Extensions.Caching.Memory.IMemoryCache>(), tmdbMetadataDbPath));
 builder.Services.AddSingleton<ITmdbCacheAdmin>(sp => (ITmdbCacheAdmin)sp.GetRequiredService<ITmdbCache>());
@@ -316,6 +345,7 @@ builder.Services.AddScoped<IMatchingEngine, MatchingEngine>();
 
 builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomStore, Tindarr.Infrastructure.Rooms.InMemoryRoomStore>();
 builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomInteractionStore, Tindarr.Infrastructure.Rooms.InMemoryRoomInteractionStore>();
+builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomLifetimeProvider, Tindarr.Infrastructure.Rooms.RoomLifetimeProvider>();
 builder.Services.AddScoped<Tindarr.Application.Interfaces.Rooms.IRoomService, Tindarr.Application.Features.Rooms.RoomService>();
 
 // Keep DB location stable across Debug/Release so migrations and runtime match.

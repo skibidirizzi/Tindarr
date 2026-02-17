@@ -26,6 +26,21 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 		return ids;
 	}
 
+	public async Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		if (scope.ServiceType != ServiceType.Plex)
+		{
+			return 0;
+		}
+
+		return await db.LibraryItems
+			.AsNoTracking()
+			.Where(x => x.ServerId == scope.ServerId && x.TmdbId > 0)
+			.Select(x => x.TmdbId)
+			.Distinct()
+			.CountAsync(cancellationToken);
+	}
+
 	public async Task<IReadOnlyList<PlexLibraryItem>> ListItemsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken)
 	{
 		if (scope.ServiceType != ServiceType.Plex)
@@ -38,7 +53,7 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 
 		var rows = await db.LibraryItems
 			.AsNoTracking()
-			.Where(x => x.ServerId == scope.ServerId)
+			.Where(x => x.ServerId == scope.ServerId && x.TmdbId > 0)
 			.OrderByDescending(x => x.UpdatedAtUtc)
 			.ThenBy(x => x.TmdbId)
 			.Skip(skip)
@@ -48,7 +63,6 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 			.ConfigureAwait(false);
 
 		return rows
-			.Where(x => x.TmdbId > 0)
 			.Select(x => new PlexLibraryItem(
 				TmdbId: x.TmdbId,
 				Title: string.IsNullOrWhiteSpace(x.Title) ? $"TMDB:{x.TmdbId}" : x.Title!,

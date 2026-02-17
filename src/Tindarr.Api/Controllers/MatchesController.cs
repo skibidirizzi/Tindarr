@@ -67,7 +67,20 @@ public sealed class MatchesController(
 		{
 			if (settings.MatchMinUsers is not null)
 			{
-				effectiveMinUsers = Math.Clamp(settings.MatchMinUsers.Value, 0, 50);
+				// MinUsers is validated as 1..50 in AdminController; treat <=0 as legacy/invalid and fall back to defaults.
+				if (settings.MatchMinUsers.Value > 0)
+				{
+					effectiveMinUsers = Math.Clamp(settings.MatchMinUsers.Value, 1, 50);
+				}
+				else if (settings.MatchMinUserPercent is null)
+				{
+					effectiveMinUsers = 2;
+				}
+				else
+				{
+					// Percent-only configuration disables count threshold.
+					effectiveMinUsers = 0;
+				}
 			}
 			else if (settings.MatchMinUserPercent is not null)
 			{

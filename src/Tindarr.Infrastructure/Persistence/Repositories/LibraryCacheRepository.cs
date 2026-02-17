@@ -20,6 +20,34 @@ public sealed class LibraryCacheRepository(TindarrDbContext db) : ILibraryCacheR
 		return ids;
 	}
 
+	public async Task<IReadOnlyList<int>> ListTmdbIdsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken)
+	{
+		skip = Math.Max(0, skip);
+		take = Math.Clamp(take, 1, 500);
+
+		var ids = await db.LibraryCache
+			.AsNoTracking()
+			.Where(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId)
+			.OrderBy(x => x.TmdbId)
+			.Select(x => x.TmdbId)
+			.Distinct()
+			.Skip(skip)
+			.Take(take)
+			.ToListAsync(cancellationToken);
+
+		return ids;
+	}
+
+	public async Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		return await db.LibraryCache
+			.AsNoTracking()
+			.Where(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId)
+			.Select(x => x.TmdbId)
+			.Distinct()
+			.CountAsync(cancellationToken);
+	}
+
 	public async Task ReplaceTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
 	{
 		await db.LibraryCache

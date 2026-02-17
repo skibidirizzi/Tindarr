@@ -34,10 +34,15 @@ public sealed class AdminController(
 		var settings = await joinAddressSettings.GetAsync(cancellationToken);
 		if (settings is null)
 		{
-			return Ok(new JoinAddressSettingsDto(null, null, DateTimeOffset.UtcNow.ToString("O")));
+			return Ok(new JoinAddressSettingsDto(null, null, null, null, DateTimeOffset.UtcNow.ToString("O")));
 		}
 
-		return Ok(new JoinAddressSettingsDto(settings.LanHostPort, settings.WanHostPort, settings.UpdatedAtUtc.ToString("O")));
+		return Ok(new JoinAddressSettingsDto(
+			settings.LanHostPort,
+			settings.WanHostPort,
+			settings.RoomLifetimeMinutes,
+			settings.GuestSessionLifetimeMinutes,
+			settings.UpdatedAtUtc.ToString("O")));
 	}
 
 	[HttpPut("join-address")]
@@ -49,14 +54,31 @@ public sealed class AdminController(
 		{
 			lan = NormalizeHostPort(request.LanHostPort, "LanHostPort");
 			wan = NormalizeHostPort(request.WanHostPort, "WanHostPort");
+
+			if (request.RoomLifetimeMinutes is not null && request.RoomLifetimeMinutes <= 0)
+			{
+				throw new ArgumentException("RoomLifetimeMinutes must be null or >= 1.");
+			}
+
+			if (request.GuestSessionLifetimeMinutes is not null && request.GuestSessionLifetimeMinutes <= 0)
+			{
+				throw new ArgumentException("GuestSessionLifetimeMinutes must be null or >= 1.");
+			}
 		}
 		catch (ArgumentException ex)
 		{
 			return BadRequest(ex.Message);
 		}
 
-		var updated = await joinAddressSettings.UpsertAsync(new JoinAddressSettingsUpsert(lan, wan), cancellationToken);
-		return Ok(new JoinAddressSettingsDto(updated.LanHostPort, updated.WanHostPort, updated.UpdatedAtUtc.ToString("O")));
+		var updated = await joinAddressSettings.UpsertAsync(
+			new JoinAddressSettingsUpsert(lan, wan, request.RoomLifetimeMinutes, request.GuestSessionLifetimeMinutes),
+			cancellationToken);
+		return Ok(new JoinAddressSettingsDto(
+			updated.LanHostPort,
+			updated.WanHostPort,
+			updated.RoomLifetimeMinutes,
+			updated.GuestSessionLifetimeMinutes,
+			updated.UpdatedAtUtc.ToString("O")));
 	}
 
 	[HttpGet("casting")]

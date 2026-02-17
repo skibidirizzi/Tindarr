@@ -71,6 +71,16 @@ public sealed class SwipeDeckServiceTests
 			return Task.FromResult<IReadOnlyCollection<int>>(Array.Empty<int>());
 		}
 
+		public Task<IReadOnlyList<int>> ListTmdbIdsAsync(ServiceScope scope, int skip, int take, CancellationToken cancellationToken)
+		{
+			return Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>());
+		}
+
+		public Task<int> CountTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+		{
+			return Task.FromResult(0);
+		}
+
 		public Task ReplaceTmdbIdsAsync(ServiceScope scope, IReadOnlyCollection<int> tmdbIds, DateTimeOffset syncedAtUtc, CancellationToken cancellationToken)
 		{
 			throw new NotSupportedException();

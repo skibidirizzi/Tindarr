@@ -1,4 +1,5 @@
 using Tindarr.Application.Abstractions.Integrations;
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Interfaces.Preferences;
 using Tindarr.Application.Options;
@@ -28,19 +29,21 @@ public sealed class TmdbSwipeDeckSource(
 		var sw = Stopwatch.StartNew();
 		var prefs = await preferencesService.GetOrDefaultAsync(userId, cancellationToken).ConfigureAwait(false);
 
-		// Prefer local pool for near-instant decks.
+		// Use the shared metadata pool and filter by current prefs at deck build time.
 		var settings = await metadataStore.GetSettingsAsync(cancellationToken).ConfigureAwait(false);
-		var pool = await metadataStore.GetUserPoolAsync(userId, limit: 50, cancellationToken).ConfigureAwait(false);
+		var pool = await metadataStore.ListDeckCandidatesAsync(take: 1_000, cancellationToken).ConfigureAwait(false);
+		var filteredPool = pool.Where(m => MatchesPreferencesLoosely(m, prefs)).ToList();
 
-		// If pool is low, backfill it from TMDB discover (background jobs should usually keep it full).
-		if (pool.Count < 25)
+		// If the filtered pool is low, pull more from TMDB Discover for this user's prefs and upsert into the shared store.
+		if (filteredPool.Count < 25)
 		{
-			var discovered = await tmdbClient.DiscoverMoviesAsync(prefs, page: 1, limit: 50, cancellationToken).ConfigureAwait(false);
-			await metadataStore.AddToUserPoolAsync(userId, discovered, cancellationToken).ConfigureAwait(false);
-			pool = await metadataStore.GetUserPoolAsync(userId, limit: 50, cancellationToken).ConfigureAwait(false);
+			var discovered = await tmdbClient.DiscoverMoviesAsync(prefs, page: 1, limit: 200, cancellationToken).ConfigureAwait(false);
+			await metadataStore.UpsertMoviesAsync(discovered, cancellationToken).ConfigureAwait(false);
+			pool = await metadataStore.ListDeckCandidatesAsync(take: 1_000, cancellationToken).ConfigureAwait(false);
+			filteredPool = pool.Where(m => MatchesPreferencesLoosely(m, prefs)).ToList();
 		}
 
-		var cards = pool.Select(m => new SwipeCard(
+		var cards = filteredPool.Take(200).Select(m => new SwipeCard(
 			TmdbId: m.Id,
 			Title: (m.Title ?? m.OriginalTitle ?? $"TMDB:{m.Id}").Trim(),
 			Overview: m.Overview,
@@ -52,13 +55,72 @@ public sealed class TmdbSwipeDeckSource(
 		sw.Stop();
 		logger.LogDebug(
 			"tmdb deck source produced candidates. Source={Source} ServiceType={ServiceType} ServerId={ServerId} Count={Count} ElapsedMs={ElapsedMs}",
-			"local_pool",
+			"shared_pool",
 			scope.ServiceType.ToString().ToLowerInvariant(),
 			scope.ServerId,
 			cards.Count,
 			sw.ElapsedMilliseconds);
 
 		return cards;
+	}
+
+	private static bool MatchesPreferencesLoosely(TmdbDiscoverMovieRecord movie, UserPreferencesRecord preferences)
+	{
+		var year = TryParseYear(movie.ReleaseDate);
+		if (preferences.MinReleaseYear is not null && year is not null && year < preferences.MinReleaseYear)
+		{
+			return false;
+		}
+		if (preferences.MaxReleaseYear is not null && year is not null && year > preferences.MaxReleaseYear)
+		{
+			return false;
+		}
+
+		if (preferences.MinRating is not null && movie.VoteAverage is not null && movie.VoteAverage < preferences.MinRating)
+		{
+			return false;
+		}
+		if (preferences.MaxRating is not null && movie.VoteAverage is not null && movie.VoteAverage > preferences.MaxRating)
+		{
+			return false;
+		}
+
+		if (preferences.PreferredOriginalLanguages is { Count: > 0 })
+		{
+			if (!string.IsNullOrWhiteSpace(movie.OriginalLanguage)
+				&& !preferences.PreferredOriginalLanguages.Contains(movie.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+		}
+
+		if (preferences.ExcludedOriginalLanguages is { Count: > 0 } && !string.IsNullOrWhiteSpace(movie.OriginalLanguage))
+		{
+			if (preferences.ExcludedOriginalLanguages.Contains(movie.OriginalLanguage, StringComparer.OrdinalIgnoreCase))
+			{
+				return false;
+			}
+		}
+
+		if (preferences.PreferredGenres is { Count: > 0 } && movie.GenreIds is { Count: > 0 })
+		{
+			if (!preferences.PreferredGenres.Any(g => movie.GenreIds.Contains(g)))
+			{
+				return false;
+			}
+		}
+
+		if (preferences.ExcludedGenres is { Count: > 0 } && movie.GenreIds is { Count: > 0 })
+		{
+			if (preferences.ExcludedGenres.Any(g => movie.GenreIds.Contains(g)))
+			{
+				return false;
+			}
+		}
+
+		// Regions require details-derived data; the discover record doesn't include regions.
+		// Keep this loose to avoid filtering out movies until details are available.
+		return true;
 	}
 
 	private static string? BuildImageUrl(TmdbMetadataSettings settings, string imageBaseUrl, string? path, string size)

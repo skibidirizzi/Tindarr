@@ -7,6 +7,33 @@ namespace Tindarr.Infrastructure.Persistence.Repositories;
 
 public sealed class RadarrPendingAddRepository(TindarrDbContext db) : IRadarrPendingAddRepository
 {
+	public async Task<DateTimeOffset?> GetNextReadyAtUtcAsync(CancellationToken cancellationToken)
+	{
+		try
+		{
+			// Avoid materializing the full pending set; let the database compute the next time.
+			return await db.RadarrPendingAdds
+				.AsNoTracking()
+				.Where(x => x.CanceledAtUtc == null && x.ProcessedAtUtc == null)
+				.OrderBy(x => x.ReadyAtUtc)
+				.Select(x => (DateTimeOffset?)x.ReadyAtUtc)
+				.FirstOrDefaultAsync(cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (InvalidOperationException)
+		{
+			// SQLite provider can have limited DateTimeOffset translation support in LINQ.
+			// Fall back to an in-memory min to avoid runtime translation exceptions.
+			var rows = await db.RadarrPendingAdds
+				.AsNoTracking()
+				.Where(x => x.CanceledAtUtc == null && x.ProcessedAtUtc == null)
+				.ToListAsync(cancellationToken)
+				.ConfigureAwait(false);
+
+			return rows.Count == 0 ? null : rows.Min(x => x.ReadyAtUtc);
+		}
+	}
+
 	public async Task<bool> TryEnqueueAsync(
 		ServiceScope scope,
 		string userId,

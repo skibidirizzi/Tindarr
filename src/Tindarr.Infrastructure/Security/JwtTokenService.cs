@@ -12,10 +12,16 @@ public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions, ITokenSigni
 	private readonly JwtOptions options = jwtOptions.Value;
 	private readonly JwtSecurityTokenHandler handler = new();
 
-	public TokenResult IssueAccessToken(string userId, IReadOnlyCollection<string> roles)
+	public TokenResult IssueAccessToken(
+		string userId,
+		IReadOnlyCollection<string> roles,
+		IReadOnlyCollection<Claim>? additionalClaims = null,
+		TimeSpan? lifetimeOverride = null)
 	{
 		var now = DateTimeOffset.UtcNow;
-		var expires = now.AddMinutes(options.AccessTokenMinutes);
+		var expires = lifetimeOverride is not null
+			? now.Add(lifetimeOverride.Value)
+			: now.AddMinutes(options.AccessTokenMinutes);
 
 		var claims = new List<Claim>
 		{
@@ -27,6 +33,19 @@ public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions, ITokenSigni
 		foreach (var role in roles.Distinct(StringComparer.OrdinalIgnoreCase))
 		{
 			claims.Add(new Claim(ClaimTypes.Role, role));
+		}
+
+		if (additionalClaims is not null)
+		{
+			foreach (var claim in additionalClaims)
+			{
+				// Avoid duplicates that would bloat tokens.
+				if (!claims.Any(c => string.Equals(c.Type, claim.Type, StringComparison.Ordinal)
+					&& string.Equals(c.Value, claim.Value, StringComparison.Ordinal)))
+				{
+					claims.Add(claim);
+				}
+			}
 		}
 
 		var active = keyStore.GetActiveSigningKey();

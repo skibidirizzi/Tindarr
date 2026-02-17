@@ -4,9 +4,8 @@ using Tindarr.Domain.Interactions;
 
 namespace Tindarr.Infrastructure.Rooms;
 
-public sealed class InMemoryRoomInteractionStore : IRoomInteractionStore
+public sealed class InMemoryRoomInteractionStore(IRoomLifetimeProvider lifetimes) : IRoomInteractionStore
 {
-	private static readonly TimeSpan Ttl = TimeSpan.FromHours(2);
 	private readonly ConcurrentDictionary<string, RoomInteractionBucket> _buckets = new(StringComparer.Ordinal);
 
 	public Task AddAsync(string roomId, Interaction interaction, CancellationToken cancellationToken)
@@ -28,10 +27,15 @@ public sealed class InMemoryRoomInteractionStore : IRoomInteractionStore
 			return Task.FromResult<IReadOnlyList<Interaction>>(Array.Empty<Interaction>());
 		}
 
-		if (IsExpired(bucket))
+		return ListOrExpireAsync(roomId, bucket, limit, cancellationToken);
+	}
+
+	private async Task<IReadOnlyList<Interaction>> ListOrExpireAsync(string roomId, RoomInteractionBucket bucket, int limit, CancellationToken cancellationToken)
+	{
+		if (await IsExpiredAsync(bucket, cancellationToken).ConfigureAwait(false))
 		{
 			_buckets.TryRemove(roomId, out _);
-			return Task.FromResult<IReadOnlyList<Interaction>>(Array.Empty<Interaction>());
+			return Array.Empty<Interaction>();
 		}
 
 		lock (bucket.Gate)
@@ -41,27 +45,31 @@ public sealed class InMemoryRoomInteractionStore : IRoomInteractionStore
 				.OrderByDescending(x => x.CreatedAtUtc)
 				.Take(Math.Clamp(limit, 1, 50_000))
 				.ToList();
-			return Task.FromResult<IReadOnlyList<Interaction>>(result);
+			return result;
 		}
 	}
 
 	public Task CleanupExpiredAsync(CancellationToken cancellationToken)
 	{
+		return CleanupExpiredInnerAsync(cancellationToken);
+	}
+
+	private async Task CleanupExpiredInnerAsync(CancellationToken cancellationToken)
+	{
 		foreach (var kvp in _buckets)
 		{
-			if (IsExpired(kvp.Value))
+			if (await IsExpiredAsync(kvp.Value, cancellationToken).ConfigureAwait(false))
 			{
 				_buckets.TryRemove(kvp.Key, out _);
 			}
 		}
-
-		return Task.CompletedTask;
 	}
 
-	private static bool IsExpired(RoomInteractionBucket bucket)
+	private async Task<bool> IsExpiredAsync(RoomInteractionBucket bucket, CancellationToken cancellationToken)
 	{
 		var now = DateTimeOffset.UtcNow;
-		return now - bucket.LastActivityAtUtc > Ttl;
+		var ttl = await lifetimes.GetRoomTtlAsync(cancellationToken).ConfigureAwait(false);
+		return now - bucket.LastActivityAtUtc > ttl;
 	}
 
 	private sealed class RoomInteractionBucket

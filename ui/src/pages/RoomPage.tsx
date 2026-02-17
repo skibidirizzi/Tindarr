@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import QRCode from "qrcode";
 import SwipeCardComponent from "../components/SwipeCard";
@@ -9,6 +9,10 @@ import type { CastDeviceDto, RoomJoinUrlResponse, RoomMatchesResponse, RoomState
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 import type { SwipeAction, SwipeCard } from "../types";
+
+const PREFETCH_THRESHOLD = 2;
+const PREFETCH_LIMIT = 10;
+const PREFETCH_EMPTY_RETRIES = 2;
 
 export default function RoomPage() {
   const { user, loading: authLoading, guestLogin } = useAuth();
@@ -34,6 +38,8 @@ export default function RoomPage() {
   const [deckLoading, setDeckLoading] = useState(false);
   const [leaving, setLeaving] = useState<{ card: SwipeCard; action: SwipeAction; fromOffset?: { x: number; y: number } } | null>(null);
   const [selectedTmdbId, setSelectedTmdbId] = useState<number | null>(null);
+
+  const prefetchInFlightRef = useRef(false);
 
   useEffect(() => {
     function handleScopeUpdated() {
@@ -159,10 +165,69 @@ export default function RoomPage() {
     }
   }, [room, user]);
 
+  const appendUniqueCards = useCallback((incoming: SwipeCard[]) => {
+    if (!incoming.length) return;
+    setCards((prev) => {
+      if (!prev.length) return incoming;
+      const existing = new Set(prev.map((c) => c.tmdbId));
+      const deduped = incoming.filter((c) => !existing.has(c.tmdbId));
+      return deduped.length ? [...prev, ...deduped] : prev;
+    });
+  }, []);
+
+  const prefetchMoreCards = useCallback(async () => {
+    if (!room) return;
+    if (!user) return;
+    if (deckLoading) return;
+    if (error) return;
+    if (prefetchInFlightRef.current) return;
+
+    prefetchInFlightRef.current = true;
+    try {
+      for (let attempt = 0; attempt <= PREFETCH_EMPTY_RETRIES; attempt++) {
+        try {
+          const response = await fetchRoomSwipeDeck(room.roomId, PREFETCH_LIMIT);
+          if (response.items.length > 0) {
+            appendUniqueCards(response.items);
+            break;
+          }
+        } catch (e) {
+          // Backward-compat: older APIs won't have /rooms/{id}/swipedeck yet.
+          if (e instanceof ApiError && e.status === 404) {
+            const response = await fetchSwipeDeck(PREFETCH_LIMIT, room.serviceType, room.serverId);
+            if (response.items.length > 0) {
+              appendUniqueCards(response.items);
+              break;
+            }
+          } else {
+            throw e;
+          }
+        }
+
+        if (attempt !== PREFETCH_EMPTY_RETRIES) {
+          await sleep(250 * (attempt + 1));
+        }
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(e.message);
+      } else {
+        setError("Failed to load room swipedeck.");
+      }
+    } finally {
+      prefetchInFlightRef.current = false;
+    }
+  }, [appendUniqueCards, deckLoading, error, room, user]);
+
   useEffect(() => {
     if (!room) return;
     void loadDeck();
   }, [loadDeck, room]);
+
+  useEffect(() => {
+    if (cards.length >= PREFETCH_THRESHOLD) return;
+    void prefetchMoreCards();
+  }, [cards.length, prefetchMoreCards]);
 
   const requestSwipe = useCallback(
     (action: SwipeAction, fromOffset?: { x: number; y: number }) => {
@@ -290,7 +355,7 @@ export default function RoomPage() {
     setError(null);
     setLoading(true);
     try {
-      await guestLogin();
+      await guestLogin(roomId);
       // Reload effect will join+load.
     } catch (e) {
       if (e instanceof ApiError) {

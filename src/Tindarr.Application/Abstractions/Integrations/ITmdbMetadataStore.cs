@@ -12,7 +12,9 @@ public sealed record TmdbMetadataSettings(
 	int MaxMovies,
 	int MaxPoolPerUser,
 	int ImageCacheMaxMb,
-	TmdbPosterMode PosterMode);
+	TmdbPosterMode PosterMode,
+	string? PrewarmOriginalLanguage,
+	string? PrewarmRegion);
 
 public sealed record TmdbMetadataStats(int MovieCount, long ImageCacheBytes);
 
@@ -55,6 +57,8 @@ public interface ITmdbMetadataStore
 	Task UpdateMovieDetailsAsync(MovieDetailsDto details, CancellationToken cancellationToken);
 
 	Task<TmdbStoredMovie?> GetMovieAsync(int tmdbId, CancellationToken cancellationToken);
+
+	Task<IReadOnlyList<TmdbDiscoverMovieRecord>> ListDeckCandidatesAsync(int take, CancellationToken cancellationToken);
 
 	Task<IReadOnlyList<TmdbStoredMovie>> ListMoviesAsync(int skip, int take, bool missingDetailsOnly, string? titleQuery, CancellationToken cancellationToken);
 }

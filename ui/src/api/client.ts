@@ -52,6 +52,7 @@ import type {
   StartTmdbBuildRequest,
   TmdbBuildStatusDto,
   TmdbStoredMovieAdminListResponse,
+  AdminDbMovieListResponse,
   TmdbFetchMovieImagesResultDto
   ,
   CreateRoomRequest,
@@ -224,6 +225,19 @@ export async function adminUpdateMatchSettings(
     method: "PUT",
     query: { serviceType: serviceType.trim().toLowerCase(), serverId: serverId.trim() || "default" },
     body: request
+  });
+}
+
+export async function adminDbListMovies(params: { skip?: number; take?: number } = {}): Promise<AdminDbMovieListResponse> {
+  const scope = resolveScope();
+  return apiRequest<AdminDbMovieListResponse>({
+    path: "/api/v1/admin/db/movies",
+    query: {
+      serviceType: scope.serviceType,
+      serverId: scope.serverId,
+      skip: params.skip ?? 0,
+      take: params.take ?? 50
+    }
   });
 }
 

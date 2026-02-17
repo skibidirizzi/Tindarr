@@ -18,6 +18,7 @@ export type RegisterRequest = {
 };
 
 export type GuestLoginRequest = {
+  roomId: string;
   displayName?: string | null;
 };
 
@@ -38,6 +39,8 @@ export type UserDto = {
 export type JoinAddressSettingsDto = {
   lanHostPort: string | null;
   wanHostPort: string | null;
+  roomLifetimeMinutes: number | null;
+  guestSessionLifetimeMinutes: number | null;
   updatedAtUtc: string;
 };
 
@@ -74,6 +77,8 @@ export type ServiceScopeOptionDto = {
 export type UpdateJoinAddressSettingsRequest = {
   lanHostPort: string | null;
   wanHostPort: string | null;
+  roomLifetimeMinutes: number | null;
+  guestSessionLifetimeMinutes: number | null;
 };
 
 export type UpdateCastingSettingsRequest = {
@@ -263,6 +268,8 @@ export type TmdbCacheSettingsDto = {
   imageCacheMaxMb: number;
   imageCacheBytes: number;
   posterMode: string;
+  prewarmOriginalLanguage: string | null;
+  prewarmRegion: string | null;
 };
 
 export type UpdateTmdbCacheSettingsRequest = {
@@ -270,6 +277,8 @@ export type UpdateTmdbCacheSettingsRequest = {
   maxMovies: number;
   imageCacheMaxMb: number;
   posterMode: string;
+  prewarmOriginalLanguage: string | null;
+  prewarmRegion: string | null;
 };
 
 export type StartTmdbBuildRequest = {
@@ -312,6 +321,15 @@ export type TmdbStoredMovieAdminListResponse = {
   take: number;
   nextSkip: number;
   hasMore: boolean;
+};
+
+export type AdminDbMovieListResponse = {
+  items: TmdbStoredMovieAdminDto[];
+  skip: number;
+  take: number;
+  nextSkip: number;
+  hasMore: boolean;
+  totalCount: number;
 };
 
 export type TmdbFetchMovieImagesResultDto = {
