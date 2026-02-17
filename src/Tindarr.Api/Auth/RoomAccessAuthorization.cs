@@ -34,7 +34,7 @@ public sealed class RoomAccessAuthorizationHandler : AuthorizationHandler<RoomAc
 			return Task.CompletedTask;
 		}
 
-		if (!http.Request.RouteValues.TryGetValue("roomId", out var routeRoomObj))
+		if (!http.Request.RouteValues.TryGetValue(Policies.RoomIdRouteKey, out var routeRoomObj))
 		{
 			return Task.CompletedTask;
 		}

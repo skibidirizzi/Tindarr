@@ -8,6 +8,8 @@ public static class Policies
 	public const string AllowGuests = "AllowGuests";
 	public const string RoomAccess = "RoomAccess";
 
+	public const string RoomIdRouteKey = "roomId";
+
 	public const string AdminRole = "Admin";
 	public const string CuratorRole = "Curator";
 	public const string ContributorRole = "Contributor";

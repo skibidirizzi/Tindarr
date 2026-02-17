@@ -94,6 +94,10 @@ type AppRole = "Admin" | "Curator" | "Contributor";
 
 const ROLE_ORDER: AppRole[] = ["Admin", "Curator", "Contributor"];
 
+const MATCH_MIN_USERS_MIN = 1;
+const MATCH_MIN_USERS_MAX = 50;
+const MATCH_MIN_USERS_ERROR = `Min users must be blank or between ${MATCH_MIN_USERS_MIN} and ${MATCH_MIN_USERS_MAX}.`;
+
 function getPrimaryRole(roles: string[]): AppRole {
   for (const r of ROLE_ORDER) {
     if (roles.includes(r)) return r;
@@ -655,10 +659,10 @@ function RoomsTab() {
 		const roomLifetime = roomLifetimeMinutes.trim() ? Number(roomLifetimeMinutes.trim()) : null;
 		const guestLifetime = guestSessionLifetimeMinutes.trim() ? Number(guestSessionLifetimeMinutes.trim()) : null;
 		if (roomLifetime !== null && (!Number.isFinite(roomLifetime) || roomLifetime <= 0)) {
-			throw new ApiError(400, "Room lifetime minutes must be blank or a number >= 1.");
+        throw new ApiError("Room lifetime minutes must be blank or a number >= 1.", 400, null);
 		}
 		if (guestLifetime !== null && (!Number.isFinite(guestLifetime) || guestLifetime <= 0)) {
-			throw new ApiError(400, "Guest session lifetime minutes must be blank or a number >= 1.");
+        throw new ApiError("Guest session lifetime minutes must be blank or a number >= 1.", 400, null);
 		}
 
       const updated = await adminUpdateJoinAddressSettings({
@@ -923,9 +927,8 @@ function TmdbTab() {
 		try {
       const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
       const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
-      if (minUsers === 0)
-      {
-        setError("Min users must be blank or between 1 and 50.");
+      if (minUsers !== null && (Number.isNaN(minUsers) || minUsers < MATCH_MIN_USERS_MIN || minUsers > MATCH_MIN_USERS_MAX)) {
+        setError(MATCH_MIN_USERS_ERROR);
         return;
       }
 			const updated = await adminUpdateMatchSettings("tmdb", "tmdb", { minUsers, minUserPercent });
@@ -2330,9 +2333,8 @@ function RadarrTab() {
       const sid = serverId.trim() || "default";
       const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
       const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
-			if (minUsers === 0)
-			{
-				setError("Min users must be blank or between 1 and 50.");
+			if (minUsers !== null && (Number.isNaN(minUsers) || minUsers < MATCH_MIN_USERS_MIN || minUsers > MATCH_MIN_USERS_MAX)) {
+				setError(MATCH_MIN_USERS_ERROR);
 				return;
 			}
       const updated = await adminUpdateMatchSettings("radarr", sid, { minUsers, minUserPercent });

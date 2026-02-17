@@ -53,7 +53,7 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 
 		var rows = await db.LibraryItems
 			.AsNoTracking()
-			.Where(x => x.ServerId == scope.ServerId)
+			.Where(x => x.ServerId == scope.ServerId && x.TmdbId > 0)
 			.OrderByDescending(x => x.UpdatedAtUtc)
 			.ThenBy(x => x.TmdbId)
 			.Skip(skip)
@@ -63,7 +63,6 @@ public sealed class PlexLibraryCacheRepository(PlexCacheDbContext db) : IPlexLib
 			.ConfigureAwait(false);
 
 		return rows
-			.Where(x => x.TmdbId > 0)
 			.Select(x => new PlexLibraryItem(
 				TmdbId: x.TmdbId,
 				Title: string.IsNullOrWhiteSpace(x.Title) ? $"TMDB:{x.TmdbId}" : x.Title!,
