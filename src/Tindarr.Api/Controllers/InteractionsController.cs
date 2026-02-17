@@ -120,6 +120,7 @@ public sealed class InteractionsController(
 		return Ok(new UndoResponse(true, interaction.TmdbId, MapAction(interaction.Action), interaction.CreatedAtUtc));
 	}
 
+	[Authorize]
 	[HttpDelete]
 	public async Task<IActionResult> ClearHistory(
 		[FromQuery] string serviceType,
