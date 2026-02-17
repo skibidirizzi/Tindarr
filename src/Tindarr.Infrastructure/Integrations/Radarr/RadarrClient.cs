@@ -66,9 +66,35 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 		}
 
 		var body = await ReadResponseAsync(connection, $"movie/lookup/tmdb?tmdbId={tmdbId}", cancellationToken).ConfigureAwait(false);
-		var movies = JsonSerializer.Deserialize<List<RadarrLookupMovieDto>>(body, Json);
-		var first = movies?.FirstOrDefault();
-		if (first is null)
+		if (string.IsNullOrWhiteSpace(body))
+		{
+			return null;
+		}
+
+		RadarrLookupMovieDto? first;
+		try
+		{
+			using var doc = JsonDocument.Parse(body);
+			first = doc.RootElement.ValueKind switch
+			{
+				JsonValueKind.Array => doc.RootElement.Deserialize<List<RadarrLookupMovieDto>>(Json)?.FirstOrDefault(),
+				JsonValueKind.Object => doc.RootElement.Deserialize<RadarrLookupMovieDto>(Json),
+				_ => null
+			};
+		}
+		catch (JsonException ex)
+		{
+			var snippet = body.Length <= 500 ? body : body[..500] + "...";
+			logger.LogWarning(
+				ex,
+				"radarr lookup parse failed. BaseUrl={BaseUrl} tmdb:{TmdbId} Body={Body}",
+				connection.BaseUrl,
+				tmdbId,
+				snippet);
+			throw new InvalidOperationException($"Radarr lookup returned unexpected JSON for tmdb:{tmdbId}. Body: {snippet}", ex);
+		}
+
+		if (first is null || first.TmdbId <= 0)
 		{
 			return null;
 		}
@@ -151,7 +177,16 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 			return new RadarrAddMovieResult(false, true, "Movie already exists.");
 		}
 
-		return new RadarrAddMovieResult(false, false, $"Status {(int)response.StatusCode} {response.StatusCode}.");
+		var snippet = string.IsNullOrWhiteSpace(body)
+			? null
+			: (body.Length <= 500 ? body : body[..500] + "...");
+
+		return new RadarrAddMovieResult(
+			false,
+			false,
+			snippet is null
+				? $"Status {(int)response.StatusCode} {response.StatusCode}."
+				: $"Status {(int)response.StatusCode} {response.StatusCode}. {snippet}");
 	}
 
 	private async Task<string> ReadResponseAsync(RadarrConnection connection, string path, CancellationToken cancellationToken)

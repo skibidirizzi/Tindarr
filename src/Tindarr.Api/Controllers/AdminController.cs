@@ -21,6 +21,8 @@ public sealed class AdminController(
 	IUserRepository users,
 	IInteractionStore interactionStore,
 	IJoinAddressSettingsRepository joinAddressSettings,
+	ICastingSettingsRepository castingSettings,
+	IServiceSettingsRepository serviceSettings,
 	IPasswordHasher passwordHasher,
 	IOptions<RegistrationOptions> registrationOptions) : ControllerBase
 {
@@ -55,6 +57,183 @@ public sealed class AdminController(
 
 		var updated = await joinAddressSettings.UpsertAsync(new JoinAddressSettingsUpsert(lan, wan), cancellationToken);
 		return Ok(new JoinAddressSettingsDto(updated.LanHostPort, updated.WanHostPort, updated.UpdatedAtUtc.ToString("O")));
+	}
+
+	[HttpGet("casting")]
+	public async Task<ActionResult<CastingSettingsDto>> GetCastingSettings(CancellationToken cancellationToken)
+	{
+		var settings = await castingSettings.GetAsync(cancellationToken);
+		if (settings is null)
+		{
+			return Ok(new CastingSettingsDto(null, null, null, null, null, null, null, null, null, null, null, null, DateTimeOffset.UtcNow.ToString("O")));
+		}
+
+		return Ok(new CastingSettingsDto(
+			settings.PreferredSubtitleSource,
+			settings.PreferredSubtitleLanguage,
+			settings.PreferredSubtitleTrackSource,
+			settings.SubtitleFallback,
+			settings.SubtitleLanguageFallback,
+			settings.SubtitleTrackSourceFallback,
+			settings.PreferredAudioStyle,
+			settings.PreferredAudioLanguage,
+			settings.PreferredAudioTrackKind,
+			settings.AudioFallback,
+			settings.AudioLanguageFallback,
+			settings.AudioTrackKindFallback,
+			settings.UpdatedAtUtc.ToString("O")));
+	}
+
+	[HttpPut("casting")]
+	public async Task<ActionResult<CastingSettingsDto>> UpdateCastingSettings([FromBody] UpdateCastingSettingsRequest request, CancellationToken cancellationToken)
+	{
+		try
+		{
+			var upsert = new CastingSettingsUpsert(
+				PreferredSubtitleSource: NormalizeOption(request.PreferredSubtitleSource, nameof(request.PreferredSubtitleSource)),
+				PreferredSubtitleLanguage: NormalizeLanguage(request.PreferredSubtitleLanguage, nameof(request.PreferredSubtitleLanguage)),
+				PreferredSubtitleTrackSource: NormalizeOption(request.PreferredSubtitleTrackSource, nameof(request.PreferredSubtitleTrackSource)),
+				SubtitleFallback: NormalizeOption(request.SubtitleFallback, nameof(request.SubtitleFallback)),
+				SubtitleLanguageFallback: NormalizeLanguage(request.SubtitleLanguageFallback, nameof(request.SubtitleLanguageFallback)),
+				SubtitleTrackSourceFallback: NormalizeOption(request.SubtitleTrackSourceFallback, nameof(request.SubtitleTrackSourceFallback)),
+				PreferredAudioStyle: NormalizeOption(request.PreferredAudioStyle, nameof(request.PreferredAudioStyle)),
+				PreferredAudioLanguage: NormalizeLanguage(request.PreferredAudioLanguage, nameof(request.PreferredAudioLanguage)),
+				PreferredAudioTrackKind: NormalizeOption(request.PreferredAudioTrackKind, nameof(request.PreferredAudioTrackKind)),
+				AudioFallback: NormalizeOption(request.AudioFallback, nameof(request.AudioFallback)),
+				AudioLanguageFallback: NormalizeLanguage(request.AudioLanguageFallback, nameof(request.AudioLanguageFallback)),
+				AudioTrackKindFallback: NormalizeOption(request.AudioTrackKindFallback, nameof(request.AudioTrackKindFallback)));
+
+			var updated = await castingSettings.UpsertAsync(upsert, cancellationToken);
+			return Ok(new CastingSettingsDto(
+				updated.PreferredSubtitleSource,
+				updated.PreferredSubtitleLanguage,
+				updated.PreferredSubtitleTrackSource,
+				updated.SubtitleFallback,
+				updated.SubtitleLanguageFallback,
+				updated.SubtitleTrackSourceFallback,
+				updated.PreferredAudioStyle,
+				updated.PreferredAudioLanguage,
+				updated.PreferredAudioTrackKind,
+				updated.AudioFallback,
+				updated.AudioLanguageFallback,
+				updated.AudioTrackKindFallback,
+				updated.UpdatedAtUtc.ToString("O")));
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+	}
+
+	[HttpGet("matching")]
+	public async Task<ActionResult<MatchSettingsDto>> GetMatchSettings(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		CancellationToken cancellationToken)
+	{
+		if (!ServiceScope.TryCreate(serviceType, serverId, out var scope))
+		{
+			return BadRequest("ServiceType and ServerId are required.");
+		}
+
+		var settings = await serviceSettings.GetAsync(scope!, cancellationToken).ConfigureAwait(false);
+		if (settings is null)
+		{
+			return Ok(new MatchSettingsDto(
+				scope!.ServiceType.ToString().ToLowerInvariant(),
+				scope.ServerId,
+				MinUsers: null,
+				MinUserPercent: null,
+				UpdatedAtUtc: DateTimeOffset.UtcNow.ToString("O")));
+		}
+
+		return Ok(new MatchSettingsDto(
+			scope!.ServiceType.ToString().ToLowerInvariant(),
+			scope.ServerId,
+			settings.MatchMinUsers,
+			settings.MatchMinUserPercent,
+			settings.UpdatedAtUtc.ToString("O")));
+	}
+
+	[HttpPut("matching")]
+	public async Task<ActionResult<MatchSettingsDto>> UpdateMatchSettings(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		[FromBody] UpdateMatchSettingsRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (!ServiceScope.TryCreate(serviceType, serverId, out var scope))
+		{
+			return BadRequest("ServiceType and ServerId are required.");
+		}
+
+		if (request.MinUsers is not null && (request.MinUsers.Value < 1 || request.MinUsers.Value > 50))
+		{
+			return BadRequest("MinUsers must be between 1 and 50.");
+		}
+
+		if (request.MinUserPercent is not null && (request.MinUserPercent.Value < 1 || request.MinUserPercent.Value > 100))
+		{
+			return BadRequest("MinUserPercent must be between 1 and 100.");
+		}
+
+		var existing = await serviceSettings.GetAsync(scope!, cancellationToken).ConfigureAwait(false);
+		var upsert = BuildMatchSettingsUpsert(existing, request.MinUsers, request.MinUserPercent);
+		await serviceSettings.UpsertAsync(scope!, upsert, cancellationToken).ConfigureAwait(false);
+
+		var updated = await serviceSettings.GetAsync(scope!, cancellationToken).ConfigureAwait(false);
+		if (updated is null)
+		{
+			return StatusCode(StatusCodes.Status500InternalServerError, "Match settings missing after update.");
+		}
+
+		return Ok(new MatchSettingsDto(
+			scope!.ServiceType.ToString().ToLowerInvariant(),
+			scope.ServerId,
+			updated.MatchMinUsers,
+			updated.MatchMinUserPercent,
+			updated.UpdatedAtUtc.ToString("O")));
+	}
+
+	private static ServiceSettingsUpsert BuildMatchSettingsUpsert(
+		ServiceSettingsRecord? existing,
+		int? minUsers,
+		int? minUserPercent)
+	{
+		return new ServiceSettingsUpsert(
+			RadarrBaseUrl: existing?.RadarrBaseUrl ?? string.Empty,
+			RadarrApiKey: existing?.RadarrApiKey ?? string.Empty,
+			RadarrQualityProfileId: existing?.RadarrQualityProfileId,
+			RadarrRootFolderPath: existing?.RadarrRootFolderPath,
+			RadarrTagLabel: existing?.RadarrTagLabel,
+			RadarrTagId: existing?.RadarrTagId,
+			RadarrAutoAddEnabled: existing?.RadarrAutoAddEnabled ?? false,
+			RadarrAutoAddIntervalMinutes: existing?.RadarrAutoAddIntervalMinutes,
+			RadarrLastAutoAddRunUtc: existing?.RadarrLastAutoAddRunUtc,
+			RadarrLastAutoAddAcceptedId: existing?.RadarrLastAutoAddAcceptedId,
+			RadarrLastLibrarySyncUtc: existing?.RadarrLastLibrarySyncUtc,
+			MatchMinUsers: minUsers,
+			MatchMinUserPercent: minUserPercent,
+			JellyfinBaseUrl: existing?.JellyfinBaseUrl,
+			JellyfinApiKey: existing?.JellyfinApiKey,
+			JellyfinServerName: existing?.JellyfinServerName,
+			JellyfinServerVersion: existing?.JellyfinServerVersion,
+			JellyfinLastLibrarySyncUtc: existing?.JellyfinLastLibrarySyncUtc,
+			EmbyBaseUrl: existing?.EmbyBaseUrl,
+			EmbyApiKey: existing?.EmbyApiKey,
+			EmbyServerName: existing?.EmbyServerName,
+			EmbyServerVersion: existing?.EmbyServerVersion,
+			EmbyLastLibrarySyncUtc: existing?.EmbyLastLibrarySyncUtc,
+			PlexClientIdentifier: existing?.PlexClientIdentifier,
+			PlexAuthToken: existing?.PlexAuthToken,
+			PlexServerName: existing?.PlexServerName,
+			PlexServerUri: existing?.PlexServerUri,
+			PlexServerVersion: existing?.PlexServerVersion,
+			PlexServerPlatform: existing?.PlexServerPlatform,
+			PlexServerOwned: existing?.PlexServerOwned,
+			PlexServerOnline: existing?.PlexServerOnline,
+			PlexServerAccessToken: existing?.PlexServerAccessToken,
+			PlexLastLibrarySyncUtc: existing?.PlexLastLibrarySyncUtc);
 	}
 
 	[HttpGet("users")]
@@ -253,6 +432,43 @@ public sealed class AdminController(
 			SwipeActionDto.Superlike => InteractionAction.Superlike,
 			_ => InteractionAction.Skip
 		};
+	}
+
+	private static string? NormalizeOption(string? value, string field)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+		{
+			return null;
+		}
+
+		var trimmed = value.Trim();
+		if (trimmed.Length > 64)
+		{
+			throw new ArgumentException($"{field} must be 64 characters or less.");
+		}
+
+		return trimmed;
+	}
+
+	private static string? NormalizeLanguage(string? value, string field)
+	{
+		if (string.IsNullOrWhiteSpace(value))
+		{
+			return null;
+		}
+
+		var trimmed = value.Trim();
+		if (trimmed.Length > 16)
+		{
+			throw new ArgumentException($"{field} must be 16 characters or less.");
+		}
+
+		if (trimmed.Any(char.IsWhiteSpace))
+		{
+			throw new ArgumentException($"{field} must not contain spaces.");
+		}
+
+		return trimmed;
 	}
 
 	private static SwipeActionDto MapAction(InteractionAction action)

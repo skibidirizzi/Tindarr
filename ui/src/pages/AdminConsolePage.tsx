@@ -3,11 +3,15 @@ import { ApiError } from "../api/http";
 import {
   adminCreateUser,
   adminDeleteUser,
+  adminGetCastingSettings,
   adminGetJoinAddressSettings,
   adminListUsers,
+  adminGetMatchSettings,
   adminSetUserPassword,
   adminSetUserRoles,
+  adminUpdateCastingSettings,
   adminUpdateJoinAddressSettings,
+  adminUpdateMatchSettings,
   adminUpdateUser,
   embyListServers,
   embySyncLibrary,
@@ -41,6 +45,8 @@ import {
   tmdbStartBuild
 } from "../api/client";
 import type {
+  CastingSettingsDto,
+  MatchSettingsDto,
   EmbyServerDto,
   JellyfinServerDto,
   JoinAddressSettingsDto,
@@ -101,7 +107,7 @@ function roleButtonClass(role: AppRole) {
 }
 
 export default function AdminConsolePage() {
-  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms">("users");
+  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms" | "casting">("users");
 
   return (
     <section className="deck">
@@ -110,6 +116,7 @@ export default function AdminConsolePage() {
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" className={tabButtonClass(tab === "users")} onClick={() => setTab("users")}>Users</button>
           <button type="button" className={tabButtonClass(tab === "rooms")} onClick={() => setTab("rooms")}>Rooms</button>
+          <button type="button" className={tabButtonClass(tab === "casting")} onClick={() => setTab("casting")}>Casting</button>
           <button type="button" className={tabButtonClass(tab === "plex")} onClick={() => setTab("plex")}>Plex</button>
           <button type="button" className={tabButtonClass(tab === "radarr")} onClick={() => setTab("radarr")}>Radarr</button>
           <button type="button" className={tabButtonClass(tab === "jellyfin")} onClick={() => setTab("jellyfin")}>Jellyfin</button>
@@ -120,12 +127,301 @@ export default function AdminConsolePage() {
 
       {tab === "users" ? <UsersTab /> : null}
       {tab === "rooms" ? <RoomsTab /> : null}
+      {tab === "casting" ? <CastingTab /> : null}
       {tab === "plex" ? <PlexTab /> : null}
       {tab === "radarr" ? <RadarrTab /> : null}
       {tab === "jellyfin" ? <JellyfinTab /> : null}
       {tab === "emby" ? <EmbyTab /> : null}
       {tab === "tmdb" ? <TmdbTab /> : null}
     </section>
+  );
+}
+
+function CastingTab() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<CastingSettingsDto | null>(null);
+
+  const [preferredSubtitleSource, setPreferredSubtitleSource] = useState("");
+  const [subtitleFallback, setSubtitleFallback] = useState("");
+  const [preferredAudioStyle, setPreferredAudioStyle] = useState("");
+  const [audioFallback, setAudioFallback] = useState("");
+
+  const [preferredAudioTrackKind, setPreferredAudioTrackKind] = useState("");
+  const [audioTrackKindFallback, setAudioTrackKindFallback] = useState("");
+
+  const [preferredSubtitleLanguage, setPreferredSubtitleLanguage] = useState("");
+  const [subtitleLanguageFallback, setSubtitleLanguageFallback] = useState("");
+  const [preferredAudioLanguage, setPreferredAudioLanguage] = useState("");
+  const [audioLanguageFallback, setAudioLanguageFallback] = useState("");
+
+  const [preferredSubtitleTrackSource, setPreferredSubtitleTrackSource] = useState("");
+  const [subtitleTrackSourceFallback, setSubtitleTrackSourceFallback] = useState("");
+
+  const subtitleOptions = useMemo(() => [
+    { value: "", label: "Auto" },
+    { value: "none", label: "None" },
+    { value: "burn", label: "Burn" }
+  ], []);
+
+  const audioOptions = useMemo(() => [
+    { value: "", label: "Auto" },
+    { value: "dts", label: "DTS" },
+    { value: "dd", label: "Dolby Digital (AC3)" },
+    { value: "5.1", label: "5.1" },
+    { value: "2ch", label: "Stereo (2ch)" }
+  ], []);
+
+  const audioTrackKindOptions = useMemo(() => [
+    { value: "", label: "Auto" },
+    { value: "main", label: "Main audio" },
+    { value: "commentary", label: "Commentary" }
+  ], []);
+
+  const languageOptions = useMemo(() => [
+    { value: "", label: "Auto" },
+    { value: "en", label: "English — en" },
+    { value: "zh", label: "Chinese (Mandarin) — zh" },
+    { value: "hi", label: "Hindi — hi" },
+    { value: "es", label: "Spanish — es" },
+    { value: "fr", label: "French — fr" },
+    { value: "ar", label: "Arabic — ar" },
+    { value: "bn", label: "Bengali — bn" },
+    { value: "pt", label: "Portuguese — pt" },
+    { value: "ru", label: "Russian — ru" },
+    { value: "ur", label: "Urdu — ur" },
+    { value: "id", label: "Indonesian — id" },
+    { value: "de", label: "German — de" }
+  ], []);
+
+  const subtitleTrackSourceOptions = useMemo(() => [
+    { value: "", label: "Auto" },
+    { value: "external", label: "External (sidecar/assigned)" },
+    { value: "embedded", label: "Embedded (in file)" }
+  ], []);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const s = await adminGetCastingSettings();
+      setSettings(s);
+      setPreferredSubtitleSource(s.preferredSubtitleSource ?? "");
+      setSubtitleFallback(s.subtitleFallback ?? "");
+      setPreferredAudioStyle(s.preferredAudioStyle ?? "");
+      setAudioFallback(s.audioFallback ?? "");
+
+      setPreferredAudioTrackKind(s.preferredAudioTrackKind ?? "");
+      setAudioTrackKindFallback(s.audioTrackKindFallback ?? "");
+
+      setPreferredSubtitleLanguage(s.preferredSubtitleLanguage ?? "");
+      setSubtitleLanguageFallback(s.subtitleLanguageFallback ?? "");
+      setPreferredAudioLanguage(s.preferredAudioLanguage ?? "");
+      setAudioLanguageFallback(s.audioLanguageFallback ?? "");
+
+      setPreferredSubtitleTrackSource(s.preferredSubtitleTrackSource ?? "");
+      setSubtitleTrackSourceFallback(s.subtitleTrackSourceFallback ?? "");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load casting settings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await adminUpdateCastingSettings({
+        preferredSubtitleSource: preferredSubtitleSource.trim() ? preferredSubtitleSource.trim() : null,
+        subtitleFallback: subtitleFallback.trim() ? subtitleFallback.trim() : null,
+        preferredAudioStyle: preferredAudioStyle.trim() ? preferredAudioStyle.trim() : null,
+        audioFallback: audioFallback.trim() ? audioFallback.trim() : null,
+
+        preferredSubtitleLanguage: preferredSubtitleLanguage.trim() ? preferredSubtitleLanguage.trim() : null,
+        subtitleLanguageFallback: subtitleLanguageFallback.trim() ? subtitleLanguageFallback.trim() : null,
+        preferredAudioLanguage: preferredAudioLanguage.trim() ? preferredAudioLanguage.trim() : null,
+        audioLanguageFallback: audioLanguageFallback.trim() ? audioLanguageFallback.trim() : null,
+
+        preferredAudioTrackKind: preferredAudioTrackKind.trim() ? preferredAudioTrackKind.trim() : null,
+        audioTrackKindFallback: audioTrackKindFallback.trim() ? audioTrackKindFallback.trim() : null,
+
+        preferredSubtitleTrackSource: preferredSubtitleTrackSource.trim() ? preferredSubtitleTrackSource.trim() : null,
+        subtitleTrackSourceFallback: subtitleTrackSourceFallback.trim() ? subtitleTrackSourceFallback.trim() : null,
+      });
+      setSettings(updated);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save casting settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onSaveMatching = async () => {
+    setMatchSaving(true);
+    setError(null);
+    try {
+      const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
+      const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+      const updated = await adminUpdateMatchSettings("tmdb", "tmdb", { minUsers, minUserPercent });
+      setMatchSettings(updated);
+      setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");
+      setMatchMinUserPercent(updated.minUserPercent != null ? String(updated.minUserPercent) : "");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save matching settings.");
+    } finally {
+      setMatchSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="deck__toolbar" style={{ justifyContent: "flex-end" }}>
+        <button type="button" className="app__navLink" onClick={() => void load()} disabled={loading || saving}>
+          Refresh
+        </button>
+      </div>
+
+      {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+
+      <div className="deck__state" style={{ textAlign: "left" }}>
+        <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Casting policy</h3>
+
+        <div style={{ color: "#8c93a6", marginBottom: "0.75rem" }}>
+          Preferences used when building casting playback streams.
+        </div>
+
+        {loading ? <div className="deck__state">Loading…</div> : null}
+
+        {!loading ? (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred subtitle</span>
+              <select className="input" value={preferredSubtitleSource} onChange={(e) => setPreferredSubtitleSource(e.target.value)}>
+                {subtitleOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred subtitle source</span>
+              <select className="input" value={preferredSubtitleTrackSource} onChange={(e) => setPreferredSubtitleTrackSource(e.target.value)}>
+                {subtitleTrackSourceOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred subtitle language</span>
+              <select className="input" value={preferredSubtitleLanguage} onChange={(e) => setPreferredSubtitleLanguage(e.target.value)}>
+                {languageOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Subtitle fallback</span>
+              <select className="input" value={subtitleFallback} onChange={(e) => setSubtitleFallback(e.target.value)}>
+                {subtitleOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Subtitle source fallback</span>
+              <select className="input" value={subtitleTrackSourceFallback} onChange={(e) => setSubtitleTrackSourceFallback(e.target.value)}>
+                {subtitleTrackSourceOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Subtitle language fallback</span>
+              <select className="input" value={subtitleLanguageFallback} onChange={(e) => setSubtitleLanguageFallback(e.target.value)}>
+                {languageOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred audio</span>
+              <select className="input" value={preferredAudioStyle} onChange={(e) => setPreferredAudioStyle(e.target.value)}>
+                {audioOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred audio track</span>
+              <select className="input" value={preferredAudioTrackKind} onChange={(e) => setPreferredAudioTrackKind(e.target.value)}>
+                {audioTrackKindOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Preferred audio language</span>
+              <select className="input" value={preferredAudioLanguage} onChange={(e) => setPreferredAudioLanguage(e.target.value)}>
+                {languageOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Audio fallback</span>
+              <select className="input" value={audioFallback} onChange={(e) => setAudioFallback(e.target.value)}>
+                {audioOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Audio track fallback</span>
+              <select className="input" value={audioTrackKindFallback} onChange={(e) => setAudioTrackKindFallback(e.target.value)}>
+                {audioTrackKindOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label style={{ display: "grid", gap: "0.25rem" }}>
+              <span>Audio language fallback</span>
+              <select className="input" value={audioLanguageFallback} onChange={(e) => setAudioLanguageFallback(e.target.value)}>
+                {languageOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" className="pill pill--neutral is-on" onClick={() => void onSave()} disabled={loading || saving}>
+            Save
+          </button>
+          <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
+            Updated: {settings?.updatedAtUtc ?? ""}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -221,6 +517,10 @@ function TmdbTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TmdbCacheSettingsDto | null>(null);
+	const [matchSettings, setMatchSettings] = useState<MatchSettingsDto | null>(null);
+	const [matchMinUsers, setMatchMinUsers] = useState("");
+	const [matchMinUserPercent, setMatchMinUserPercent] = useState("");
+	const [matchSaving, setMatchSaving] = useState(false);
   const [maxRows, setMaxRows] = useState("5000");
   const [maxMovies, setMaxMovies] = useState("20000");
   const [imageCacheMaxMb, setImageCacheMaxMb] = useState("512");
@@ -258,6 +558,18 @@ function TmdbTab() {
       setMaxMovies(String(s.maxMovies));
       setImageCacheMaxMb(String(s.imageCacheMaxMb));
       setPosterMode(String(s.posterMode || "Tmdb"));
+
+		try {
+			const m = await adminGetMatchSettings("tmdb", "tmdb");
+			setMatchSettings(m);
+			setMatchMinUsers(m.minUsers != null ? String(m.minUsers) : "");
+			setMatchMinUserPercent(m.minUserPercent != null ? String(m.minUserPercent) : "");
+		} catch {
+			// Don't break the TMDB admin page if the matching endpoint is unavailable.
+			setMatchSettings(null);
+			setMatchMinUsers("");
+			setMatchMinUserPercent("");
+		}
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to load TMDB cache settings.";
       setError(msg);
@@ -374,6 +686,23 @@ function TmdbTab() {
     }
   };
 
+	const onSaveMatching = async () => {
+		setMatchSaving(true);
+		setError(null);
+		try {
+			const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
+			const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+			const updated = await adminUpdateMatchSettings("tmdb", "tmdb", { minUsers, minUserPercent });
+			setMatchSettings(updated);
+			setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");
+			setMatchMinUserPercent(updated.minUserPercent != null ? String(updated.minUserPercent) : "");
+		} catch (e) {
+			setError(e instanceof ApiError ? e.message : "Failed to save matching settings.");
+		} finally {
+			setMatchSaving(false);
+		}
+	};
+
   const imageUsedMb = settings ? Math.round(settings.imageCacheBytes / (1024 * 1024)) : 0;
   const localProxyEnabled = settings?.posterMode === "LocalProxy" && (settings?.imageCacheMaxMb ?? 0) > 0;
   const moviesBulkRunning = Boolean(tmdbBulkJob?.running);
@@ -479,6 +808,40 @@ function TmdbTab() {
         <p style={{ marginTop: 0 }}>
           Controls the local TMDB metadata pool and optional poster caching. The workers service keeps this warm for near-instant swipe decks.
         </p>
+
+      <div style={{ marginTop: "1rem" }}>
+        <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Matching</h4>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", maxWidth: 560 }}>
+          <label style={{ display: "grid", gap: "0.25rem" }}>
+            <span>Min users</span>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={matchMinUsers}
+              onChange={(e) => setMatchMinUsers(e.target.value)}
+              placeholder="(unset)"
+            />
+          </label>
+          <label style={{ display: "grid", gap: "0.25rem" }}>
+            <span>Min % users</span>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={matchMinUserPercent}
+              onChange={(e) => setMatchMinUserPercent(e.target.value)}
+              placeholder="(unset)"
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button type="button" className="button" onClick={onSaveMatching} disabled={loading || matchSaving}>
+            Save matching
+          </button>
+          <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
+            Updated: {matchSettings?.updatedAtUtc ?? ""}
+          </div>
+        </div>
+      </div>
 
         {loading ? <div className="deck__state">Loading…</div> : null}
         {error ? <div className="deck__state deck__state--error">{error}</div> : null}
@@ -1568,11 +1931,16 @@ function RadarrTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<RadarrSettingsDto | null>(null);
+	const [matchSettings, setMatchSettings] = useState<MatchSettingsDto | null>(null);
+	const [matchMinUsers, setMatchMinUsers] = useState<string>("");
+	const [matchMinUserPercent, setMatchMinUserPercent] = useState<string>("");
+	const [matchSaving, setMatchSaving] = useState(false);
 
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [tagLabel, setTagLabel] = useState("");
   const [autoAddEnabled, setAutoAddEnabled] = useState(false);
+  const [autoAddIntervalMinutes, setAutoAddIntervalMinutes] = useState<string>("");
   const [qualityProfileId, setQualityProfileId] = useState<number | null>(null);
   const [rootFolderPath, setRootFolderPath] = useState<string | null>(null);
 
@@ -1583,14 +1951,27 @@ function RadarrTab() {
     setLoading(true);
     setError(null);
     try {
-      const s = await radarrGetSettings("radarr", serverId.trim() || "default");
+      const sid = serverId.trim() || "default";
+      const s = await radarrGetSettings("radarr", sid);
       setSettings(s);
       setBaseUrl(s.baseUrl ?? "");
       setApiKey("");
       setTagLabel(s.tagLabel ?? "");
       setAutoAddEnabled(s.autoAddEnabled);
+      setAutoAddIntervalMinutes(s.autoAddIntervalMinutes != null ? String(s.autoAddIntervalMinutes) : "");
       setQualityProfileId(s.qualityProfileId);
       setRootFolderPath(s.rootFolderPath);
+
+    try {
+      const m = await adminGetMatchSettings("radarr", sid);
+      setMatchSettings(m);
+      setMatchMinUsers(m.minUsers != null ? String(m.minUsers) : "");
+      setMatchMinUserPercent(m.minUserPercent != null ? String(m.minUserPercent) : "");
+    } catch {
+      setMatchSettings(null);
+      setMatchMinUsers("");
+      setMatchMinUserPercent("");
+    }
 
       // Best-effort load for dropdowns; these require configured Radarr.
       if (s.configured) {
@@ -1631,7 +2012,8 @@ function RadarrTab() {
         qualityProfileId,
         rootFolderPath,
         tagLabel: tagLabel.trim() || null,
-        autoAddEnabled
+        autoAddEnabled,
+        autoAddIntervalMinutes: autoAddIntervalMinutes.trim() ? Number(autoAddIntervalMinutes) : null
       });
       setSettings(updated);
       setApiKey("");
@@ -1668,6 +2050,24 @@ function RadarrTab() {
       setError(e instanceof ApiError ? e.message : "Failed to sync Radarr library.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onSaveMatching = async () => {
+    setMatchSaving(true);
+    setError(null);
+    try {
+      const sid = serverId.trim() || "default";
+      const minUsers = matchMinUsers.trim() ? Math.floor(Number(matchMinUsers)) : null;
+      const minUserPercent = matchMinUserPercent.trim() ? Math.floor(Number(matchMinUserPercent)) : null;
+      const updated = await adminUpdateMatchSettings("radarr", sid, { minUsers, minUserPercent });
+      setMatchSettings(updated);
+      setMatchMinUsers(updated.minUsers != null ? String(updated.minUsers) : "");
+      setMatchMinUserPercent(updated.minUserPercent != null ? String(updated.minUserPercent) : "");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save matching settings.");
+    } finally {
+      setMatchSaving(false);
     }
   };
 
@@ -1745,12 +2145,50 @@ function RadarrTab() {
               <span style={{ color: "#8c93a6", fontWeight: 700 }}>Auto-add accepted</span>
             </label>
           </div>
+
+          <div>
+            <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>Auto-add interval (minutes)</div>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={autoAddIntervalMinutes}
+              onChange={(e) => setAutoAddIntervalMinutes(e.target.value)}
+              placeholder="(default)"
+            />
+          </div>
         </div>
+
+      <h4 style={{ marginTop: "1rem", marginBottom: "0.5rem" }}>Matching</h4>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+        <div>
+          <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>Min users</div>
+          <input
+            className="input"
+            inputMode="numeric"
+            value={matchMinUsers}
+            onChange={(e) => setMatchMinUsers(e.target.value)}
+            placeholder="(unset)"
+          />
+        </div>
+        <div>
+          <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>Min % users</div>
+          <input
+            className="input"
+            inputMode="numeric"
+            value={matchMinUserPercent}
+            onChange={(e) => setMatchMinUserPercent(e.target.value)}
+            placeholder="(unset)"
+          />
+        </div>
+      </div>
 
         <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSave()} disabled={loading || !baseUrl.trim()}>
             Save
           </button>
+        <button type="button" className="pill pill--neutral is-on" onClick={() => void onSaveMatching()} disabled={loading || matchSaving}>
+          Save matching
+        </button>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onTest()} disabled={loading}>
             Test connection
           </button>
@@ -1761,6 +2199,9 @@ function RadarrTab() {
             Last sync: {settings?.lastLibrarySyncUtc ?? ""}
           </div>
         </div>
+      <div style={{ marginTop: "0.5rem", color: "#8c93a6", fontWeight: 700 }}>
+        Match settings updated: {matchSettings?.updatedAtUtc ?? ""}
+      </div>
       </div>
     </>
   );

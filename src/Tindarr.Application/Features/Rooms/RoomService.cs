@@ -178,6 +178,6 @@ public sealed class RoomService(
 
 		var list = await interactions.ListAsync(roomId, limit: 50_000, cancellationToken);
 		var minUsers = Math.Clamp(room.Members.Count, 2, 50);
-		return matchingEngine.ComputeLikedByAllMatches(room.Scope, list, minUsers);
+		return matchingEngine.ComputeLikedByAllMatches(room.Scope, list, minUsers, minUserPercent: null);
 	}
 }

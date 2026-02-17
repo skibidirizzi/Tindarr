@@ -31,7 +31,8 @@ public sealed record RadarrSettingsUpsert(
 	int? QualityProfileId,
 	string? RootFolderPath,
 	string? TagLabel,
-	bool AutoAddEnabled);
+	bool AutoAddEnabled,
+	int? AutoAddIntervalMinutes);
 
 public sealed record RadarrLibrarySyncResult(int Count, DateTimeOffset SyncedAtUtc);
 

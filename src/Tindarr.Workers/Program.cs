@@ -2,6 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.EntityFrameworkCore;
+using Tindarr.Application.Abstractions.Domain;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Persistence;
@@ -10,12 +12,14 @@ using Tindarr.Application.Features.Radarr;
 using Tindarr.Application.Features.Jellyfin;
 using Tindarr.Application.Features.Emby;
 using Tindarr.Application.Interfaces.Integrations;
+using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Interfaces.Ops;
 using Tindarr.Application.Interfaces.Preferences;
 using Tindarr.Application.Features.Preferences;
 using Tindarr.Application.Options;
 using Tindarr.Application.Services;
 using Tindarr.Infrastructure.Caching;
+using Tindarr.Infrastructure.Interactions;
 using Tindarr.Infrastructure.Integrations.Jellyfin;
 using Tindarr.Infrastructure.Integrations.Emby;
 using Tindarr.Infrastructure.Integrations.Plex;
@@ -32,7 +36,9 @@ var isWindowsService = OperatingSystem.IsWindows() && !Environment.UserInteracti
 var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
 {
 	Args = args,
-	ContentRootPath = isWindowsService ? AppContext.BaseDirectory : null
+	// Make configuration + relative paths stable regardless of current working directory.
+	// appsettings*.json is copied to output in the csproj.
+	ContentRootPath = AppContext.BaseDirectory
 });
 
 var tmdbApiKeyEnv = Environment.GetEnvironmentVariable("TMDB_API_KEY");
@@ -95,19 +101,34 @@ builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 
 builder.Services.AddSingleton<ILanAddressResolver, LanAddressResolver>();
 
-builder.Services.AddTindarrPersistence(builder.Configuration);
-builder.Services.AddPlexCache(builder.Configuration);
+// IMPORTANT: The API host stores its dev sqlite DB under its content root (src/Tindarr.Api).
+// If workers point elsewhere, they won't see queued items (e.g., pending Radarr adds).
+// If Database:DataDir is explicitly configured, it wins.
+var configuredDataDir = builder.Configuration["Database:DataDir"];
+var devApiDataDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "Tindarr.Api"));
+var defaultDataDirOverride = string.IsNullOrWhiteSpace(configuredDataDir) && Directory.Exists(devApiDataDir)
+	? devApiDataDir
+	: null;
+
+builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: defaultDataDirOverride);
+builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: defaultDataDirOverride);
+
+builder.Services.AddScoped<EfCoreInteractionStore>();
+builder.Services.AddSingleton<InMemoryInteractionStore>();
+builder.Services.AddScoped<IInteractionStore, RoutingInteractionStore>();
 
 builder.Services.AddScoped<IAcceptedMovieRepository, AcceptedMovieRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository>();
 builder.Services.AddScoped<IServiceSettingsRepository, ServiceSettingsRepository>();
+builder.Services.AddScoped<IRadarrPendingAddRepository, RadarrPendingAddRepository>();
 builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 builder.Services.AddScoped<IRadarrService, RadarrService>();
 builder.Services.AddScoped<IPlexService, PlexService>();
 builder.Services.AddScoped<IJellyfinService, JellyfinService>();
 builder.Services.AddScoped<IEmbyService, EmbyService>();
+builder.Services.AddScoped<IMatchingEngine, MatchingEngine>();
 
 builder.Services.AddHttpClient<IRadarrClient, RadarrClient>();
 builder.Services.AddHttpClient<IPlexAuthClient, PlexAuthClient>();
@@ -165,6 +186,7 @@ builder.Services.AddHostedService<TmdbDetailsBackfillWorker>();
 builder.Services.AddHostedService<MatchComputationWorker>();
 builder.Services.AddHostedService<MediaServerSyncWorker>();
 builder.Services.AddHostedService<RadarrAutoAddWorker>();
+builder.Services.AddHostedService<RadarrSuperlikeAddWorker>();
 builder.Services.AddHostedService<PlexLibrarySyncWorker>();
 builder.Services.AddHostedService<CleanupWorker>();
 builder.Services.AddHostedService<HealthHeartbeatWorker>();
@@ -177,6 +199,9 @@ var host = builder.Build();
 // Ensure plexcache.db schema exists before any sync/webhook writes.
 using (var scope = host.Services.CreateScope())
 {
+	var db = scope.ServiceProvider.GetRequiredService<TindarrDbContext>();
+	db.Database.Migrate();
+
 	var plexCacheDb = scope.ServiceProvider.GetRequiredService<PlexCacheDbContext>();
 	plexCacheDb.Database.EnsureCreated();
 }

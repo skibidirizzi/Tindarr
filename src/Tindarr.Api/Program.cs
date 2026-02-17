@@ -185,8 +185,10 @@ builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository>();
 builder.Services.AddScoped<IAcceptedMovieRepository, AcceptedMovieRepository>();
 builder.Services.AddScoped<IServiceSettingsRepository, ServiceSettingsRepository>();
+builder.Services.AddScoped<IRadarrPendingAddRepository, RadarrPendingAddRepository>();
 builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
 builder.Services.AddScoped<IJoinAddressSettingsRepository, JoinAddressSettingsRepository>();
+builder.Services.AddScoped<ICastingSettingsRepository, CastingSettingsRepository>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();

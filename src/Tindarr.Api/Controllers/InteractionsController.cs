@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Contracts.Interactions;
 using Tindarr.Domain.Common;
@@ -11,7 +12,10 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/interactions")]
-public sealed class InteractionsController(IInteractionService interactionService) : ControllerBase
+public sealed class InteractionsController(
+	IInteractionService interactionService,
+	IRadarrPendingAddRepository radarrPendingAdds,
+	IServiceSettingsRepository settingsRepo) : ControllerBase
 {
 	[HttpGet]
 	public async Task<ActionResult<InteractionListResponse>> List(
@@ -53,9 +57,32 @@ public sealed class InteractionsController(IInteractionService interactionServic
 			return BadRequest("ServiceType and ServerId are required.");
 		}
 
+		if (scope!.ServiceType == ServiceType.Radarr)
+		{
+			return BadRequest("Radarr is not a swipe scope. Swipe TMDB discover instead.");
+		}
+
+		if (request.Action == SwipeActionDto.Superlike
+			&& !User.IsInRole(Policies.AdminRole)
+			&& !User.IsInRole(Policies.CuratorRole))
+		{
+			return Forbid();
+		}
+
 		var action = MapAction(request.Action);
 		var userId = User.GetUserId();
 		var interaction = await interactionService.AddAsync(userId, scope!, request.TmdbId, action, cancellationToken);
+
+		if (scope!.ServiceType == ServiceType.Tmdb && action == InteractionAction.Superlike)
+		{
+			var radarrScope = await TryResolveDefaultRadarrScopeAsync(settingsRepo, cancellationToken).ConfigureAwait(false);
+			if (radarrScope is not null)
+			{
+				// Small delay allows for quick undo without spamming Radarr.
+				var readyAt = DateTimeOffset.UtcNow.AddSeconds(15);
+				await radarrPendingAdds.TryEnqueueAsync(radarrScope, userId, request.TmdbId, readyAt, cancellationToken);
+			}
+		}
 
 		return Ok(new SwipeResponse(interaction.TmdbId, MapAction(interaction.Action), interaction.CreatedAtUtc));
 	}
@@ -68,12 +95,26 @@ public sealed class InteractionsController(IInteractionService interactionServic
 			return BadRequest("ServiceType and ServerId are required.");
 		}
 
+		if (scope!.ServiceType == ServiceType.Radarr)
+		{
+			return BadRequest("Radarr is not a swipe scope.");
+		}
+
 		var userId = User.GetUserId();
 		var interaction = await interactionService.UndoLastAsync(userId, scope!, cancellationToken);
 
 		if (interaction is null)
 		{
 			return Ok(new UndoResponse(false, null, null, null));
+		}
+
+		if (scope!.ServiceType == ServiceType.Tmdb && interaction.Action == InteractionAction.Superlike)
+		{
+			var radarrScope = await TryResolveDefaultRadarrScopeAsync(settingsRepo, cancellationToken).ConfigureAwait(false);
+			if (radarrScope is not null)
+			{
+				await radarrPendingAdds.TryCancelAsync(radarrScope, userId, interaction.TmdbId, cancellationToken);
+			}
 		}
 
 		return Ok(new UndoResponse(true, interaction.TmdbId, MapAction(interaction.Action), interaction.CreatedAtUtc));
@@ -101,5 +142,27 @@ public sealed class InteractionsController(IInteractionService interactionServic
 			InteractionAction.Superlike => SwipeActionDto.Superlike,
 			_ => SwipeActionDto.Skip
 		};
+	}
+
+	private static async Task<ServiceScope?> TryResolveDefaultRadarrScopeAsync(
+		IServiceSettingsRepository settingsRepo,
+		CancellationToken cancellationToken)
+	{
+		var rows = await settingsRepo.ListAsync(ServiceType.Radarr, cancellationToken).ConfigureAwait(false);
+		var configured = rows
+			.Where(x => !string.IsNullOrWhiteSpace(x.ServerId))
+			.Where(x => !string.IsNullOrWhiteSpace(x.RadarrBaseUrl))
+			.Where(x => !string.IsNullOrWhiteSpace(x.RadarrApiKey))
+			.ToList();
+
+		if (configured.Count == 0)
+		{
+			return null;
+		}
+
+		var preferred = configured.FirstOrDefault(x => string.Equals(x.ServerId, "default", StringComparison.OrdinalIgnoreCase))
+			?? configured.First();
+
+		return new ServiceScope(ServiceType.Radarr, preferred.ServerId);
 	}
 }

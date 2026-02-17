@@ -115,7 +115,7 @@ function AppLayout() {
     if (!mapped.some((o) => o.value === currentValue)) {
       mapped.push({
         value: currentValue,
-        label: `${currentScope.serviceType} (${currentScope.serverId})`,
+        label: `${currentScope.serviceType}`,
         scope: currentScope
       });
     }

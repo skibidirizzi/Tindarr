@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Api.Auth;
 using Tindarr.Application.Abstractions.Domain;
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Contracts.Matching;
 using Tindarr.Domain.Common;
@@ -12,7 +13,10 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/v1/matches")]
-public sealed class MatchesController(IInteractionStore interactionStore, IMatchingEngine matchingEngine) : ControllerBase
+public sealed class MatchesController(
+	IInteractionStore interactionStore,
+	IMatchingEngine matchingEngine,
+	IServiceSettingsRepository settingsRepo) : ControllerBase
 {
 	[HttpGet]
 	public async Task<ActionResult<MatchesResponse>> List(
@@ -55,7 +59,26 @@ public sealed class MatchesController(IInteractionStore interactionStore, IMatch
 		interactionLimit = Math.Clamp(interactionLimit, 1, 50_000);
 
 		var interactions = await interactionStore.ListForScopeAsync(scope!, tmdbId: null, interactionLimit, cancellationToken);
-		var tmdbIds = matchingEngine.ComputeLikedByAllMatches(scope!, interactions, minUsers);
+
+		var effectiveMinUsers = minUsers;
+		int? effectiveMinUserPercent = null;
+		var settings = await settingsRepo.GetAsync(scope!, cancellationToken);
+		if (settings is not null)
+		{
+			if (settings.MatchMinUsers is not null)
+			{
+				effectiveMinUsers = Math.Clamp(settings.MatchMinUsers.Value, 0, 50);
+			}
+			else if (settings.MatchMinUserPercent is not null)
+			{
+				// If only percent is configured, disable count threshold.
+				effectiveMinUsers = 0;
+			}
+
+			effectiveMinUserPercent = settings.MatchMinUserPercent;
+		}
+
+		var tmdbIds = matchingEngine.ComputeLikedByAllMatches(scope!, interactions, effectiveMinUsers, effectiveMinUserPercent);
 
 		return Ok(new MatchesResponse(
 			scope!.ServiceType.ToString().ToLowerInvariant(),

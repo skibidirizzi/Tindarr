@@ -1,8 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getServiceScope, setServiceScopeAndNotify, type ServiceScope } from "../serviceScope";
+import { fetchConfiguredScopes } from "../api/client";
+import type { ServiceScopeOptionDto } from "../api/contracts";
 
-type ServiceKey = "tmdb" | "radarr" | "plex" | "jellyfin" | "emby";
+type ServiceKey = "tmdb" | "plex" | "jellyfin" | "emby";
 
 function scopeForService(key: ServiceKey): ServiceScope {
   if (key === "tmdb") {
@@ -16,6 +18,23 @@ function scopeForService(key: ServiceKey): ServiceScope {
 export default function ServiceSelectPage() {
   const navigate = useNavigate();
   const current = useMemo(() => getServiceScope(), []);
+  const [availableScopes, setAvailableScopes] = useState<ServiceScopeOptionDto[]>([]);
+
+  useEffect(() => {
+    fetchConfiguredScopes()
+      .then(setAvailableScopes)
+      .catch(() => setAvailableScopes([]));
+  }, []);
+
+  const currentLabel = useMemo(() => {
+    const match = availableScopes.find(
+      (s) =>
+        s.serviceType.toLowerCase() === current.serviceType.toLowerCase()
+        && s.serverId.toLowerCase() === current.serverId.toLowerCase()
+    );
+
+    return match?.displayName ?? current.serviceType;
+  }, [availableScopes, current.serverId, current.serviceType]);
 
   function selectService(key: ServiceKey) {
     setServiceScopeAndNotify(scopeForService(key));
@@ -28,17 +47,10 @@ export default function ServiceSelectPage() {
         <h2 style={{ marginTop: 0, marginBottom: "0.25rem" }}>What would you like to do?</h2>
         <div className="field__label">Current scope</div>
         <div style={{ marginTop: "0.25rem" }}>
-          {current.serviceType}/{current.serverId}
+          {currentLabel}
         </div>
       </div>
 
-      <div className="deck__state" style={{ textAlign: "left" }}>
-        <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Swipe to Add (Radarr)</h3>
-        <button type="button" className="button button--super" onClick={() => selectService("radarr")}
-        >
-          Swipe to Add
-        </button>
-      </div>
 
       <div className="deck__state" style={{ textAlign: "left" }}>
         <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Swipe Items in Media Library</h3>

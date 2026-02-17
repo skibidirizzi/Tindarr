@@ -6,4 +6,5 @@ public sealed record UpdateRadarrSettingsRequest(
 	int? QualityProfileId,
 	string? RootFolderPath,
 	string? TagLabel,
-	bool AutoAddEnabled);
+	bool AutoAddEnabled,
+	int? AutoAddIntervalMinutes);

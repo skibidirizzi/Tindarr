@@ -41,6 +41,30 @@ export type JoinAddressSettingsDto = {
   updatedAtUtc: string;
 };
 
+export type CastingSettingsDto = {
+  preferredSubtitleSource: string | null;
+  preferredSubtitleLanguage: string | null;
+  preferredSubtitleTrackSource: string | null;
+  subtitleFallback: string | null;
+  subtitleLanguageFallback: string | null;
+  subtitleTrackSourceFallback: string | null;
+  preferredAudioStyle: string | null;
+  preferredAudioLanguage: string | null;
+  preferredAudioTrackKind: string | null;
+  audioFallback: string | null;
+  audioLanguageFallback: string | null;
+  audioTrackKindFallback: string | null;
+  updatedAtUtc: string;
+};
+
+export type MatchSettingsDto = {
+	serviceType: string;
+	serverId: string;
+	minUsers: number | null;
+	minUserPercent: number | null;
+	updatedAtUtc: string;
+};
+
 export type ServiceScopeOptionDto = {
   serviceType: string;
   serverId: string;
@@ -50,6 +74,26 @@ export type ServiceScopeOptionDto = {
 export type UpdateJoinAddressSettingsRequest = {
   lanHostPort: string | null;
   wanHostPort: string | null;
+};
+
+export type UpdateCastingSettingsRequest = {
+  preferredSubtitleSource: string | null;
+  preferredSubtitleLanguage: string | null;
+  preferredSubtitleTrackSource: string | null;
+  subtitleFallback: string | null;
+  subtitleLanguageFallback: string | null;
+  subtitleTrackSourceFallback: string | null;
+  preferredAudioStyle: string | null;
+  preferredAudioLanguage: string | null;
+  audioFallback: string | null;
+  audioLanguageFallback: string | null;
+  preferredAudioTrackKind: string | null;
+  audioTrackKindFallback: string | null;
+};
+
+export type UpdateMatchSettingsRequest = {
+	minUsers: number | null;
+	minUserPercent: number | null;
 };
 
 export type CreateUserRequest = {
@@ -357,6 +401,7 @@ export type RadarrSettingsDto = {
   rootFolderPath: string | null;
   tagLabel: string | null;
   autoAddEnabled: boolean;
+  autoAddIntervalMinutes: number | null;
   hasApiKey: boolean;
   lastLibrarySyncUtc: string | null;
   updatedAtUtc: string | null;
@@ -369,6 +414,7 @@ export type UpdateRadarrSettingsRequest = {
   rootFolderPath: string | null;
   tagLabel: string | null;
   autoAddEnabled: boolean;
+  autoAddIntervalMinutes: number | null;
 };
 
 export type RadarrQualityProfileDto = {

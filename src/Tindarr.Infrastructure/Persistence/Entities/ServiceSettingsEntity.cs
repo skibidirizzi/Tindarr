@@ -16,8 +16,13 @@ public sealed class ServiceSettingsEntity
 	public string? RadarrTagLabel { get; set; }
 	public int? RadarrTagId { get; set; }
 	public bool RadarrAutoAddEnabled { get; set; }
+	public int? RadarrAutoAddIntervalMinutes { get; set; }
+	public DateTimeOffset? RadarrLastAutoAddRunUtc { get; set; }
 	public long? RadarrLastAutoAddAcceptedId { get; set; }
 	public DateTimeOffset? RadarrLastLibrarySyncUtc { get; set; }
+
+	public int? MatchMinUsers { get; set; }
+	public int? MatchMinUserPercent { get; set; }
 
 	public string? JellyfinBaseUrl { get; set; }
 	public string? JellyfinApiKey { get; set; }

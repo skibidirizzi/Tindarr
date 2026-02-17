@@ -9,6 +9,7 @@ public sealed record RadarrSettingsDto(
 	string? RootFolderPath,
 	string? TagLabel,
 	bool AutoAddEnabled,
+	int? AutoAddIntervalMinutes,
 	bool HasApiKey,
 	DateTimeOffset? LastLibrarySyncUtc,
 	DateTimeOffset? UpdatedAtUtc);
