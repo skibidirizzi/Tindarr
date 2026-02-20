@@ -93,7 +93,7 @@ import {
   type PlexBulkJob
 } from "../plex/plexBulkJob";
 import { useDisplaySettings } from "../hooks/useDisplaySettings";
-import { formatDateTime, DEFAULT_DISPLAY } from "../utils/formatDateTime";
+import { formatDateTime, DEFAULT_DISPLAY, getTimeZoneOptions } from "../utils/formatDateTime";
 
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
 import PosterGallery from "../components/PosterGallery";
@@ -389,6 +389,7 @@ function AdvancedTab() {
   const [dateTimeDisplayMode, setDateTimeDisplayMode] = useState("locale");
   const [timeZoneId, setTimeZoneId] = useState("Local");
   const [dateOrder, setDateOrder] = useState("locale");
+  const timeZoneOptions = useMemo(() => getTimeZoneOptions(), []);
 
   const load = async () => {
     setLoading(true);
@@ -632,28 +633,21 @@ function AdvancedTab() {
               ) : null}
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-              <span>Time zone (Local, UTC, or IANA e.g. America/New_York). Default: Local</span>
-              <input
-                type="text"
+              <span>Time zone. Default: Local</span>
+              <select
                 className="input"
-                placeholder="Local"
                 value={timeZoneId}
                 onChange={(e) => setTimeZoneId(e.target.value)}
-                list="timezone-suggestions"
-              />
-              <datalist id="timezone-suggestions">
-                <option value="Local" />
-                <option value="UTC" />
-                <option value="America/New_York" />
-                <option value="America/Chicago" />
-                <option value="America/Denver" />
-                <option value="America/Los_Angeles" />
-                <option value="Europe/London" />
-                <option value="Europe/Paris" />
-                <option value="Europe/Berlin" />
-                <option value="Asia/Tokyo" />
-                <option value="Australia/Sydney" />
-              </datalist>
+              >
+                {timeZoneOptions.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz === "Local" ? "Local (browser)" : tz}
+                  </option>
+                ))}
+                {timeZoneId && !timeZoneOptions.includes(timeZoneId) ? (
+                  <option value={timeZoneId}>{timeZoneId} (saved)</option>
+                ) : null}
+              </select>
               {timeZoneId !== (settings.displayDefaults?.timeZoneId ?? "Local") ? (
                 <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
               ) : null}
