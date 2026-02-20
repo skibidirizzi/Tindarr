@@ -82,8 +82,20 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 			return Ok(new MeResponse(userId, displayName, new[] { Tindarr.Api.Auth.Policies.GuestRole }));
 		}
 
-		var me = await authService.GetMeAsync(currentUser.UserId, cancellationToken);
-		return Ok(new MeResponse(me.UserId, me.DisplayName, me.Roles));
+		try
+		{
+			var me = await authService.GetMeAsync(currentUser.UserId, cancellationToken);
+			return Ok(new MeResponse(me.UserId, me.DisplayName, me.Roles));
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+		catch (InvalidOperationException ex) when (ex.Message == "User not found.")
+		{
+			// Token is valid but user no longer exists (e.g. deleted). Treat as invalid session.
+			return Unauthorized();
+		}
 	}
 
 	[HttpPost("set-password")]

@@ -19,7 +19,6 @@ using Tindarr.Infrastructure.Casting;
 namespace Tindarr.Api.Controllers;
 
 [ApiController]
-[AllowAnonymous]
 [Route("api/v1/playback")]
 public sealed class PlaybackController(
 	IPlaybackTokenService playbackTokenService,
@@ -69,6 +68,7 @@ public sealed class PlaybackController(
 
 	[HttpGet("movie/{serviceType}/{serverId}/{tmdbId:int}")]
 	[HttpHead("movie/{serviceType}/{serverId}/{tmdbId:int}")]
+	[AllowAnonymous]
 	public async Task<IActionResult> StreamMovie(
 		[FromRoute] string serviceType,
 		[FromRoute] string serverId,
@@ -222,6 +222,7 @@ public sealed class PlaybackController(
 	}
 
 	[HttpGet("proxy/movie/{serviceType}/{serverId}/{tmdbId:int}")]
+	[AllowAnonymous]
 	public async Task<IActionResult> ProxyMovieResource(
 		[FromRoute] string serviceType,
 		[FromRoute] string serverId,

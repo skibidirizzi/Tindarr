@@ -141,6 +141,26 @@ public sealed class TmdbHttpPipelineTests
 		Assert.Equal(maxRetries + 1, inner.CallCount);
 	}
 
+	[Theory]
+	[InlineData(HttpStatusCode.Unauthorized)]
+	[InlineData(HttpStatusCode.NotFound)]
+	[InlineData(HttpStatusCode.BadRequest)]
+	public async Task RetryHandler_DoesNotRetry_WhenStatusIsNotRetryable(HttpStatusCode statusCode)
+	{
+		var inner = new CountingHandler(_ => new HttpResponseMessage(statusCode)
+		{
+			Content = new StringContent("Client or not-found error", Encoding.UTF8, "text/plain")
+		});
+
+		var retry = new TmdbRetryHandler(maxRetries: 3, delayProvider: static (_, _) => TimeSpan.Zero) { InnerHandler = inner };
+		var client = new HttpClient(retry) { BaseAddress = new Uri("https://api.themoviedb.org/3/") };
+
+		var resp = await client.GetAsync("/movie/123");
+
+		Assert.Equal(statusCode, resp.StatusCode);
+		Assert.Equal(1, inner.CallCount);
+	}
+
 	[Fact]
 	public async Task RetryHandler_HonoursRetryAfterHeader_For429Responses()
 	{

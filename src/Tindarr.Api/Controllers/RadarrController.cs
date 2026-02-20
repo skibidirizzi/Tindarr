@@ -172,19 +172,35 @@ public sealed class RadarrController(IRadarrService radarrService) : ControllerB
 	}
 
 	private static bool TryGetScope(
-		string serviceType,
-		string serverId,
+		string? serviceType,
+		string? serverId,
 		out ServiceScope? scope,
 		out ActionResult? errorResult)
 	{
+		scope = null;
 		errorResult = null;
-		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
+
+		if (string.IsNullOrWhiteSpace(serviceType))
 		{
-			errorResult = new BadRequestObjectResult("ServiceType and ServerId are required.");
+			errorResult = new BadRequestObjectResult("ServiceType is required.");
 			return false;
 		}
 
-		if (scope!.ServiceType != ServiceType.Radarr)
+		if (string.IsNullOrWhiteSpace(serverId))
+		{
+			errorResult = new BadRequestObjectResult("ServerId is required.");
+			return false;
+		}
+
+		if (!ServiceTypeParser.TryParse(serviceType, out var parsedType))
+		{
+			errorResult = new BadRequestObjectResult("ServiceType is invalid.");
+			return false;
+		}
+
+		scope = new ServiceScope(parsedType, serverId.Trim());
+
+		if (scope.ServiceType != ServiceType.Radarr)
 		{
 			errorResult = new BadRequestObjectResult("ServiceType must be radarr.");
 			return false;

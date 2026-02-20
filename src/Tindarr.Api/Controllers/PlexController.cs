@@ -30,7 +30,7 @@ public sealed class PlexController(
 	ITmdbImageCache imageCache,
 	IOptions<TmdbOptions> tmdbOptions,
 	IUserPreferencesService preferencesService,
-	IServiceSettingsRepository settingsRepo) : ControllerBase
+	IServiceSettingsRepository settingsRepo) : MediaServerControllerBase(settingsRepo)
 {
 	[Authorize(Policy = Policies.AdminOnly)]
 	[HttpGet("library/sync/status/stream")]
@@ -39,7 +39,7 @@ public sealed class PlexController(
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			Response.StatusCode = (errorResult as ObjectResult)?.StatusCode ?? StatusCodes.Status400BadRequest;
 			return;
@@ -232,18 +232,10 @@ public sealed class PlexController(
 	[HttpDelete("servers/{serverId}")]
 	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
 	{
-		if (string.IsNullOrWhiteSpace(serverId))
-		{
-			return BadRequest("ServerId is required.");
-		}
-
-		if (string.Equals(serverId, PlexConstants.AccountServerId, StringComparison.OrdinalIgnoreCase))
-		{
-			return BadRequest("Cannot delete plex-account settings.");
-		}
-
-		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Plex, serverId.Trim()), cancellationToken);
-		return deleted ? NoContent() : NotFound("Server not found.");
+		return await DeleteServerAsync(ServiceType.Plex, serverId, cancellationToken, validateDelete: id =>
+			string.Equals(id, PlexConstants.AccountServerId, StringComparison.OrdinalIgnoreCase)
+				? (false, "Cannot delete plex-account settings.")
+				: (true, null)).ConfigureAwait(false);
 	}
 
 	[Authorize(Policy = Policies.AdminOnly)]
@@ -253,7 +245,7 @@ public sealed class PlexController(
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -288,7 +280,7 @@ public sealed class PlexController(
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -315,7 +307,7 @@ public sealed class PlexController(
 		[FromQuery] string serviceType,
 		[FromQuery] string serverId)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -343,7 +335,7 @@ public sealed class PlexController(
 		[FromQuery] int limit = 50,
 		CancellationToken cancellationToken = default)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -382,7 +374,7 @@ public sealed class PlexController(
 		[FromQuery] int take = 100,
 		CancellationToken cancellationToken = default)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -434,7 +426,7 @@ public sealed class PlexController(
 		[FromQuery] bool missingImagesOnly = false,
 		CancellationToken cancellationToken = default)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Plex, "plex", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -522,28 +514,6 @@ public sealed class PlexController(
 			Take: take,
 			NextSkip: nextSkip,
 			HasMore: hasMore));
-	}
-
-	private static bool TryGetScope(
-		string serviceType,
-		string serverId,
-		out ServiceScope? scope,
-		out ActionResult? errorResult)
-	{
-		errorResult = null;
-		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
-		{
-			errorResult = new BadRequestObjectResult("ServiceType and ServerId are required.");
-			return false;
-		}
-
-		if (scope!.ServiceType != ServiceType.Plex)
-		{
-			errorResult = new BadRequestObjectResult("ServiceType must be plex.");
-			return false;
-		}
-
-		return true;
 	}
 
 	private static PlexServerDto MapServer(PlexServerRecord record)

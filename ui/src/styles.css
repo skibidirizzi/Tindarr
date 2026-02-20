@@ -160,6 +160,10 @@ body.is-swipe-page .deck {
   color: #ff8787;
 }
 
+.deck__state--success {
+  color: #7dd87d;
+}
+
 .form {
   display: flex;
   flex-direction: column;

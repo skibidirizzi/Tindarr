@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Caching;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Interfaces.Preferences;
 using Tindarr.Application.Options;
@@ -24,6 +25,7 @@ public sealed class TmdbController(
 	IUserPreferencesService preferencesService,
 	IInteractionStore interactionStore,
 	IOptions<TmdbOptions> tmdbOptions,
+	IEffectiveAdvancedSettings effectiveAdvancedSettings,
 	ITmdbCacheAdmin cacheAdmin,
 	ITmdbMetadataStore metadataStore,
 	ITmdbImageCache imageCache,
@@ -124,7 +126,7 @@ public sealed class TmdbController(
 		[FromQuery] bool rateLimitOverride = false,
 		CancellationToken cancellationToken = default)
 	{
-		if (!tmdbOptions.Value.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return StatusCode(StatusCodes.Status503ServiceUnavailable,
 				"TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
@@ -163,7 +165,7 @@ public sealed class TmdbController(
 		[FromQuery] bool includeBackdrop = true,
 		CancellationToken cancellationToken = default)
 	{
-		if (!tmdbOptions.Value.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return StatusCode(StatusCodes.Status503ServiceUnavailable,
 				"TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
@@ -345,7 +347,7 @@ public sealed class TmdbController(
 
 		limit = Math.Clamp(limit, 1, 50);
 
-		if (!tmdbOptions.Value.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			// TMDB not configured yet on this machine.
 			return StatusCode(StatusCodes.Status503ServiceUnavailable, "TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
@@ -376,7 +378,7 @@ public sealed class TmdbController(
 		[FromRoute] int tmdbId,
 		CancellationToken cancellationToken = default)
 	{
-		if (!tmdbOptions.Value.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return StatusCode(StatusCodes.Status503ServiceUnavailable, "TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
 		}

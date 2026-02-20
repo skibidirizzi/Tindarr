@@ -121,6 +121,54 @@ export type UpdateMatchSettingsRequest = {
 	minUserPercent: number | null;
 };
 
+export type AdvancedSettingsApiRateLimitDto = {
+	enabled: boolean;
+	permitLimit: number;
+	windowMinutes: number;
+};
+
+export type AdvancedSettingsCleanupDto = {
+	enabled: boolean;
+	intervalMinutes: number;
+	purgeGuestUsers: boolean;
+	guestUserMaxAgeHours: number;
+};
+
+export type AdvancedSettingsTmdbDto = {
+	hasTmdbApiKey: boolean;
+};
+
+export type AdvancedSettingsDisplayDto = {
+	dateTimeDisplayMode: string;
+	timeZoneId: string;
+	dateOrder: string;
+};
+
+export type AdvancedSettingsDto = {
+	apiRateLimit: AdvancedSettingsApiRateLimitDto;
+	apiRateLimitDefaults: AdvancedSettingsApiRateLimitDto;
+	cleanup: AdvancedSettingsCleanupDto;
+	cleanupDefaults: AdvancedSettingsCleanupDto;
+	tmdb: AdvancedSettingsTmdbDto;
+	display: AdvancedSettingsDisplayDto;
+	displayDefaults: AdvancedSettingsDisplayDto;
+};
+
+export type UpdateAdvancedSettingsRequest = {
+	apiRateLimitEnabled?: boolean | null;
+	apiRateLimitPermitLimit?: number | null;
+	apiRateLimitWindowMinutes?: number | null;
+	cleanupEnabled?: boolean | null;
+	cleanupIntervalMinutes?: number | null;
+	cleanupPurgeGuestUsers?: boolean | null;
+	cleanupGuestUserMaxAgeHours?: number | null;
+	tmdbApiKeySet?: boolean | null;
+	tmdbApiKey?: string | null;
+	dateTimeDisplayMode?: string | null;
+	timeZoneId?: string | null;
+	dateOrder?: string | null;
+};
+
 export type CreateUserRequest = {
   userId: string;
   displayName: string;
@@ -239,6 +287,8 @@ export type RoomStateResponse = {
 
 export type RoomJoinUrlResponse = {
   url: string;
+  lanUrl?: string | null;
+  wanUrl?: string | null;
 };
 
 export type RoomMatchesResponse = {

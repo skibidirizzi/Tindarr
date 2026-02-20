@@ -11,7 +11,8 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/jellyfin")]
-public sealed class JellyfinController(IJellyfinService jellyfinService, IServiceSettingsRepository settingsRepo) : ControllerBase
+public sealed class JellyfinController(IJellyfinService jellyfinService, IServiceSettingsRepository settingsRepo)
+	: MediaServerControllerBase(settingsRepo)
 {
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<JellyfinServerDto>>> ListServers(CancellationToken cancellationToken)
@@ -32,7 +33,7 @@ public sealed class JellyfinController(IJellyfinService jellyfinService, IServic
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Jellyfin, "jellyfin", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -77,7 +78,7 @@ public sealed class JellyfinController(IJellyfinService jellyfinService, IServic
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Jellyfin, "jellyfin", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -92,7 +93,7 @@ public sealed class JellyfinController(IJellyfinService jellyfinService, IServic
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Jellyfin, "jellyfin", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -120,28 +121,6 @@ public sealed class JellyfinController(IJellyfinService jellyfinService, IServic
 		}
 	}
 
-	private static bool TryGetScope(
-		string serviceType,
-		string serverId,
-		out ServiceScope? scope,
-		out ActionResult? errorResult)
-	{
-		errorResult = null;
-		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
-		{
-			errorResult = new BadRequestObjectResult("ServiceType and ServerId are required.");
-			return false;
-		}
-
-		if (scope!.ServiceType != ServiceType.Jellyfin)
-		{
-			errorResult = new BadRequestObjectResult("ServiceType must be jellyfin.");
-			return false;
-		}
-
-		return true;
-	}
-
 	private static JellyfinSettingsDto MapSettings(ServiceScope scope, Tindarr.Application.Abstractions.Persistence.ServiceSettingsRecord? settings)
 	{
 		var configured = settings is not null && !string.IsNullOrWhiteSpace(settings.JellyfinBaseUrl);
@@ -162,12 +141,6 @@ public sealed class JellyfinController(IJellyfinService jellyfinService, IServic
 	[HttpDelete("servers/{serverId}")]
 	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
 	{
-		if (string.IsNullOrWhiteSpace(serverId))
-		{
-			return BadRequest("ServerId is required.");
-		}
-
-		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Jellyfin, serverId.Trim()), cancellationToken);
-		return deleted ? NoContent() : NotFound("Server not found.");
+		return await DeleteServerAsync(ServiceType.Jellyfin, serverId, cancellationToken).ConfigureAwait(false);
 	}
 }

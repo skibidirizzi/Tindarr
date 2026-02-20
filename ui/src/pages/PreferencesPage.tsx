@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, type Location } from "react-router-dom";
 import { ApiError } from "../api/http";
-import { clearInteractionHistory, fetchConfiguredScopes, getPreferences, updatePreferences } from "../api/client";
+import { clearInteractionHistory, fetchConfiguredScopes, getDisplaySettings, getPreferences, updatePreferences } from "../api/client";
 import type { ServiceScopeOptionDto, UserPreferencesDto } from "../api/contracts";
+import { formatDateTime, DEFAULT_DISPLAY } from "../utils/formatDateTime";
 import { TMDB_LANGUAGES, TMDB_MOVIE_GENRES, TMDB_REGIONS, TMDB_SORT_BY } from "../tmdb/knownValues";
 
 type FormState = {
@@ -136,8 +137,15 @@ export default function PreferencesPage() {
   const [clearBusyKey, setClearBusyKey] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
   const [clearMessage, setClearMessage] = useState<string | null>(null);
+  const [displaySettings, setDisplaySettings] = useState<{ dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string } | null>(null);
 
-  const updatedAt = useMemo(() => (prefs?.updatedAtUtc ? new Date(prefs.updatedAtUtc) : null), [prefs?.updatedAtUtc]);
+  useEffect(() => {
+    getDisplaySettings().then((s) => setDisplaySettings({
+      dateTimeDisplayMode: s.dateTimeDisplayMode || "locale",
+      timeZoneId: s.timeZoneId ?? "Local",
+      dateOrder: s.dateOrder ?? "locale"
+    })).catch(() => {});
+  }, []);
 
   function handleClose() {
     if (backgroundLocation) {
@@ -267,7 +275,7 @@ export default function PreferencesPage() {
         <div className="modal__header">
           <div>
             <h2 className="modal__title">Preferences</h2>
-            {updatedAt ? <p className="modal__subtitle">Last updated: {updatedAt.toLocaleString()}</p> : null}
+            {prefs?.updatedAtUtc ? <p className="modal__subtitle">Last updated: {formatDateTime(prefs.updatedAtUtc, displaySettings ?? DEFAULT_DISPLAY)}</p> : null}
           </div>
           <button type="button" className="button button--ghost modal__close" onClick={handleClose}>
             Close

@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Tindarr.Application.Abstractions.Domain;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Features.Plex;
 using Tindarr.Application.Features.Radarr;
@@ -27,7 +28,10 @@ using Tindarr.Infrastructure.Integrations.Plex;
 using Tindarr.Infrastructure.Integrations.Radarr;
 using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
+using Tindarr.Infrastructure.EmbyCache;
+using Tindarr.Infrastructure.JellyfinCache;
 using Tindarr.Infrastructure.PlexCache;
+using Tindarr.Infrastructure.Ops;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
 using Tindarr.Workers.Jobs;
@@ -108,6 +112,11 @@ builder.Services.AddOptions<CleanupOptions>()
 	.Validate(o => o.IsValid(), "Invalid Cleanup configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<ApiRateLimitOptions>()
+	.BindConfiguration(ApiRateLimitOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid ApiRateLimit configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 {
 	var options = sp.GetRequiredService<IOptions<BaseUrlOptions>>().Value;
@@ -129,6 +138,8 @@ var tmdbMetadataDbPath = ResolveTmdbMetadataDbPath((IConfiguration)builder.Confi
 
 builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: defaultDataDirOverride);
 builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: defaultDataDirOverride);
+builder.Services.AddJellyfinCache(builder.Configuration, overrideDataDir: defaultDataDirOverride);
+builder.Services.AddEmbyCache(builder.Configuration, overrideDataDir: defaultDataDirOverride);
 
 builder.Services.AddScoped<EfCoreInteractionStore>();
 builder.Services.AddSingleton<InMemoryInteractionStore>();
@@ -140,6 +151,8 @@ builder.Services.AddScoped<IUserPreferencesRepository, UserPreferencesRepository
 builder.Services.AddScoped<IServiceSettingsRepository, ServiceSettingsRepository>();
 builder.Services.AddScoped<IRadarrPendingAddRepository, RadarrPendingAddRepository>();
 builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
+builder.Services.AddScoped<IAdvancedSettingsRepository, AdvancedSettingsRepository>();
+builder.Services.AddSingleton<IEffectiveAdvancedSettings, EffectiveAdvancedSettings>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
 builder.Services.AddScoped<IRadarrService, RadarrService>();
 builder.Services.AddScoped<IPlexService, PlexService>();
@@ -169,7 +182,11 @@ builder.Services.AddHttpClient("tmdb-images");
 builder.Services.AddSingleton<ITmdbImageCache>(sp =>
 {
 	var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient("tmdb-images");
-	return new TmdbImageCache(client, sp.GetRequiredService<IOptions<TmdbOptions>>(), tmdbMetadataDbPath);
+	return new TmdbImageCache(
+		client,
+		sp.GetRequiredService<IOptions<TmdbOptions>>(),
+		sp.GetRequiredService<IEffectiveAdvancedSettings>(),
+		tmdbMetadataDbPath);
 });
 
 builder.Services.AddSingleton<ITmdbRateLimiter, TokenBucketRateLimiter>();
@@ -210,7 +227,7 @@ builder.Services.AddHostedService<CastSessionWorker>();
 
 var host = builder.Build();
 
-// Ensure plexcache.db schema exists before any sync/webhook writes.
+// Ensure media server cache db schemas exist before any sync/webhook writes.
 using (var scope = host.Services.CreateScope())
 {
 	var db = scope.ServiceProvider.GetRequiredService<TindarrDbContext>();
@@ -218,6 +235,12 @@ using (var scope = host.Services.CreateScope())
 
 	var plexCacheDb = scope.ServiceProvider.GetRequiredService<PlexCacheDbContext>();
 	plexCacheDb.Database.EnsureCreated();
+
+	var jellyfinCacheDb = scope.ServiceProvider.GetRequiredService<JellyfinCacheDbContext>();
+	jellyfinCacheDb.Database.EnsureCreated();
+
+	var embyCacheDb = scope.ServiceProvider.GetRequiredService<EmbyCacheDbContext>();
+	embyCacheDb.Database.EnsureCreated();
 }
 
 await host.RunAsync();

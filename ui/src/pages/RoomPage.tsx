@@ -34,6 +34,9 @@ export default function RoomPage() {
   const [room, setRoom] = useState<RoomStateResponse | null>(null);
   const [joinUrl, setJoinUrl] = useState<RoomJoinUrlResponse | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrLanDataUrl, setQrLanDataUrl] = useState<string | null>(null);
+  const [qrWanDataUrl, setQrWanDataUrl] = useState<string | null>(null);
+  const [joinUrlVariant, setJoinUrlVariant] = useState<"lan" | "wan">("lan");
   const [matches, setMatches] = useState<RoomMatchesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,6 +84,39 @@ export default function RoomPage() {
     };
   }, [castUiMode]);
 
+  // When user hotswaps LAN/WAN and we're already casting the QR (SDK), re-load the cast URL so the TV shows the new QR.
+  // Only run when variant actually changes (not on mount) to avoid racing with initial cast.
+  const prevJoinUrlVariantRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (castUiMode !== "sdk" || !roomId || !joinUrl?.lanUrl || !joinUrl?.wanUrl || !qrCastSessionIdRef.current) {
+      prevJoinUrlVariantRef.current = joinUrlVariant;
+      return;
+    }
+    const prev = prevJoinUrlVariantRef.current;
+    prevJoinUrlVariantRef.current = joinUrlVariant;
+    if (prev === null || prev === joinUrlVariant) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const media = await getRoomQrCastUrl(roomId, joinUrlVariant);
+        if (cancelled) return;
+        await loadMediaToCastSession({
+          url: media.url,
+          contentType: media.contentType,
+          title: media.title,
+          subTitle: media.subTitle,
+        });
+      } catch {
+        // best-effort; user can re-cast manually
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [castUiMode, joinUrlVariant, roomId, joinUrl?.lanUrl, joinUrl?.wanUrl]);
+
   const [cards, setCards] = useState<SwipeCard[]>([]);
   const [deckLoading, setDeckLoading] = useState(false);
   const [leaving, setLeaving] = useState<{ card: SwipeCard; action: SwipeAction; fromOffset?: { x: number; y: number } } | null>(null);
@@ -105,6 +141,8 @@ export default function RoomPage() {
         setRoom(null);
         setJoinUrl(null);
         setQrDataUrl(null);
+        setQrLanDataUrl(null);
+        setQrWanDataUrl(null);
         setError(null);
         return;
       }
@@ -118,6 +156,8 @@ export default function RoomPage() {
         setRoom(null);
         setJoinUrl(null);
         setQrDataUrl(null);
+        setQrLanDataUrl(null);
+        setQrWanDataUrl(null);
         setMatches(null);
         setError(null);
         return;
@@ -127,16 +167,23 @@ export default function RoomPage() {
       setError(null);
       setQrDataUrl(null);
       setJoinUrl(null);
+      setQrLanDataUrl(null);
+      setQrWanDataUrl(null);
 
       try {
         // Joining is idempotent; do it first so the caller is present in the member list.
         await joinRoom(roomId);
         const state = await getRoom(roomId);
-        const matchList = await getRoomMatches(roomId);
 
         if (cancelled) return;
         setRoom(state);
-        setMatches(matchList);
+        if (state.isClosed) {
+          const matchList = await getRoomMatches(roomId);
+          if (cancelled) return;
+          setMatches(matchList);
+        } else {
+          setMatches(null);
+        }
 
         const isOwner = state.ownerUserId === user.userId;
         if (isOwner) {
@@ -144,12 +191,29 @@ export default function RoomPage() {
           if (cancelled) return;
           setJoinUrl(url);
 
-          const dataUrl = await QRCode.toDataURL(url.url, { width: 240, margin: 1 });
-          if (cancelled) return;
-          setQrDataUrl(dataUrl);
+          const qrOpts = { width: 240, margin: 1 };
+          if (url.lanUrl && url.wanUrl) {
+            const [lanQr, wanQr] = await Promise.all([
+              QRCode.toDataURL(url.lanUrl, qrOpts),
+              QRCode.toDataURL(url.wanUrl, qrOpts)
+            ]);
+            if (cancelled) return;
+            setQrLanDataUrl(lanQr);
+            setQrWanDataUrl(wanQr);
+            setQrDataUrl(null);
+          } else {
+            const singleUrl = url.lanUrl ?? url.wanUrl ?? url.url;
+            const dataUrl = await QRCode.toDataURL(singleUrl, qrOpts);
+            if (cancelled) return;
+            setQrDataUrl(dataUrl);
+            setQrLanDataUrl(null);
+            setQrWanDataUrl(null);
+          }
         } else {
           setJoinUrl(null);
           setQrDataUrl(null);
+          setQrLanDataUrl(null);
+          setQrWanDataUrl(null);
         }
       } catch (e) {
         if (cancelled) return;
@@ -175,6 +239,7 @@ export default function RoomPage() {
 
   const loadDeck = useCallback(async () => {
     if (!room) return;
+    if (!room.isClosed) return;
     if (!user) return;
 
     setDeckLoading(true);
@@ -224,6 +289,7 @@ export default function RoomPage() {
 
   const prefetchMoreCards = useCallback(async () => {
     if (!room) return;
+    if (!room.isClosed) return;
     if (!user) return;
     if (deckLoading) return;
     if (error) return;
@@ -267,14 +333,14 @@ export default function RoomPage() {
   }, [appendUniqueCards, deckLoading, error, room, user]);
 
   useEffect(() => {
-    if (!room) return;
+    if (!room || !room.isClosed) return;
     void loadDeck();
   }, [loadDeck, room]);
 
   useEffect(() => {
-    if (cards.length >= PREFETCH_THRESHOLD) return;
+    if (!room?.isClosed || cards.length >= PREFETCH_THRESHOLD) return;
     void prefetchMoreCards();
-  }, [cards.length, prefetchMoreCards]);
+  }, [cards.length, prefetchMoreCards, room?.isClosed]);
 
   const requestSwipe = useCallback(
     (action: SwipeAction, fromOffset?: { x: number; y: number }) => {
@@ -323,6 +389,7 @@ export default function RoomPage() {
     try {
       const updated = await closeRoom(roomId);
       setRoom(updated);
+      await refreshMatches();
 
 			// Once the room is closed, the invite QR is no longer needed.
 			await endActiveQrCastSessionBestEffort();
@@ -385,6 +452,7 @@ export default function RoomPage() {
           await requestCastSession();
         }
 
+        // Don't pass variant on initial cast so server uses default (QR appears on TV). Variant is used when re-loading after LAN/WAN toggle.
         const media = await getRoomQrCastUrl(roomId);
 
         qrCastSessionIdRef.current = media.sessionId ?? null;
@@ -404,6 +472,7 @@ export default function RoomPage() {
         return;
       }
 
+      // Don't pass variant on initial cast so server uses default (QR appears on TV). Variant is only for hotswap re-cast.
       await castRoomQr(roomId, castDeviceId);
       setCastMessage("Casting QR…");
     } catch (e) {
@@ -556,7 +625,14 @@ export default function RoomPage() {
         </div>
       ) : null}
 
-      {room ? (
+      {room && !room.isClosed ? (
+        <div className="deck__state" style={{ textAlign: "left" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Swipe</h3>
+          <p style={{ margin: 0 }}>Swipe will be available once the room is closed to new users.</p>
+        </div>
+      ) : null}
+
+      {room && room.isClosed ? (
         <div className="deck__state deck--swipe" style={{ textAlign: "left" }}>
           <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Swipe</h3>
           <div className="deck__toolbar" style={{ justifyContent: "space-between" }}>
@@ -614,8 +690,47 @@ export default function RoomPage() {
       {joinUrl && room && user && room.ownerUserId === user.userId ? (
         <div className="deck__state" style={{ textAlign: "left" }}>
           <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Invite</h3>
-          <div className="field__label">Join URL</div>
-          <div style={{ marginTop: "0.25rem", wordBreak: "break-all" }}>{joinUrl.url}</div>
+          {joinUrl.lanUrl && joinUrl.wanUrl ? (
+            <>
+              <div className="field__label" style={{ marginBottom: "0.25rem" }}>Join URL (LAN / WAN)</div>
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                <button
+                  type="button"
+                  className={`button button--ghost ${joinUrlVariant === "lan" ? "is-active" : ""}`.trim()}
+                  onClick={() => setJoinUrlVariant("lan")}
+                >
+                  LAN
+                </button>
+                <button
+                  type="button"
+                  className={`button button--ghost ${joinUrlVariant === "wan" ? "is-active" : ""}`.trim()}
+                  onClick={() => setJoinUrlVariant("wan")}
+                >
+                  WAN
+                </button>
+              </div>
+              <div style={{ marginTop: "0.25rem", wordBreak: "break-all" }}>
+                {joinUrlVariant === "lan" ? joinUrl.lanUrl : joinUrl.wanUrl}
+              </div>
+              {(joinUrlVariant === "lan" ? qrLanDataUrl : qrWanDataUrl) ? (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <img src={joinUrlVariant === "lan" ? qrLanDataUrl : qrWanDataUrl} width={240} height={240} alt={`Room join QR (${joinUrlVariant})`} />
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div className="field__label">Join URL</div>
+              <div style={{ marginTop: "0.25rem", wordBreak: "break-all" }}>
+                {joinUrl.lanUrl ?? joinUrl.wanUrl ?? joinUrl.url}
+              </div>
+              {qrDataUrl ? (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <img src={qrDataUrl} width={240} height={240} alt="Room join QR code" />
+                </div>
+              ) : null}
+            </>
+          )}
 
           {room?.isClosed ? (
             <div style={{ marginTop: "0.75rem", color: "#cbd0de" }}>
@@ -628,12 +743,6 @@ export default function RoomPage() {
               <button type="button" className="button button--ghost" onClick={onCloseRoom} disabled={loading}>
                 Close room to new users
               </button>
-            </div>
-          ) : null}
-
-          {qrDataUrl ? (
-            <div style={{ marginTop: "0.75rem" }}>
-              <img src={qrDataUrl} width={240} height={240} alt="Room join QR code" />
             </div>
           ) : null}
 
@@ -674,14 +783,21 @@ export default function RoomPage() {
         </div>
       ) : null}
 
-      {matches ? (
+      {room && !room.isClosed ? (
+        <div className="deck__state" style={{ textAlign: "left" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Matches</h3>
+          <p style={{ margin: 0 }}>Matches will be available once the room is closed to new users.</p>
+        </div>
+      ) : null}
+
+      {room && room.isClosed ? (
         <div className="deck__state" style={{ textAlign: "left" }}>
           <h3 style={{ marginTop: 0, marginBottom: "0.75rem" }}>Matches</h3>
           <button type="button" className="button" onClick={refreshMatches} disabled={loading}>
             Refresh
           </button>
           <div style={{ marginTop: "0.75rem" }}>
-            {matches.tmdbIds.length ? (
+            {matches?.tmdbIds.length ? (
               <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
                 {matches.tmdbIds.map((id) => (
                   <li key={id}>{id}</li>

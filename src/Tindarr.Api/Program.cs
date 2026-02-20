@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +38,8 @@ using Tindarr.Infrastructure.Integrations.Tmdb;
 using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 using Tindarr.Infrastructure.Interactions;
 using Tindarr.Infrastructure.Playback.Providers;
+using Tindarr.Infrastructure.EmbyCache;
+using Tindarr.Infrastructure.JellyfinCache;
 using Tindarr.Infrastructure.PlexCache;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
@@ -78,6 +82,18 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 	ContentRootPath = contentRoot,
 	WebRootPath = webRoot
 });
+
+// When running as a console app (not a service) outside Development, use a writable data dir
+// so the app works when installed under Program Files. Service and Development keep existing behavior.
+var effectiveDataDir = dataDirOverride;
+if (effectiveDataDir is null && !isWindowsService && !builder.Environment.IsDevelopment()
+	&& string.IsNullOrWhiteSpace(builder.Configuration["Database:DataDir"]))
+{
+	effectiveDataDir = Path.Combine(
+		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+		"Tindarr");
+	Directory.CreateDirectory(effectiveDataDir);
+}
 
 static string ResolveTmdbMetadataDbPath(IConfiguration config, string? dataDirOverride, IHostEnvironment env)
 {
@@ -179,6 +195,48 @@ builder.Services.AddOptions<UpdateCheckOptions>()
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
+builder.Services.AddOptions<CleanupOptions>()
+	.BindConfiguration(CleanupOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid Cleanup configuration.")
+	.ValidateOnStart();
+
+builder.Services.AddOptions<ApiRateLimitOptions>()
+	.BindConfiguration(ApiRateLimitOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid ApiRateLimit configuration.")
+	.ValidateOnStart();
+
+builder.Services.AddRateLimiter(options =>
+{
+	options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+	options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+	{
+		var path = context.Request.Path.Value ?? "";
+		if (path is "/health" or "/api/v1/health" or "/info" or "/api/v1/info")
+		{
+			return RateLimitPartition.GetNoLimiter("excluded");
+		}
+
+		var effective = context.RequestServices.GetRequiredService<Tindarr.Application.Abstractions.Ops.IEffectiveAdvancedSettings>();
+		var apiLimitOpts = effective.GetApiRateLimitOptions();
+		if (!apiLimitOpts.Enabled)
+		{
+			return RateLimitPartition.GetNoLimiter("disabled");
+		}
+
+		var partitionKey = context.User?.Identity?.IsAuthenticated == true
+			? "user:" + (context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown")
+			: "ip:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown");
+
+		return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
+		{
+			PermitLimit = apiLimitOpts.PermitLimit,
+			Window = apiLimitOpts.Window,
+			QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+			QueueLimit = 0
+		});
+	});
+});
+
 builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 {
 	var options = sp.GetRequiredService<IOptions<BaseUrlOptions>>().Value;
@@ -191,7 +249,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 builder.Services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
-builder.Services.AddSingleton<ITokenSigningKeyStore, DbOrFileTokenSigningKeyStore>();
+builder.Services.AddSingleton<ITokenSigningKeyStore>(sp =>
+	new DbOrFileTokenSigningKeyStore(sp.GetRequiredService<IOptions<JwtOptions>>(), effectiveDataDir));
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<IPlaybackTokenService, PlaybackTokenService>();
 builder.Services.AddSingleton<ICastUrlTokenService, CastUrlTokenService>();
@@ -211,6 +270,8 @@ builder.Services.AddScoped<IRadarrPendingAddRepository, RadarrPendingAddReposito
 builder.Services.AddScoped<ILibraryCacheRepository, LibraryCacheRepository>();
 builder.Services.AddScoped<IJoinAddressSettingsRepository, JoinAddressSettingsRepository>();
 builder.Services.AddScoped<ICastingSettingsRepository, CastingSettingsRepository>();
+builder.Services.AddScoped<IAdvancedSettingsRepository, Tindarr.Infrastructure.Persistence.Repositories.AdvancedSettingsRepository>();
+builder.Services.AddSingleton<Tindarr.Application.Abstractions.Ops.IEffectiveAdvancedSettings, Tindarr.Infrastructure.Ops.EffectiveAdvancedSettings>();
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IUserPreferencesService, UserPreferencesService>();
@@ -280,12 +341,34 @@ builder.Services.AddCors(options =>
 	{
 		policy.AllowAnyHeader()
 			.AllowAnyMethod()
-			.AllowCredentials()
-			.SetIsOriginAllowed(_ => true);
+			.AllowCredentials();
+		// Issue 104: never use wildcard origin with credentials; allow only explicit origins.
+		if (builder.Environment.IsDevelopment())
+		{
+			policy.WithOrigins(
+				"http://localhost:5173",
+				"http://127.0.0.1:5173",
+				"http://localhost:3000",
+				"http://127.0.0.1:3000",
+				"http://localhost:6565",
+				"http://127.0.0.1:6565"
+			);
+		}
+		else
+		{
+			// Production: allow localhost/127.0.0.1 so the installed app (UI served from API at e.g. http://localhost:5000) works.
+			policy.SetIsOriginAllowed(origin =>
+			{
+				if (string.IsNullOrEmpty(origin)) return false;
+				if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) || !uri.IsAbsoluteUri) return false;
+				return (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || uri.Host == "127.0.0.1")
+					&& (uri.Scheme == "http" || uri.Scheme == "https");
+			});
+		}
 	});
 });
 
-var tmdbMetadataDbPath = ResolveTmdbMetadataDbPath(builder.Configuration, dataDirOverride, builder.Environment);
+var tmdbMetadataDbPath = ResolveTmdbMetadataDbPath(builder.Configuration, effectiveDataDir, builder.Environment);
 
 builder.Services.AddScoped<EfCoreInteractionStore>();
 builder.Services.AddSingleton<Tindarr.Infrastructure.Interactions.InMemoryInteractionStore>();
@@ -313,12 +396,16 @@ builder.Services.AddHttpClient("tmdb-images");
 builder.Services.AddSingleton<ITmdbImageCache>(sp =>
 {
 	var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient("tmdb-images");
-	return new TmdbImageCache(client, sp.GetRequiredService<IOptions<TmdbOptions>>(), tmdbMetadataDbPath);
+	return new TmdbImageCache(
+		client,
+		sp.GetRequiredService<IOptions<TmdbOptions>>(),
+		sp.GetRequiredService<Tindarr.Application.Abstractions.Ops.IEffectiveAdvancedSettings>(),
+		tmdbMetadataDbPath);
 });
 
 builder.Services.AddSingleton<ITmdbBuildJob, TmdbBuildJob>();
 
-builder.Services.AddSingleton<ITmdbRateLimiter, TokenBucketRateLimiter>();
+builder.Services.AddSingleton<ITmdbRateLimiter, Tindarr.Infrastructure.Caching.TokenBucketRateLimiter>();
 builder.Services.AddTransient<TmdbCachingHandler>();
 builder.Services.AddTransient<TmdbRateLimitingHandler>();
 
@@ -351,6 +438,7 @@ builder.Services.AddHttpClient<PlexPlaybackProvider>();
 builder.Services.AddHttpClient<JellyfinPlaybackProvider>();
 builder.Services.AddHttpClient<EmbyPlaybackProvider>();
 
+builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Interactions.TmdbSwipeDeckCandidateBuilder>();
 builder.Services.AddScoped<TmdbSwipeDeckSource>();
 builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Plex.PlexSwipeDeckSource>();
 builder.Services.AddScoped<Tindarr.Infrastructure.Integrations.Jellyfin.JellyfinSwipeDeckSource>();
@@ -365,26 +453,97 @@ builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomInteract
 builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomLifetimeProvider, Tindarr.Infrastructure.Rooms.RoomLifetimeProvider>();
 builder.Services.AddScoped<Tindarr.Application.Interfaces.Rooms.IRoomService, Tindarr.Application.Features.Rooms.RoomService>();
 
+builder.Services.AddHostedService<Tindarr.Api.Hosting.RoomCleanupHostedService>();
+
 // Keep DB location stable across Debug/Release so migrations and runtime match.
-builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: dataDirOverride ?? builder.Environment.ContentRootPath);
-builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: dataDirOverride ?? builder.Environment.ContentRootPath);
+// Integration tests set Database:DataDir to a unique dir and Database:UseConfigDataDir=true so we do not override with ContentRootPath.
+var useConfigDataDir = string.Equals(builder.Configuration["Database:UseConfigDataDir"], "true", StringComparison.OrdinalIgnoreCase);
+var persistenceDataDir = useConfigDataDir ? null : (effectiveDataDir ?? builder.Environment.ContentRootPath);
+builder.Services.AddTindarrPersistence(builder.Configuration, overrideDataDir: persistenceDataDir);
+builder.Services.AddPlexCache(builder.Configuration, overrideDataDir: persistenceDataDir);
+builder.Services.AddJellyfinCache(builder.Configuration, overrideDataDir: persistenceDataDir);
+builder.Services.AddEmbyCache(builder.Configuration, overrideDataDir: persistenceDataDir);
 
 var app = builder.Build();
 
 // Ensure the main app database schema exists on startup.
-// Without this, a fresh `tindarr.db` will cause runtime 500s (e.g., login) due to missing tables.
+// Without this, a fresh `tindarr.db` will cause runtime 500s (e.g., login, advanced settings) due to missing tables.
 using (var scope = app.Services.CreateScope())
-{
-	var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
+	{
 	var db = scope.ServiceProvider.GetRequiredService<TindarrDbContext>();
 	var plexCacheDb = scope.ServiceProvider.GetRequiredService<Tindarr.Infrastructure.PlexCache.PlexCacheDbContext>();
+	var jellyfinCacheDb = scope.ServiceProvider.GetRequiredService<JellyfinCacheDbContext>();
+	var embyCacheDb = scope.ServiceProvider.GetRequiredService<EmbyCacheDbContext>();
 
-	// Safe to run repeatedly; in prod environments you may choose to disable if desired.
-	if (env.IsDevelopment() || isWindowsService)
+	// Main app DB: always run migrations so all tables (including AdvancedSettings) exist.
+	db.Database.Migrate();
+
+	// Fallback: if the AddAdvancedSettings migration was not applied (e.g. not discovered), create the table and record it.
+	void EnsureAdvancedSettingsTableExists(TindarrDbContext dbContext)
 	{
-		db.Database.Migrate();
-		plexCacheDb.Database.EnsureCreated();
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS AdvancedSettings (
+Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+ApiRateLimitEnabled INTEGER NULL,
+ApiRateLimitPermitLimit INTEGER NULL,
+ApiRateLimitWindowMinutes INTEGER NULL,
+CleanupEnabled INTEGER NULL,
+CleanupIntervalMinutes INTEGER NULL,
+CleanupPurgeGuestUsers INTEGER NULL,
+CleanupGuestUserMaxAgeHours INTEGER NULL,
+UpdatedAtUtc TEXT NOT NULL)");
+			dbContext.Database.ExecuteSqlRaw(
+				"INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20260220000000_AddAdvancedSettings', '8.0.23')");
+		}
+		catch
+		{
+			// Table may already exist from migration; ignore.
+		}
+
+		// Add TmdbApiKey column if missing (e.g. table was created before 20260220120000 migration).
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN TmdbApiKey TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN DateTimeDisplayMode TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN TimeZoneId TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN DateOrder TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
 	}
+	EnsureAdvancedSettingsTableExists(db);
+
+	// Cache DBs: always create on startup so all DBs exist even if the user never uses Plex/Jellyfin/Emby.
+	plexCacheDb.Database.EnsureCreated();
+	jellyfinCacheDb.Database.EnsureCreated();
+	embyCacheDb.Database.EnsureCreated();
 }
 
 if (isWindowsService)
@@ -410,6 +569,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
@@ -450,3 +610,6 @@ app.MapFallback(async context =>
 });
 
 app.Run();
+
+// Expose for integration tests (WebApplicationFactory<Program>).
+public partial class Program { }
