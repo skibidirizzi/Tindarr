@@ -21,17 +21,11 @@ public sealed class EmbyPlaybackProvider(
 
 	public async Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
 	{
-		// Direct URLs are only used for cast devices; prefer a cast-compatible request.
-		var upstream = await BuildMovieCastStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
-		if (!upstream.Headers.TryGetValue("X-Emby-Token", out var token) || string.IsNullOrWhiteSpace(token))
-		{
-			return null;
-		}
-
-		// Cast devices can't send headers; include token in query.
-		var uri = AppendOrReplaceQuery(upstream.Uri, "api_key", token);
-		uri = AppendOrReplaceQuery(uri, "X-Emby-Token", token);
-		return uri;
+		// Always use Tindarr as passthrough for Emby casting. Chromecast cannot send custom headers,
+		// and Emby stream endpoints may not accept or may restrict api_key-in-query for direct URLs.
+		// Routing through Tindarr ensures X-Emby-Token is sent in headers and media is served reliably.
+		await Task.CompletedTask.ConfigureAwait(false);
+		return null;
 	}
 
 	public async Task<UpstreamPlaybackRequest> BuildMovieStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
@@ -175,55 +169,6 @@ public sealed class EmbyPlaybackProvider(
 		var dto = JsonSerializer.Deserialize<PlaybackInfoResponseDto>(json, Json);
 		var id = dto?.MediaSources?.FirstOrDefault(ms => !string.IsNullOrWhiteSpace(ms.Id))?.Id;
 		return string.IsNullOrWhiteSpace(id) ? null : id.Trim();
-	}
-
-	private static Uri AppendOrReplaceQuery(Uri uri, string key, string value)
-	{
-		var builder = new UriBuilder(uri);
-		var all = ParseQuery(builder.Query);
-
-		all[key] = value;
-		builder.Query = string.Join("&", all.Select(kvp => $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));
-		return builder.Uri;
-	}
-
-	private static Dictionary<string, string> ParseQuery(string? query)
-	{
-		var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-		if (string.IsNullOrWhiteSpace(query))
-		{
-			return dict;
-		}
-
-		var q = query.Trim();
-		if (q.StartsWith("?", StringComparison.Ordinal))
-		{
-			q = q[1..];
-		}
-		if (string.IsNullOrWhiteSpace(q))
-		{
-			return dict;
-		}
-
-		foreach (var part in q.Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-		{
-			var kv = part.Split('=', 2);
-			if (kv.Length == 0 || string.IsNullOrWhiteSpace(kv[0]))
-			{
-				continue;
-			}
-
-			var k = Uri.UnescapeDataString(kv[0]);
-			if (dict.ContainsKey(k))
-			{
-				continue;
-			}
-
-			var v = kv.Length == 2 ? Uri.UnescapeDataString(kv[1]) : string.Empty;
-			dict[k] = v;
-		}
-
-		return dict;
 	}
 
 	private sealed record StreamSelection(int? AudioStreamIndex, int? SubtitleStreamIndex, string? SubtitleMethod);
