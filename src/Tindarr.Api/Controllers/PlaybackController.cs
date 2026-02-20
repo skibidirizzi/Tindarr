@@ -14,6 +14,7 @@ using Tindarr.Contracts.Playback;
 using Tindarr.Domain.Common;
 using Tindarr.Api.Hosting;
 using Tindarr.Infrastructure.Playback.Hls;
+using Tindarr.Infrastructure.Casting;
 
 namespace Tindarr.Api.Controllers;
 
@@ -28,7 +29,8 @@ public sealed class PlaybackController(
 	IOptions<PlexOptions> plexOptions,
 	IOptions<PlaybackOptions> playbackOptions,
 	IHttpClientFactory httpClientFactory,
-	ILogger<PlaybackController> logger) : ControllerBase
+	ILogger<PlaybackController> logger,
+	CastingSessionStore? castingSessionStore = null) : ControllerBase
 {
 	private readonly ManifestRewriter _manifestRewriter = new();
 	private readonly PlaybackOptions _playbackOptions = playbackOptions.Value;
@@ -66,20 +68,45 @@ public sealed class PlaybackController(
 	}
 
 	[HttpGet("movie/{serviceType}/{serverId}/{tmdbId:int}")]
+	[HttpHead("movie/{serviceType}/{serverId}/{tmdbId:int}")]
 	public async Task<IActionResult> StreamMovie(
 		[FromRoute] string serviceType,
 		[FromRoute] string serverId,
 		[FromRoute] int tmdbId,
 		[FromQuery] string? token,
+		[FromQuery] string? castSessionId,
 		CancellationToken cancellationToken)
 	{
+		var shouldEndSessionOnExit = false;
+		var endSessionId = string.IsNullOrWhiteSpace(castSessionId) ? null : castSessionId;
+		void EndCastSessionIfRequested()
+		{
+			if (string.IsNullOrWhiteSpace(endSessionId))
+			{
+				return;
+			}
+
+			try
+			{
+				castingSessionStore?.EndSession(endSessionId);
+			}
+			catch
+			{
+				// Best-effort only.
+			}
+		}
+
+		try
+		{
 		if (tmdbId <= 0)
 		{
+			EndCastSessionIfRequested();
 			return BadRequest("Invalid TMDB id.");
 		}
 
 		if (!ServiceScope.TryCreate(serviceType, serverId, out var scope) || scope is null)
 		{
+			EndCastSessionIfRequested();
 			return BadRequest("Invalid service scope.");
 		}
 
@@ -89,30 +116,48 @@ public sealed class PlaybackController(
 
 		if (string.IsNullOrWhiteSpace(token) || !playbackTokenService.TryValidateMovieToken(token, scope, tmdbId, DateTimeOffset.UtcNow))
 		{
+			EndCastSessionIfRequested();
 			return Unauthorized();
 		}
 
 		var provider = providers.FirstOrDefault(p => p.ServiceType == scope.ServiceType);
 		if (provider is null)
 		{
+			EndCastSessionIfRequested();
 			return BadRequest("Unsupported playback provider.");
 		}
 
 		UpstreamPlaybackRequest upstream;
 		try
 		{
-			upstream = await provider.BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+			var isCasting = !string.IsNullOrWhiteSpace(castSessionId);
+			if (isCasting && provider is ICastPlaybackProvider castProvider)
+			{
+				upstream = await castProvider.BuildMovieCastStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+			}
+			else
+			{
+				upstream = await provider.BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+			}
 		}
 		catch (InvalidOperationException ex)
 		{
 			logger.LogWarning(ex, "Failed to build upstream playback request. ServiceType={ServiceType} ServerId={ServerId} TmdbId={TmdbId}", scope.ServiceType, scope.ServerId, tmdbId);
+			EndCastSessionIfRequested();
 			return BadRequest(ex.Message);
 		}
 
-		logger.LogDebug("Proxying playback stream. ServiceType={ServiceType} ServerId={ServerId} TmdbId={TmdbId} UpstreamUri={UpstreamUri}", scope.ServiceType, scope.ServerId, tmdbId, upstream.Uri);
+		// Avoid logging sensitive query strings (e.g. api_key) from upstream providers.
+		logger.LogDebug(
+			"Proxying playback stream. ServiceType={ServiceType} ServerId={ServerId} TmdbId={TmdbId} UpstreamPath={UpstreamPath}",
+			scope.ServiceType,
+			scope.ServerId,
+			tmdbId,
+			upstream.Uri.GetLeftPart(UriPartial.Path));
 
 		var client = httpClientFactory.CreateClient();
-		using var upstreamRequest = new HttpRequestMessage(HttpMethod.Get, upstream.Uri);
+		var method = HttpMethods.IsHead(Request.Method) ? HttpMethod.Head : HttpMethod.Get;
+		using var upstreamRequest = new HttpRequestMessage(method, upstream.Uri);
 		StreamingProxy.CopyAllowedRequestHeaders(Request, upstreamRequest);
 		// If upstream returns a gzip'd playlist, rewriting will break. Always request identity.
 		upstreamRequest.Headers.AcceptEncoding.Clear();
@@ -128,6 +173,16 @@ public sealed class PlaybackController(
 
 		logger.LogDebug("Upstream playback response. StatusCode={StatusCode} ContentType={ContentType}", (int)upstreamResponse.StatusCode, upstreamResponse.Content.Headers.ContentType?.ToString());
 
+		// Chromecast (and some HTTP clients) will issue HEAD probes before GET.
+		// For HEAD requests, return headers only.
+		if (HttpMethods.IsHead(Request.Method))
+		{
+			Response.StatusCode = (int)upstreamResponse.StatusCode;
+			StreamingProxy.CopyAllowedResponseHeaders(upstreamResponse, Response);
+			Response.Headers.Remove(HeaderNames.ContentLength);
+			return new EmptyResult();
+		}
+
 		if (upstreamResponse.IsSuccessStatusCode && IsHlsPlaylistResponse(upstreamResponse))
 		{
 			var playlistText = await upstreamResponse.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
@@ -138,8 +193,32 @@ public sealed class PlaybackController(
 			return Content(rewritten, upstreamResponse.Content.Headers.ContentType?.ToString() ?? "application/vnd.apple.mpegurl");
 		}
 
+		// For direct-streaming responses (non-HLS), the downstream connection lifetime closely matches playback.
+		// If the receiver disconnects early or the stream completes, we can end the cast session.
+		shouldEndSessionOnExit = true;
 		await StreamingProxy.StreamBodyAsync(upstreamResponse, Response, cancellationToken).ConfigureAwait(false);
 		return new EmptyResult();
+		}
+		catch
+		{
+			// If playback failed for a casted session, it should no longer be considered active.
+			shouldEndSessionOnExit = true;
+			throw;
+		}
+		finally
+		{
+			if (shouldEndSessionOnExit && !string.IsNullOrWhiteSpace(endSessionId))
+			{
+				try
+				{
+					castingSessionStore?.EndSession(endSessionId);
+				}
+				catch
+				{
+					// Best-effort; diagnostics cleanup should never break playback.
+				}
+			}
+		}
 	}
 
 	[HttpGet("proxy/movie/{serviceType}/{serverId}/{tmdbId:int}")]

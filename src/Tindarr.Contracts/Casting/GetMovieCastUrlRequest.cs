@@ -4,4 +4,5 @@ public sealed record GetMovieCastUrlRequest(
 	string ServiceType,
 	string ServerId,
 	int TmdbId,
-	string? Title);
+	string? Title,
+	string? DeviceId = null);

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Domain.Common;
@@ -29,15 +30,19 @@ public sealed record PlexLibrarySyncJobStatus(
 
 public interface IPlexLibrarySyncJobService
 {
+	event EventHandler<PlexLibrarySyncJobStatus>? StatusChanged;
 	PlexLibrarySyncJobStatus GetStatus(ServiceScope scope);
 	Task<PlexLibrarySyncJobStatus> StartAsync(ServiceScope scope, CancellationToken cancellationToken);
 }
 
 public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory) : IPlexLibrarySyncJobService
 {
+	public event EventHandler<PlexLibrarySyncJobStatus>? StatusChanged;
+
 	private sealed class JobEntry
 	{
 		public readonly SemaphoreSlim Gate = new(1, 1);
+		public long LastPublishAtUnixMs = 0;
 		public PlexLibrarySyncJobStatus Status = new(
 			ServiceType: "plex",
 			ServerId: "default",
@@ -56,6 +61,30 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 	private readonly ConcurrentDictionary<string, JobEntry> _jobs = new(StringComparer.OrdinalIgnoreCase);
 
 	private static string Key(ServiceScope scope) => $"{scope.ServiceType}:{scope.ServerId}";
+
+	private void Publish(JobEntry entry, PlexLibrarySyncJobStatus status, bool force = false)
+	{
+		if (StatusChanged is null) return;
+
+		var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+		if (!force)
+		{
+			var last = Interlocked.Read(ref entry.LastPublishAtUnixMs);
+			if (nowMs - last < 250)
+			{
+				return;
+			}
+
+			// Best-effort: allow one publisher through at a time.
+			Interlocked.Exchange(ref entry.LastPublishAtUnixMs, nowMs);
+		}
+		else
+		{
+			Interlocked.Exchange(ref entry.LastPublishAtUnixMs, nowMs);
+		}
+
+		StatusChanged?.Invoke(this, status);
+	}
 
 	public PlexLibrarySyncJobStatus GetStatus(ServiceScope scope)
 	{
@@ -90,6 +119,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 				Message = null,
 				UpdatedAtUtc = startedAt
 			};
+			Publish(entry, entry.Status, force: true);
 
 			_ = Task.Run(async () =>
 			{
@@ -105,6 +135,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 						Message = string.IsNullOrWhiteSpace(p.CurrentSectionTitle) ? "Syncing…" : $"Syncing: {p.CurrentSectionTitle}",
 						UpdatedAtUtc = DateTimeOffset.UtcNow
 					};
+					Publish(entry, entry.Status);
 				});
 
 				try
@@ -120,6 +151,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 						Message = "Sync complete.",
 						UpdatedAtUtc = finishedAt
 					};
+					Publish(entry, entry.Status, force: true);
 				}
 				catch (Exception ex)
 				{
@@ -131,6 +163,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 						Message = ex.Message,
 						UpdatedAtUtc = finishedAt
 					};
+					Publish(entry, entry.Status, force: true);
 				}
 			});
 

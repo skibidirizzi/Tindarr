@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/http";
+import { connectSse } from "../api/sse";
+import { notifyConfiguredScopesUpdated } from "../configuredScopes";
 import {
   adminDbListMovies,
   adminCreateUser,
@@ -14,17 +16,19 @@ import {
   adminUpdateJoinAddressSettings,
   adminUpdateMatchSettings,
   adminUpdateUser,
+  embyDeleteServer,
   embyListServers,
   embySyncLibrary,
   embyTestConnection,
   embyUpsertSettings,
+  jellyfinDeleteServer,
   jellyfinListServers,
   jellyfinSyncLibrary,
   jellyfinTestConnection,
   jellyfinUpsertSettings,
   plexCreatePin,
+  plexDeleteServer,
   plexGetAuthStatus,
-  plexGetLibrarySyncStatus,
   plexListLibraryCacheMovies,
   plexListServers,
   plexStartLibrarySync,
@@ -45,8 +49,7 @@ import {
   tmdbListStoredMovies,
   tmdbFillMovieDetails,
   tmdbFetchMovieImages,
-  tmdbStartBuild,
-  adminGetCastingDiagnostics
+  tmdbStartBuild
 } from "../api/client";
 import type {
   CastingDiagnosticsDto,
@@ -360,30 +363,45 @@ function CastingTab() {
   const [diagError, setDiagError] = useState<string | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
 
-  // Poll diagnostics every 5s
+  // Stream diagnostics (SSE) instead of polling.
   useEffect(() => {
-    let stop = false;
-    let timeoutId: number | null = null;
-    async function poll() {
-      setDiagLoading(true);
-      try {
-        const d = await adminGetCastingDiagnostics();
-        if (!stop) {
-          setDiagnostics(d);
-          setDiagError(null);
+    const abort = new AbortController();
+
+    void (async () => {
+      while (!abort.signal.aborted) {
+        let gotFirst = false;
+        setDiagLoading(true);
+        try {
+          await connectSse({
+            path: "/api/v1/admin/casting/diagnostics/stream",
+            signal: abort.signal,
+            onMessage: (msg) => {
+              if (msg.event && msg.event !== "diagnostics") return;
+              try {
+                const parsed = JSON.parse(msg.data) as CastingDiagnosticsDto;
+                setDiagnostics(parsed);
+                setDiagError(null);
+                gotFirst = true;
+              } catch {
+                // ignore malformed message
+              } finally {
+                setDiagLoading(false);
+              }
+            }
+          });
+        } catch {
+          if (!abort.signal.aborted) setDiagError("Failed to load diagnostics");
+        } finally {
+          if (!abort.signal.aborted && !gotFirst) setDiagLoading(false);
         }
-      } catch (e) {
-        if (!stop) setDiagError("Failed to load diagnostics");
-      } finally {
-        if (!stop) setDiagLoading(false);
+
+        if (abort.signal.aborted) break;
+        // Best-effort reconnect.
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
       }
-      if (!stop) timeoutId = window.setTimeout(poll, 5000);
-    }
-    poll();
-    return () => {
-      stop = true;
-      if (timeoutId !== null) window.clearTimeout(timeoutId);
-    };
+    })();
+
+    return () => abort.abort();
   }, []);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1814,7 +1832,7 @@ function PlexTab() {
   const [pin, setPin] = useState<{ pinId: number; code: string; expiresAtUtc: string; authUrl: string } | null>(null);
   const [servers, setServers] = useState<PlexServerDto[]>([]);
   const [syncStatus, setSyncStatus] = useState<PlexLibrarySyncStatusDto | null>(null);
-  const syncPollRef = useRef<number | null>(null);
+  const syncStreamAbortRef = useRef<AbortController | null>(null);
   const [tmdbCacheSettings, setTmdbCacheSettings] = useState<TmdbCacheSettingsDto | null>(null);
 
   const [cacheServerId, setCacheServerId] = useState<string>("default");
@@ -1838,7 +1856,11 @@ function PlexTab() {
       setAuthStatus(status);
       setServers(list);
       if (list.length > 0) {
-        setCacheServerId((prev) => (prev && prev !== "default" ? prev : list[0].serverId));
+			setCacheServerId((prev) =>
+				prev && prev !== "default" && list.some((s) => s.serverId === prev) ? prev : list[0].serverId
+			);
+		} else {
+			setCacheServerId("default");
       }
 
 			// Best-effort: LocalProxy affects whether image fetching is enabled.
@@ -1926,37 +1948,50 @@ function PlexTab() {
     const serverId = syncStatus?.serverId ?? "default";
 
     if (!isRunning) {
-      if (syncPollRef.current) {
-        window.clearInterval(syncPollRef.current);
-        syncPollRef.current = null;
-      }
+      syncStreamAbortRef.current?.abort();
+      syncStreamAbortRef.current = null;
       return;
     }
 
-    if (syncPollRef.current) return;
+    if (syncStreamAbortRef.current) return;
 
-    syncPollRef.current = window.setInterval(() => {
-      void (async () => {
-        try {
-          const next = await plexGetLibrarySyncStatus(serviceType, serverId);
-          setSyncStatus(next);
-          if (next.state !== "running") {
-            if (syncPollRef.current) {
-              window.clearInterval(syncPollRef.current);
-              syncPollRef.current = null;
+    const abort = new AbortController();
+    syncStreamAbortRef.current = abort;
+
+    void (async () => {
+      try {
+        await connectSse({
+          path: "/api/v1/plex/library/sync/status/stream",
+          query: { serviceType, serverId },
+          signal: abort.signal,
+          onMessage: (msg) => {
+            if (msg.event && msg.event !== "status") return;
+            try {
+              const next = JSON.parse(msg.data) as PlexLibrarySyncStatusDto;
+              setSyncStatus(next);
+              if (next.state !== "running") {
+                abort.abort();
+                syncStreamAbortRef.current = null;
+                void load();
+              }
+            } catch {
+              // ignore malformed message
             }
-            await load();
           }
-        } catch {
-          // best-effort polling
+        });
+      } catch {
+        // best-effort streaming; UI can still recover on next explicit load
+      } finally {
+        if (syncStreamAbortRef.current === abort) {
+          syncStreamAbortRef.current = null;
         }
-      })();
-    }, 1000);
+      }
+    })();
 
     return () => {
-      if (syncPollRef.current) {
-        window.clearInterval(syncPollRef.current);
-        syncPollRef.current = null;
+      abort.abort();
+      if (syncStreamAbortRef.current === abort) {
+        syncStreamAbortRef.current = null;
       }
     };
   }, [syncStatus?.state, syncStatus?.serviceType, syncStatus?.serverId]);
@@ -2002,6 +2037,19 @@ function PlexTab() {
 			setCacheServerId(serverId);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to sync Plex library.");
+    }
+  };
+
+  const onDeleteServer = async (serverId: string) => {
+    setError(null);
+    try {
+      if (!confirm(`Delete Plex server '${serverId}'?`)) return;
+      await plexDeleteServer(serverId);
+      await load();
+      notifyConfiguredScopesUpdated();
+      setSyncStatus((prev) => (prev?.serverId === serverId ? null : prev));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete Plex server.");
     }
   };
 
@@ -2147,9 +2195,20 @@ function PlexTab() {
                     <td>{s.version ?? ""}</td>
                     <td>{s.lastLibrarySyncUtc ?? ""}</td>
                     <td style={{ textAlign: "right" }}>
-                      <button type="button" className="pill pill--neutral is-on" onClick={() => void onSyncLibrary(s.serverId)}>
-                        Sync library
-                      </button>
+						<div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
+							<button type="button" className="pill pill--neutral is-on" onClick={() => void onSyncLibrary(s.serverId)}>
+								Sync library
+							</button>
+							<button
+								type="button"
+								className="app__navLink"
+								style={{ borderColor: "rgba(255, 107, 107, 0.4)" }}
+								onClick={() => void onDeleteServer(s.serverId)}
+								disabled={loading}
+							>
+								Delete
+							</button>
+						</div>
                     </td>
                   </tr>
                 ))}
@@ -2643,6 +2702,23 @@ function JellyfinTab() {
     }
   };
 
+  const onDelete = async () => {
+    if (!selectedServerId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (!confirm(`Delete Jellyfin server '${selectedServerId}'?`)) return;
+      await jellyfinDeleteServer(selectedServerId);
+      setSelectedServerId("");
+      await load();
+      notifyConfiguredScopesUpdated();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete Jellyfin server.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const selected = servers.find((s) => s.serverId === selectedServerId) ?? null;
 
   return (
@@ -2674,6 +2750,15 @@ function JellyfinTab() {
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSync()} disabled={loading || !selectedServerId}>
             Sync library
           </button>
+      <button
+        type="button"
+        className="app__navLink"
+        style={{ borderColor: "rgba(255, 107, 107, 0.4)" }}
+        onClick={() => void onDelete()}
+        disabled={loading || !selectedServerId}
+      >
+        Delete
+      </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
             Last sync: {selected?.lastLibrarySyncUtc ?? ""}
           </div>
@@ -2790,6 +2875,23 @@ function EmbyTab() {
     }
   };
 
+  const onDelete = async () => {
+    if (!selectedServerId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (!confirm(`Delete Emby server '${selectedServerId}'?`)) return;
+      await embyDeleteServer(selectedServerId);
+      setSelectedServerId("");
+      await load();
+      notifyConfiguredScopesUpdated();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to delete Emby server.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const selected = servers.find((s) => s.serverId === selectedServerId) ?? null;
 
   return (
@@ -2821,6 +2923,15 @@ function EmbyTab() {
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSync()} disabled={loading || !selectedServerId}>
             Sync library
           </button>
+      <button
+        type="button"
+        className="app__navLink"
+        style={{ borderColor: "rgba(255, 107, 107, 0.4)" }}
+        onClick={() => void onDelete()}
+        disabled={loading || !selectedServerId}
+      >
+        Delete
+      </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
             Last sync: {selected?.lastLibrarySyncUtc ?? ""}
           </div>

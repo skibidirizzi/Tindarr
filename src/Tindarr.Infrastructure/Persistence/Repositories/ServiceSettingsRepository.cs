@@ -119,6 +119,21 @@ public sealed class ServiceSettingsRepository(TindarrDbContext db) : IServiceSet
 		await db.SaveChangesAsync(cancellationToken);
 	}
 
+	public async Task<bool> DeleteAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		var entity = await db.ServiceSettings
+			.SingleOrDefaultAsync(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId, cancellationToken);
+
+		if (entity is null)
+		{
+			return false;
+		}
+
+		db.ServiceSettings.Remove(entity);
+		await db.SaveChangesAsync(cancellationToken);
+		return true;
+	}
+
 	private static ServiceSettingsRecord Map(ServiceSettingsEntity entity)
 	{
 		return new ServiceSettingsRecord(

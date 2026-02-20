@@ -1,5 +1,8 @@
+using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
 using Tindarr.Application.Interfaces.Interactions;
@@ -32,6 +35,97 @@ public sealed class AdminController(
 	{
 		var diagnostics = castingSessionStore.GetDiagnostics();
 		return Ok(diagnostics);
+	}
+
+	[HttpGet("casting/diagnostics/stream")]
+	public async Task GetCastingDiagnosticsStream(CancellationToken cancellationToken)
+	{
+		Response.ContentType = "text/event-stream";
+		Response.Headers.CacheControl = "no-cache";
+		Response.Headers.Connection = "keep-alive";
+		Response.Headers["X-Accel-Buffering"] = "no";
+
+		var jsonOptions = HttpContext.RequestServices
+			.GetRequiredService<IOptions<JsonOptions>>()
+			.Value
+			.JsonSerializerOptions;
+
+		var channel = Channel.CreateUnbounded<int>(new UnboundedChannelOptions
+		{
+			SingleReader = true,
+			SingleWriter = false
+		});
+
+		void SignalSnapshot() => channel.Writer.TryWrite(0);
+
+		EventHandler<Tindarr.Infrastructure.Casting.CastingEventArgs> onChanged = (_, __) => SignalSnapshot();
+		castingSessionStore.SessionStarted += onChanged;
+		castingSessionStore.SessionEnded += onChanged;
+		castingSessionStore.SessionError += onChanged;
+
+		static async Task WriteComment(HttpResponse response, string text, CancellationToken ct)
+		{
+			await response.WriteAsync($": {text}\n\n", ct);
+			await response.Body.FlushAsync(ct);
+		}
+
+		static async Task WriteEvent(HttpResponse response, string eventName, string json, CancellationToken ct)
+		{
+			await response.WriteAsync($"event: {eventName}\n", ct);
+			await response.WriteAsync($"data: {json}\n\n", ct);
+			await response.Body.FlushAsync(ct);
+		}
+
+		async Task WriteSnapshot(CancellationToken ct)
+		{
+			var snapshot = castingSessionStore.GetDiagnostics();
+			var json = JsonSerializer.Serialize(snapshot, jsonOptions);
+			await WriteEvent(Response, eventName: "diagnostics", json, ct);
+		}
+
+		var keepAliveInterval = TimeSpan.FromSeconds(15);
+		var periodicSnapshotInterval = TimeSpan.FromSeconds(30);
+		var lastSnapshotAt = DateTimeOffset.MinValue;
+
+		try
+		{
+			await WriteSnapshot(cancellationToken);
+			lastSnapshotAt = DateTimeOffset.UtcNow;
+
+			while (!cancellationToken.IsCancellationRequested)
+			{
+				var delayTask = Task.Delay(keepAliveInterval, cancellationToken);
+				var readTask = channel.Reader.ReadAsync(cancellationToken).AsTask();
+				var completed = await Task.WhenAny(delayTask, readTask).ConfigureAwait(false);
+
+				if (completed == delayTask)
+				{
+					await WriteComment(Response, "keepalive", cancellationToken);
+					if (DateTimeOffset.UtcNow - lastSnapshotAt >= periodicSnapshotInterval)
+					{
+						await WriteSnapshot(cancellationToken);
+						lastSnapshotAt = DateTimeOffset.UtcNow;
+					}
+					continue;
+				}
+
+				// Drain any queued signals so we coalesce multiple events into one snapshot.
+				while (channel.Reader.TryRead(out _)) { }
+
+				await WriteSnapshot(cancellationToken);
+				lastSnapshotAt = DateTimeOffset.UtcNow;
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// client disconnected
+		}
+		finally
+		{
+			castingSessionStore.SessionStarted -= onChanged;
+			castingSessionStore.SessionEnded -= onChanged;
+			castingSessionStore.SessionError -= onChanged;
+		}
 	}
 
 

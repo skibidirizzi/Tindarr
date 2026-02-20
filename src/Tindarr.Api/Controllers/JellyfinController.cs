@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Contracts.Jellyfin;
 using Tindarr.Domain.Common;
@@ -10,7 +11,7 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/jellyfin")]
-public sealed class JellyfinController(IJellyfinService jellyfinService) : ControllerBase
+public sealed class JellyfinController(IJellyfinService jellyfinService, IServiceSettingsRepository settingsRepo) : ControllerBase
 {
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<JellyfinServerDto>>> ListServers(CancellationToken cancellationToken)
@@ -156,5 +157,17 @@ public sealed class JellyfinController(IJellyfinService jellyfinService) : Contr
 			settings?.JellyfinServerVersion,
 			settings?.JellyfinLastLibrarySyncUtc,
 			settings?.UpdatedAtUtc);
+	}
+
+	[HttpDelete("servers/{serverId}")]
+	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(serverId))
+		{
+			return BadRequest("ServerId is required.");
+		}
+
+		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Jellyfin, serverId.Trim()), cancellationToken);
+		return deleted ? NoContent() : NotFound("Server not found.");
 	}
 }

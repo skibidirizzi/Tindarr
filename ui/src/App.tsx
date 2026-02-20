@@ -14,7 +14,8 @@ import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
 import PlexBulkJobToast from "./components/PlexBulkJobToast";
 import { adminFetchUpdateCheck, fetchConfiguredScopes, fetchInfo } from "./api/client";
 import type { AdminUpdateCheckResponse, InfoResponse, ServiceScopeOptionDto } from "./api/contracts";
-import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, type ServiceScope } from "./serviceScope";
+import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, DEFAULT_SERVICE_SCOPE, type ServiceScope } from "./serviceScope";
+import { CONFIGURED_SCOPES_UPDATED_EVENT } from "./configuredScopes";
 
 const HEADER_COLLAPSED_KEY = "tindarr:headerCollapsed:v1";
 
@@ -81,11 +82,43 @@ function AppLayout() {
     }
   });
 
+  const reloadConfiguredScopes = async () => {
+    try {
+      const scopes = await fetchConfiguredScopes();
+      setAvailableScopes(scopes);
+    } catch (err) {
+      console.error("Failed to fetch configured scopes:", err);
+    }
+  };
+
   useEffect(() => {
-    fetchConfiguredScopes()
-      .then(setAvailableScopes)
-      .catch((err) => console.error("Failed to fetch configured scopes:", err));
+    void reloadConfiguredScopes();
   }, []);
+
+  useEffect(() => {
+    function handleScopesUpdated() {
+      void reloadConfiguredScopes();
+    }
+
+    window.addEventListener(CONFIGURED_SCOPES_UPDATED_EVENT, handleScopesUpdated);
+    return () => window.removeEventListener(CONFIGURED_SCOPES_UPDATED_EVENT, handleScopesUpdated);
+  }, []);
+
+  useEffect(() => {
+    // If the current scope is no longer configured (e.g. server deleted), reset to TMDB.
+    // This avoids showing a stale/empty scope option in the header picker.
+    if (availableScopes.length === 0) return;
+
+    const exists = availableScopes.some(
+      (s) =>
+        s.serviceType.toLowerCase() === currentScope.serviceType.toLowerCase() &&
+        s.serverId.toLowerCase() === currentScope.serverId.toLowerCase()
+    );
+
+    if (!exists) {
+      setServiceScopeAndNotify(DEFAULT_SERVICE_SCOPE);
+    }
+  }, [availableScopes, currentScope.serviceType, currentScope.serverId]);
 
   useEffect(() => {
     fetchInfo()

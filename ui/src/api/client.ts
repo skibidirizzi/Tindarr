@@ -366,6 +366,13 @@ export async function getRoomQrCastUrl(roomId: string): Promise<CastMediaUrlDto>
   });
 }
 
+export async function endCastingSession(sessionId: string): Promise<void> {
+  await apiRequest<void>({
+    path: `/api/v1/casting/sessions/${encodeURIComponent(sessionId)}/end`,
+    method: "POST"
+  });
+}
+
 export async function castMovie(request: CastMovieRequest): Promise<void> {
   await apiRequest<void>({
     path: "/api/v1/casting/movie",
@@ -611,6 +618,13 @@ export async function plexSyncServers(): Promise<PlexServerDto[]> {
   });
 }
 
+export async function plexDeleteServer(serverId: string): Promise<void> {
+  await apiRequest<void>({
+    path: `/api/v1/plex/servers/${encodeURIComponent(serverId)}`,
+    method: "DELETE"
+  });
+}
+
 export async function plexSyncLibrary(serviceType: string, serverId: string) {
   return apiRequest<{ serviceType: string; serverId: string; count: number; syncedAtUtc: string }>({
     path: "/api/v1/plex/library/sync",
@@ -720,6 +734,13 @@ export async function jellyfinListServers(): Promise<JellyfinServerDto[]> {
   });
 }
 
+export async function jellyfinDeleteServer(serverId: string): Promise<void> {
+  await apiRequest<void>({
+    path: `/api/v1/jellyfin/servers/${encodeURIComponent(serverId)}`,
+    method: "DELETE"
+  });
+}
+
 export async function jellyfinGetSettings(serviceType: string, serverId: string): Promise<JellyfinSettingsDto> {
   return apiRequest<JellyfinSettingsDto>({
     path: "/api/v1/jellyfin/settings",
@@ -758,6 +779,13 @@ export async function jellyfinSyncLibrary(serviceType: string, serverId: string)
 export async function embyListServers(): Promise<EmbyServerDto[]> {
   return apiRequest<EmbyServerDto[]>({
     path: "/api/v1/emby/servers"
+  });
+}
+
+export async function embyDeleteServer(serverId: string): Promise<void> {
+  await apiRequest<void>({
+    path: `/api/v1/emby/servers/${encodeURIComponent(serverId)}`,
+    method: "DELETE"
   });
 }
 

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Integrations;
 using Tindarr.Contracts.Emby;
 using Tindarr.Domain.Common;
@@ -10,7 +11,7 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/emby")]
-public sealed class EmbyController(IEmbyService embyService) : ControllerBase
+public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRepository settingsRepo) : ControllerBase
 {
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<EmbyServerDto>>> ListServers(CancellationToken cancellationToken)
@@ -156,5 +157,17 @@ public sealed class EmbyController(IEmbyService embyService) : ControllerBase
 			settings?.EmbyServerVersion,
 			settings?.EmbyLastLibrarySyncUtc,
 			settings?.UpdatedAtUtc);
+	}
+
+	[HttpDelete("servers/{serverId}")]
+	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(serverId))
+		{
+			return BadRequest("ServerId is required.");
+		}
+
+		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Emby, serverId.Trim()), cancellationToken);
+		return deleted ? NoContent() : NotFound("Server not found.");
 	}
 }

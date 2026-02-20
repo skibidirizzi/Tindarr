@@ -1,6 +1,8 @@
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using Tindarr.Api.Controllers;
 using Tindarr.Application.Abstractions.Persistence;
@@ -20,6 +22,35 @@ namespace Tindarr.UnitTests.Api;
 
 public sealed class CastingControllerSessionLifecycleTests
 {
+	[Fact]
+	public void RegisterSession_WhenDeviceRecasts_EndsPreviousSession()
+	{
+		var store = new CastingSessionStore(new MemoryCache(new MemoryCacheOptions()));
+
+		store.RegisterSession(
+			sessionId: "s1",
+			deviceId: "device-1",
+			contentTitle: "Movie 1",
+			contentSubtitle: "Plex",
+			contentType: "video/mp4",
+			contentRuntimeSeconds: 10);
+
+		store.RegisterSession(
+			sessionId: "s2",
+			deviceId: "device-1",
+			contentTitle: "Movie 2",
+			contentSubtitle: "Plex",
+			contentType: "video/mp4",
+			contentRuntimeSeconds: 10);
+
+		var sessions = store.GetActiveSessions();
+		Assert.Single(sessions);
+		Assert.Equal("s2", sessions[0].SessionId);
+
+		var events = store.GetRecentEvents();
+		Assert.Contains(events, e => e.EventType == "session_ended" && e.Message.Contains("ended", StringComparison.OrdinalIgnoreCase));
+	}
+
 	[Fact]
 	public async Task CastMovie_WhenCastAsyncThrows_DoesNotLeaveActiveSession()
 	{
@@ -71,6 +102,90 @@ public sealed class CastingControllerSessionLifecycleTests
 		Assert.Single(sessions);
 		Assert.Equal("device-1", sessions[0].DeviceId);
 		Assert.Equal("active", sessions[0].SessionState);
+	}
+
+	[Fact]
+	public async Task GetMovieCastUrl_WhenDirectUrlAvailable_RegistersActiveSession()
+	{
+		var store = new CastingSessionStore(new MemoryCache(new MemoryCacheOptions()));
+		var castClient = new TestCastClient(throwOnCast: false);
+		var directProvider = new TestDirectPlaybackProvider(
+			ServiceType.Plex,
+			directUri: new Uri("http://10.0.0.2/movie.mp4"));
+
+		var controller = CreateController(castClient, store, playbackProviders: [directProvider]);
+
+		var request = new GetMovieCastUrlRequest(
+			ServiceType: "Plex",
+			ServerId: "server-1",
+			TmdbId: 123,
+			Title: "Test Movie",
+			DeviceId: "Living Room TV");
+
+		var result = await controller.GetMovieCastUrl(request, CancellationToken.None);
+		var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result);
+		var dto = Assert.IsType<CastMediaUrlDto>(ok.Value);
+		Assert.False(string.IsNullOrWhiteSpace(dto.SessionId));
+
+		var sessions = store.GetActiveSessions();
+		Assert.Single(sessions);
+		Assert.Equal("Living Room TV", sessions[0].DeviceId);
+		Assert.Equal("Test Movie", sessions[0].ContentTitle);
+	}
+
+	[Fact]
+	public void EndCastingSession_WhenSessionExists_RemovesFromActiveSessions()
+	{
+		var store = new CastingSessionStore(new MemoryCache(new MemoryCacheOptions()));
+		var controller = CreateController(new TestCastClient(throwOnCast: false), store, playbackProviders: []);
+
+		store.RegisterSession(
+			sessionId: "s1",
+			deviceId: "Living Room TV",
+			contentTitle: "Test Movie",
+			contentSubtitle: "Plex",
+			contentType: "video/mp4",
+			contentRuntimeSeconds: 10);
+
+		var result = controller.EndCastingSession("s1");
+		Assert.IsType<Microsoft.AspNetCore.Mvc.OkResult>(result);
+		Assert.Empty(store.GetActiveSessions());
+	}
+
+	[Fact]
+	public async Task GetRoomQrCastUrl_WhenRoomExists_RegistersActiveSession()
+	{
+		var store = new CastingSessionStore(new MemoryCache(new MemoryCacheOptions()));
+		var controller = new CastingController(
+			castClient: new TestCastClient(throwOnCast: false),
+			castUrlTokenService: new TestCastUrlTokenService(),
+			playbackTokenService: new TestPlaybackTokenService(),
+			playbackProviders: [],
+			roomService: new TestRoomService(roomId: "room-1"),
+			baseUrlResolver: new TestBaseUrlResolver(),
+			joinAddressSettings: new TestJoinAddressSettingsRepository(),
+			baseUrlOptions: Options.Create(new BaseUrlOptions { Lan = "http://10.0.0.1:5000" }),
+			logger: NullLogger<CastingController>.Instance,
+			castingSessionStore: store);
+
+		controller.ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+		{
+			HttpContext = new DefaultHttpContext()
+		};
+		controller.ControllerContext.HttpContext.Request.Scheme = "http";
+		controller.ControllerContext.HttpContext.Request.Host = new HostString("10.0.0.1", 5000);
+		controller.ControllerContext.HttpContext.RequestServices = new ServiceCollection().BuildServiceProvider();
+
+		var result = await controller.GetRoomQrCastUrl("room-1", CancellationToken.None);
+		var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result);
+		var dto = Assert.IsType<CastMediaUrlDto>(ok.Value);
+		Assert.False(string.IsNullOrWhiteSpace(dto.SessionId));
+
+		var sessions = store.GetActiveSessions();
+		Assert.Single(sessions);
+		Assert.Equal("Join room", sessions[0].ContentTitle);
+		Assert.Equal("room-1", sessions[0].ContentSubtitle);
+		Assert.Equal("image/png", sessions[0].ContentType);
 	}
 
 	private static CastingController CreateController(
@@ -132,7 +247,7 @@ public sealed class CastingControllerSessionLifecycleTests
 		public bool TryValidateMovieToken(string token, ServiceScope scope, int tmdbId, DateTimeOffset nowUtc) => true;
 	}
 
-	private sealed class TestRoomService : IRoomService
+	private sealed class TestRoomService(string? roomId = null) : IRoomService
 	{
 		public Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, CancellationToken cancellationToken)
 			=> throw new NotImplementedException();
@@ -143,8 +258,26 @@ public sealed class CastingControllerSessionLifecycleTests
 		public Task<RoomState> CloseAsync(string roomId, string ownerUserId, CancellationToken cancellationToken)
 			=> throw new NotImplementedException();
 
-		public Task<RoomState?> GetAsync(string roomId, CancellationToken cancellationToken)
-			=> throw new NotImplementedException();
+		public Task<RoomState?> GetAsync(string requestedRoomId, CancellationToken cancellationToken)
+		{
+			if (string.IsNullOrWhiteSpace(roomId))
+			{
+				throw new NotImplementedException();
+			}
+			if (!string.Equals(requestedRoomId, roomId, StringComparison.Ordinal))
+			{
+				return Task.FromResult<RoomState?>(null);
+			}
+			var now = DateTimeOffset.UtcNow;
+			return Task.FromResult<RoomState?>(new RoomState(
+				RoomId: roomId,
+				OwnerUserId: "owner",
+				Scope: new ServiceScope(ServiceType.Plex, "server-1"),
+				IsClosed: false,
+				CreatedAtUtc: now,
+				LastActivityAtUtc: now,
+				Members: []));
+		}
 
 		public Task<IReadOnlyList<SwipeCard>> GetSwipeDeckAsync(string roomId, string userId, int limit, CancellationToken cancellationToken)
 			=> throw new NotImplementedException();

@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Playback;
@@ -12,7 +13,7 @@ public sealed class JellyfinPlaybackProvider(
 	IServiceSettingsRepository settingsRepo,
 	ICastingSettingsRepository castingSettingsRepo,
 	HttpClient httpClient,
-	ILogger<JellyfinPlaybackProvider> logger) : IDirectPlaybackProvider
+	ILogger<JellyfinPlaybackProvider> logger) : IDirectPlaybackProvider, ICastPlaybackProvider
 {
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -20,16 +21,91 @@ public sealed class JellyfinPlaybackProvider(
 
 	public async Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
 	{
-		var upstream = await BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+		// Direct URLs are only used for cast devices; prefer a cast-compatible request.
+		var upstream = await BuildMovieCastStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
 		if (!upstream.Headers.TryGetValue("X-Emby-Token", out var token) || string.IsNullOrWhiteSpace(token))
 		{
 			return null;
 		}
 
-		return AppendOrReplaceQuery(upstream.Uri, "api_key", token);
+		// Cast devices can't send headers; include token in query.
+		// Jellyfin/Emby commonly accept either api_key or X-Emby-Token as query param.
+		var uri = AppendOrReplaceQuery(upstream.Uri, "api_key", token);
+		uri = AppendOrReplaceQuery(uri, "X-Emby-Token", token);
+		return uri;
 	}
 
 	public async Task<UpstreamPlaybackRequest> BuildMovieStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var (baseUrl, apiKey, _userId, itemId, streamSelection) = await ResolveContextAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+
+		var queryParts = new List<string>(capacity: 10)
+		{
+			$"api_key={Uri.EscapeDataString(apiKey)}",
+			"static=true"
+		};
+		if (streamSelection.AudioStreamIndex is not null)
+		{
+			queryParts.Add($"audioStreamIndex={streamSelection.AudioStreamIndex.Value}");
+		}
+		if (streamSelection.SubtitleStreamIndex is not null)
+		{
+			queryParts.Add($"subtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
+		}
+		if (!string.IsNullOrWhiteSpace(streamSelection.SubtitleMethod))
+		{
+			queryParts.Add($"subtitleMethod={Uri.EscapeDataString(streamSelection.SubtitleMethod!)}");
+		}
+
+		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream?{string.Join("&", queryParts)}", UriKind.Absolute);
+		return new UpstreamPlaybackRequest(
+			Uri: upstreamUri,
+			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				["X-Emby-Token"] = apiKey
+			});
+	}
+
+	public async Task<UpstreamPlaybackRequest> BuildMovieCastStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var (baseUrl, apiKey, _userId, itemId, streamSelection) = await ResolveContextAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+
+		// Chromecast audio decoding is more limited than Jellyfin's normal web clients.
+		// Force an mp4 container + AAC audio, and cap channels to stereo as a safe default.
+		var queryParts = new List<string>(capacity: 16)
+		{
+			$"api_key={Uri.EscapeDataString(apiKey)}",
+			"static=false",
+			"audioCodec=aac",
+			"maxAudioChannels=2",
+			"transcodingMaxAudioChannels=2"
+		};
+		if (streamSelection.AudioStreamIndex is not null)
+		{
+			queryParts.Add($"audioStreamIndex={streamSelection.AudioStreamIndex.Value}");
+		}
+		// IMPORTANT: MP4 cannot mux common text subtitle codecs (e.g. SRT/subrip).
+		// Only request subtitles when we are burning them into video (Encode).
+		if (streamSelection.SubtitleStreamIndex is not null
+			&& string.Equals(streamSelection.SubtitleMethod, "Encode", StringComparison.OrdinalIgnoreCase))
+		{
+			queryParts.Add($"subtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
+			queryParts.Add("subtitleMethod=Encode");
+		}
+
+		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream.mp4?{string.Join("&", queryParts)}", UriKind.Absolute);
+		return new UpstreamPlaybackRequest(
+			Uri: upstreamUri,
+			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				["X-Emby-Token"] = apiKey
+			});
+	}
+
+	private async Task<(string BaseUrl, string ApiKey, string UserId, string ItemId, StreamSelection StreamSelection)> ResolveContextAsync(
+		ServiceScope scope,
+		int tmdbId,
+		CancellationToken cancellationToken)
 	{
 		var settings = await settingsRepo.GetAsync(scope, cancellationToken).ConfigureAwait(false);
 		if (settings is null || string.IsNullOrWhiteSpace(settings.JellyfinBaseUrl) || string.IsNullOrWhiteSpace(settings.JellyfinApiKey))
@@ -55,27 +131,7 @@ public sealed class JellyfinPlaybackProvider(
 		var castingSettings = await castingSettingsRepo.GetAsync(cancellationToken).ConfigureAwait(false);
 		var streamSelection = await TrySelectStreamsAsync(httpClient, baseUrl, apiKey, userId, itemId, castingSettings, cancellationToken).ConfigureAwait(false);
 
-		var queryParts = new List<string>(capacity: 8) { "static=true" };
-		if (streamSelection.AudioStreamIndex is not null)
-		{
-			queryParts.Add($"audioStreamIndex={streamSelection.AudioStreamIndex.Value}");
-		}
-		if (streamSelection.SubtitleStreamIndex is not null)
-		{
-			queryParts.Add($"subtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
-		}
-		if (!string.IsNullOrWhiteSpace(streamSelection.SubtitleMethod))
-		{
-			queryParts.Add($"subtitleMethod={Uri.EscapeDataString(streamSelection.SubtitleMethod!)}");
-		}
-
-		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream?{string.Join("&", queryParts)}", UriKind.Absolute);
-		return new UpstreamPlaybackRequest(
-			Uri: upstreamUri,
-			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-			{
-				["X-Emby-Token"] = apiKey
-			});
+		return (baseUrl, apiKey, userId, itemId, streamSelection);
 	}
 
 	private static Uri AppendOrReplaceQuery(Uri uri, string key, string value)
@@ -498,31 +554,63 @@ public sealed class JellyfinPlaybackProvider(
 		int tmdbId,
 		CancellationToken cancellationToken)
 	{
-		// Jellyfin doesn't have a single stable query shape across all versions/plugins.
-		// Try a few safe variants.
-		var candidates = new[]
+		static bool HasRequestedTmdbId(ItemDto item, int requestedTmdbId)
 		{
-			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1&Fields=ProviderIds&AnyProviderIdEquals=tmdb.{tmdbId}",
-			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1&Fields=ProviderIds&AnyProviderIdEquals=Tmdb.{tmdbId}",
-		};
+			if (item.ProviderIds is null || item.ProviderIds.Count == 0)
+			{
+				return false;
+			}
 
-		foreach (var query in candidates)
+			var expected = requestedTmdbId.ToString(CultureInfo.InvariantCulture);
+			foreach (var kvp in item.ProviderIds)
+			{
+				var key = (kvp.Key ?? string.Empty).Trim();
+				if (!key.Contains("tmdb", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				var value = (kvp.Value ?? string.Empty).Trim();
+				if (string.Equals(value, expected, StringComparison.OrdinalIgnoreCase)
+					|| string.Equals(value, $"tmdb.{expected}", StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		// Jellyfin: query the library using the documented /Items endpoint and scan for ProviderIds.Tmdb.
+		// This avoids relying on undocumented provider-id query operators that may be unsupported.
+		const int pageSize = 200;
+		const int maxToScan = 5000;
+		for (var startIndex = 0; startIndex < maxToScan; startIndex += pageSize)
 		{
+			var query = $"Items?userId={Uri.EscapeDataString(userId)}&includeItemTypes=Movie&recursive=true&hasTmdbId=true&fields=ProviderIds&startIndex={startIndex}&limit={pageSize}";
 			var uri = new Uri($"{baseUrl}{query}", UriKind.Absolute);
 			using var request = new HttpRequestMessage(HttpMethod.Get, uri);
 			request.Headers.Accept.ParseAdd("application/json");
 			request.Headers.Add("X-Emby-Token", apiKey);
+
 			using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
 			if (!response.IsSuccessStatusCode)
 			{
-				continue;
+				break;
 			}
 
 			var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 			var dto = JsonSerializer.Deserialize<ItemsResponseDto>(json, Json);
-			var id = dto?.Items?.FirstOrDefault()?.Id;
+			if (dto?.Items is not { Count: > 0 })
+			{
+				break;
+			}
+
+			var match = dto.Items.FirstOrDefault(i => i is not null && HasRequestedTmdbId(i, tmdbId));
+			var id = match?.Id;
 			if (!string.IsNullOrWhiteSpace(id))
 			{
+				logger.LogDebug("jellyfin item id lookup: found TMDB match. TmdbId={TmdbId} StartIndex={StartIndex}", tmdbId, startIndex);
 				return id.Trim();
 			}
 		}
@@ -547,7 +635,9 @@ public sealed class JellyfinPlaybackProvider(
 		[property: JsonPropertyName("Items")] List<ItemDto>? Items,
 		[property: JsonPropertyName("TotalRecordCount")] int TotalRecordCount);
 
-	private sealed record ItemDto([property: JsonPropertyName("Id")] string? Id);
+	private sealed record ItemDto(
+		[property: JsonPropertyName("Id")] string? Id,
+		[property: JsonPropertyName("ProviderIds")] Dictionary<string, string>? ProviderIds);
 
 	private sealed record ItemDetailsDto([property: JsonPropertyName("MediaStreams")] List<MediaStreamDto>? MediaStreams);
 

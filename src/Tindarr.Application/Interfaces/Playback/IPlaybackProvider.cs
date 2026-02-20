@@ -23,6 +23,16 @@ public interface IDirectPlaybackProvider : IPlaybackProvider
 	Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Optional extension for providers that can build a cast-optimized stream request.
+/// This is used when the consumer is a Chromecast receiver, which often requires
+/// a more compatible audio codec/container than normal in-browser playback.
+/// </summary>
+public interface ICastPlaybackProvider : IPlaybackProvider
+{
+	Task<UpstreamPlaybackRequest> BuildMovieCastStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken);
+}
+
 public sealed record UpstreamPlaybackRequest(
 	Uri Uri,
 	IReadOnlyDictionary<string, string> Headers);
