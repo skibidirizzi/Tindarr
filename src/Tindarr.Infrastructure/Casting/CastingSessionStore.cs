@@ -174,27 +174,30 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 
 	private void LogEvent(CastingEventDto evt)
 	{
-		if (!cache.TryGetValue(EventLogKey, out List<CastingEventDto>? events))
+		lock (_lock)
 		{
-			events = [];
-		}
-		else
-		{
-			events = new List<CastingEventDto>(events ?? []);
-		}
+			if (!cache.TryGetValue(EventLogKey, out List<CastingEventDto>? events))
+			{
+				events = [];
+			}
+			else
+			{
+				events = new List<CastingEventDto>(events ?? []);
+			}
 
-		events.Add(evt);
+			events.Add(evt);
 
-		// Keep only the last 200 events in memory.
-		if (events.Count > 200)
-		{
-			events = events.TakeLast(200).ToList();
+			// Keep only the last 200 events in memory.
+			if (events.Count > 200)
+			{
+				events = events.TakeLast(200).ToList();
+			}
+
+			cache.Set(EventLogKey, events, new MemoryCacheEntryOptions
+			{
+				AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+			});
 		}
-
-		cache.Set(EventLogKey, events, new MemoryCacheEntryOptions
-		{
-			AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
-		});
 	}
 
 	private void AddToSessionIndex(string sessionId)

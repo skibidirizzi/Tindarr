@@ -187,18 +187,27 @@ public sealed class CastingController(
 		if (directUrl is not null)
 		{
 			logger.LogInformation("Casting movie to device {DeviceId} via direct {ServiceType} URL.", request.DeviceId, scope.ServiceType);
+			var sessionId = Guid.NewGuid().ToString();
+			try
+			{
+				await castClient.CastAsync(request.DeviceId, new CastMedia(
+					ContentUrl: directUrl.ToString(),
+					ContentType: "video/mp4",
+					Title: title,
+					SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
+			}
+			catch (Exception ex)
+			{
+				castingSessionStore.LogError(sessionId, request.DeviceId, "CastAsync failed; session was not started.", ex);
+				throw;
+			}
 			castingSessionStore.RegisterSession(
-				sessionId: Guid.NewGuid().ToString(),
+				sessionId: sessionId,
 				deviceId: request.DeviceId,
 				contentTitle: title,
 				contentSubtitle: scope.ServiceType.ToString(),
 				contentType: "video/mp4",
 				contentRuntimeSeconds: contentRuntimeSeconds);
-			await castClient.CastAsync(request.DeviceId, new CastMedia(
-				ContentUrl: directUrl.ToString(),
-				ContentType: "video/mp4",
-				Title: title,
-				SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
 			return Ok();
 		}
 
@@ -215,20 +224,28 @@ public sealed class CastingController(
 			Response.Headers["X-Tindarr-Server-Urls"] = serverUrls;
 		if (!IsServerListeningOnNonLoopback())
 			return BadRequest("API is only listening on localhost. Chromecast cannot reach it. Start the API with '--urls http://0.0.0.0:<port>' (or bind to your LAN IP) and allow the port through Windows Firewall.");
+		var gatewaySessionId = Guid.NewGuid().ToString();
+		try
+		{
+			await castClient.CastAsync(request.DeviceId, new CastMedia(
+				ContentUrl: playbackUrl.ToString(),
+				ContentType: "video/mp4",
+				Title: title,
+				SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
+		}
+		catch (Exception ex)
+		{
+			castingSessionStore.LogError(gatewaySessionId, request.DeviceId, "CastAsync failed; session was not started.", ex);
+			throw;
+		}
 
 		castingSessionStore.RegisterSession(
-			sessionId: Guid.NewGuid().ToString(),
+			sessionId: gatewaySessionId,
 			deviceId: request.DeviceId,
 			contentTitle: title,
 			contentSubtitle: scope.ServiceType.ToString(),
 			contentType: "video/mp4",
 			contentRuntimeSeconds: contentRuntimeSeconds);
-
-		await castClient.CastAsync(request.DeviceId, new CastMedia(
-			ContentUrl: playbackUrl.ToString(),
-			ContentType: "video/mp4",
-			Title: title,
-			SubTitle: scope.ServiceType.ToString()), cancellationToken).ConfigureAwait(false);
 
 		return Ok();
 	}

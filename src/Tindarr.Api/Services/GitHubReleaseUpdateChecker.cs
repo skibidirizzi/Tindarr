@@ -26,7 +26,8 @@ public sealed class GitHubReleaseUpdateChecker(
 
 		if (options.CacheMinutes > 0 && cache.TryGetValue(CacheKey, out UpdateCheckResult? cached) && cached is not null)
 		{
-			return cached with { CheckedAtUtc = checkedAtUtc };
+			// Preserve the original timestamp; this is the time the check actually ran.
+			return cached;
 		}
 
 		try
@@ -67,7 +68,7 @@ public sealed class GitHubReleaseUpdateChecker(
 					LatestReleaseName: latest.Name,
 					PublishedAtUtc: latest.PublishedAt?.ToString("O"),
 					IsPreRelease: latest.PreRelease,
-					ReleaseNotes: latest.Body,
+					ReleaseNotes: ReleaseNotesSanitizer.EscapeHtml(latest.Body),
 					Error: $"Latest release tag '{latest.TagName}' is not a version."));
 			}
 
@@ -81,7 +82,7 @@ public sealed class GitHubReleaseUpdateChecker(
 				LatestReleaseName: latest.Name,
 				PublishedAtUtc: latest.PublishedAt?.ToString("O"),
 				IsPreRelease: latest.PreRelease,
-				ReleaseNotes: latest.Body,
+				ReleaseNotes: ReleaseNotesSanitizer.EscapeHtml(latest.Body),
 				Error: null));
 		}
 		catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)

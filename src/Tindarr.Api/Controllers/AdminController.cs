@@ -17,37 +17,16 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/admin")]
-public sealed class AdminController : ControllerBase
+public sealed class AdminController(
+	IUserRepository users,
+	IInteractionStore interactionStore,
+	IJoinAddressSettingsRepository joinAddressSettings,
+	ICastingSettingsRepository castingSettings,
+	IServiceSettingsRepository serviceSettings,
+	IPasswordHasher passwordHasher,
+	IOptions<RegistrationOptions> registrationOptions,
+	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore) : ControllerBase
 {
-	private readonly IUserRepository users;
-	private readonly IInteractionStore interactionStore;
-	private readonly IJoinAddressSettingsRepository joinAddressSettings;
-	private readonly ICastingSettingsRepository castingSettings;
-	private readonly IServiceSettingsRepository serviceSettings;
-	private readonly IPasswordHasher passwordHasher;
-	private readonly RegistrationOptions registration;
-	private readonly Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore;
-
-	public AdminController(
-		IUserRepository users,
-		IInteractionStore interactionStore,
-		IJoinAddressSettingsRepository joinAddressSettings,
-		ICastingSettingsRepository castingSettings,
-		IServiceSettingsRepository serviceSettings,
-		IPasswordHasher passwordHasher,
-		IOptions<RegistrationOptions> registrationOptions,
-		Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore)
-	{
-		this.users = users;
-		this.interactionStore = interactionStore;
-		this.joinAddressSettings = joinAddressSettings;
-		this.castingSettings = castingSettings;
-		this.serviceSettings = serviceSettings;
-		this.passwordHasher = passwordHasher;
-		registration = registrationOptions.Value;
-		this.castingSessionStore = castingSessionStore;
-	}
-
 	[HttpGet("casting/diagnostics")]
 	public ActionResult<Tindarr.Contracts.Admin.CastingDiagnosticsDto> GetCastingDiagnostics()
 	{
@@ -347,10 +326,10 @@ public sealed class AdminController : ControllerBase
 		var now = DateTimeOffset.UtcNow;
 		await users.CreateAsync(new CreateUserRecord(id, displayName, now), cancellationToken);
 
-		var hashed = passwordHasher.Hash(request.Password, registration.PasswordHashIterations);
+		var hashed = passwordHasher.Hash(request.Password, registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [registration.DefaultRole])
+		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [registrationOptions.Value.DefaultRole])
 			.Where(r => !string.IsNullOrWhiteSpace(r))
 			.Select(r => r.Trim())
 			.ToList();
@@ -427,7 +406,7 @@ public sealed class AdminController : ControllerBase
 			return BadRequest(ex.Message);
 		}
 
-		var hashed = passwordHasher.Hash(request.NewPassword, registration.PasswordHashIterations);
+		var hashed = passwordHasher.Hash(request.NewPassword, registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 		return NoContent();
 	}

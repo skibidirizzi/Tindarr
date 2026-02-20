@@ -28,7 +28,14 @@ export type MeResponse = {
   roles: string[];
 };
 
-export type UpdateCheckResponse = {
+export type InfoResponse = {
+  name: string;
+  version: string;
+  environment: string;
+  utcNow: string;
+};
+
+export type AdminUpdateCheckResponse = {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
