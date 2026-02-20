@@ -139,6 +139,8 @@ builder.Services.AddOptions<LoggingOptions>()
 	.Validate(o => o.IsValid(), "Invalid Logging configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddHealthChecks();
+
 builder.Services.AddOptions<TmdbOptions>()
 	.BindConfiguration(TmdbOptions.SectionName)
 	.Validate(o => o.IsValid(), "Invalid Tmdb configuration.")
@@ -401,8 +403,8 @@ if (isWindowsService)
 app.UseCors("devclient");
 
 app.UseMiddleware<CorrelationIdMiddleware>();
-app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -411,6 +413,20 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHealthChecks("/health");
+app.MapHealthChecks("/api/v1/health");
+
+static object BuildInfo(IHostEnvironment env) => new
+{
+	Name = "Tindarr",
+	Version = Tindarr.Application.Common.TindarrVersion.Current.ToString(3),
+	Environment = env.EnvironmentName,
+	UtcNow = DateTimeOffset.UtcNow.ToString("O")
+};
+
+app.MapGet("/info", (IHostEnvironment env) => Results.Ok(BuildInfo(env)));
+app.MapGet("/api/v1/info", (IHostEnvironment env) => Results.Ok(BuildInfo(env)));
 
 // SPA fallback for non-API routes only.
 app.MapFallback(async context =>

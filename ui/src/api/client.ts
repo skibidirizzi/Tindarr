@@ -70,10 +70,27 @@ import type {
   CastDeviceDto,
   CastMovieRequest,
   CastMediaUrlDto,
-  GetMovieCastUrlRequest
+  GetMovieCastUrlRequest,
+  UpdateCheckResponse
 } from "./contracts";
 import { ApiError, apiRequest } from "./http";
 import { getCachedJson, setCachedJson } from "./localCache";
+
+export async function fetchUpdateCheck(options?: { force?: boolean }): Promise<UpdateCheckResponse> {
+  const cacheKey = "tindarr:updateCheck:v1";
+  if (!options?.force) {
+    const cached = getCachedJson<UpdateCheckResponse>(cacheKey);
+    if (cached) return cached;
+  }
+
+  const fresh = await apiRequest<UpdateCheckResponse>({
+    path: "/api/v1/update"
+  });
+
+  // Keep this fairly short so “update available” doesn’t lag too long.
+  setCachedJson(cacheKey, fresh, 10 * 60 * 1000);
+  return fresh;
+}
 
 function resolveScope(serviceType?: string, serverId?: string) {
   const stored = getServiceScope();

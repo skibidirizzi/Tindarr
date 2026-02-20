@@ -10,6 +10,7 @@ namespace Tindarr.Infrastructure.Casting;
 public sealed class CastingSessionStore(IMemoryCache cache)
 {
 	private const string SessionKeyPrefix = "casting:session:";
+	private const string SessionIndexKey = "casting:sessions:index";
 	private const string EventLogKey = "casting:events";
 	private long _eventIdCounter = 0;
 	private readonly object _lock = new object();
@@ -49,6 +50,8 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 			AbsoluteExpirationRelativeToNow = ttl
 		});
 
+		AddToSessionIndex(sessionId);
+
 		LogEvent(new CastingEventDto(
 			EventId: GetNextEventId(),
 			OccurredAtUtc: DateTime.UtcNow,
@@ -69,6 +72,7 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 		if (cache.TryGetValue(key, out CastingSessionDto? session) && session is not null)
 		{
 			cache.Remove(key);
+			RemoveFromSessionIndex(sessionId);
 
 			LogEvent(new CastingEventDto(
 				EventId: GetNextEventId(),
@@ -79,6 +83,11 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 				ErrorDetails: null));
 
 			SessionEnded?.Invoke(this, new CastingEventArgs(sessionId, session.DeviceId));
+		}
+		else
+		{
+			// Best-effort cleanup when the session already expired.
+			RemoveFromSessionIndex(sessionId);
 		}
 	}
 
@@ -103,9 +112,40 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 	/// </summary>
 	public List<CastingSessionDto> GetActiveSessions()
 	{
-		var sessions = new List<CastingSessionDto>();
-		// In a real implementation, we'd iterate cached keys.
-		// For simplicity, we store the list with each event.
+		HashSet<string> sessionIds;
+		lock (_lock)
+		{
+			sessionIds = LoadSessionIndexNoLock();
+		}
+
+		var sessions = new List<CastingSessionDto>(sessionIds.Count);
+		var stale = new List<string>();
+		foreach (var id in sessionIds)
+		{
+			var key = $"{SessionKeyPrefix}{id}";
+			if (cache.TryGetValue(key, out CastingSessionDto? s) && s is not null)
+			{
+				sessions.Add(s);
+			}
+			else
+			{
+				stale.Add(id);
+			}
+		}
+
+		if (stale.Count > 0)
+		{
+			lock (_lock)
+			{
+				var updated = LoadSessionIndexNoLock();
+				foreach (var id in stale)
+				{
+					updated.Remove(id);
+				}
+				SaveSessionIndexNoLock(updated);
+			}
+		}
+
 		return sessions;
 	}
 
@@ -154,6 +194,54 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 		cache.Set(EventLogKey, events, new MemoryCacheEntryOptions
 		{
 			AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
+		});
+	}
+
+	private void AddToSessionIndex(string sessionId)
+	{
+		lock (_lock)
+		{
+			var ids = LoadSessionIndexNoLock();
+			if (ids.Add(sessionId))
+			{
+				SaveSessionIndexNoLock(ids);
+			}
+			else
+			{
+				// Refresh TTL even when it's already present.
+				SaveSessionIndexNoLock(ids);
+			}
+		}
+	}
+
+	private void RemoveFromSessionIndex(string sessionId)
+	{
+		lock (_lock)
+		{
+			var ids = LoadSessionIndexNoLock();
+			if (ids.Remove(sessionId))
+			{
+				SaveSessionIndexNoLock(ids);
+			}
+		}
+	}
+
+	private HashSet<string> LoadSessionIndexNoLock()
+	{
+		if (!cache.TryGetValue(SessionIndexKey, out HashSet<string>? ids) || ids is null)
+		{
+			return new HashSet<string>(StringComparer.Ordinal);
+		}
+
+		// Copy so we never mutate the cached instance outside the lock.
+		return new HashSet<string>(ids, StringComparer.Ordinal);
+	}
+
+	private void SaveSessionIndexNoLock(HashSet<string> ids)
+	{
+		cache.Set(SessionIndexKey, ids, new MemoryCacheEntryOptions
+		{
+			SlidingExpiration = TimeSpan.FromDays(7)
 		});
 	}
 

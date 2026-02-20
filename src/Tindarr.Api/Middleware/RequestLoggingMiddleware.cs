@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using System.Diagnostics;
 using Tindarr.Application.Options;
 
 namespace Tindarr.Api.Middleware;
@@ -12,6 +13,8 @@ public sealed class RequestLoggingMiddleware(
 
 	public async Task InvokeAsync(HttpContext context)
 	{
+		var sw = Stopwatch.StartNew();
+
 		var correlationId =
 			context.Items.TryGetValue(CorrelationIdMiddleware.ItemKey, out var cidObj) ? cidObj?.ToString() :
 			context.Request.Headers.TryGetValue(CorrelationIdMiddleware.HeaderName, out var cidHeader) ? cidHeader.ToString() :
@@ -34,5 +37,25 @@ public sealed class RequestLoggingMiddleware(
 			headers);
 
 		await next(context);
+
+		sw.Stop();
+
+		Dictionary<string, string?>? responseHeaders = null;
+		if (loggingOptions.LogResponseHeaders)
+		{
+			responseHeaders = context.Response.Headers.ToDictionary(
+				kvp => kvp.Key,
+				kvp => (string?)SensitiveRedaction.RedactHeader(kvp.Key, kvp.Value.ToString()));
+		}
+
+		logger.LogInformation(
+			"HTTP {Method} {Path} -> {StatusCode} ({ElapsedMs} ms) CorrelationId={CorrelationId} ContentType={ContentType} ResponseHeaders={ResponseHeaders}",
+			context.Request.Method,
+			pathAndQuery,
+			context.Response.StatusCode,
+			sw.ElapsedMilliseconds,
+			correlationId,
+			context.Response.ContentType,
+			responseHeaders);
 	}
 }

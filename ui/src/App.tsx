@@ -12,8 +12,8 @@ import NotFoundPage from "./pages/NotFoundPage";
 import { useAuth } from "./auth/AuthContext";
 import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
 import PlexBulkJobToast from "./components/PlexBulkJobToast";
-import { fetchConfiguredScopes } from "./api/client";
-import type { ServiceScopeOptionDto } from "./api/contracts";
+import { fetchConfiguredScopes, fetchUpdateCheck } from "./api/client";
+import type { ServiceScopeOptionDto, UpdateCheckResponse } from "./api/contracts";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, type ServiceScope } from "./serviceScope";
 
 const HEADER_COLLAPSED_KEY = "tindarr:headerCollapsed:v1";
@@ -66,6 +66,9 @@ function AppLayout() {
   const location = useLocation();
   const isAdmin = user?.roles?.includes("Admin") ?? false;
 
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
+  const [updateRefreshing, setUpdateRefreshing] = useState(false);
+
   const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
   const [availableScopes, setAvailableScopes] = useState<ServiceScopeOptionDto[]>([]);
 
@@ -82,6 +85,24 @@ function AppLayout() {
       .then(setAvailableScopes)
       .catch((err) => console.error("Failed to fetch configured scopes:", err));
   }, []);
+
+  useEffect(() => {
+    fetchUpdateCheck()
+      .then(setUpdateInfo)
+      .catch((err) => console.warn("Failed to fetch update check:", err));
+  }, []);
+
+  const refreshUpdateCheck = async () => {
+    setUpdateRefreshing(true);
+    try {
+      const fresh = await fetchUpdateCheck({ force: true });
+      setUpdateInfo(fresh);
+    } catch (err) {
+      console.warn("Failed to refresh update check:", err);
+    } finally {
+      setUpdateRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -131,6 +152,50 @@ function AppLayout() {
         <div className="app__headerInner">
           <div className="app__brand">
             <h1>Tindarr</h1>
+            {updateInfo ? (
+              <p>
+                {updateInfo.currentVersion ? `v${updateInfo.currentVersion}` : null}
+                {!updateInfo.updateAvailable ? (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      className="pill"
+                      onClick={refreshUpdateCheck}
+                      disabled={updateRefreshing}
+                      style={{ padding: "0.25rem 0.55rem", fontSize: "0.85rem" }}
+                      title="Check for updates"
+                    >
+                      {updateRefreshing ? "Checking…" : "Check for updates"}
+                    </button>
+                  </>
+                ) : null}
+                {updateInfo.updateAvailable ? (
+                  <>
+                    {updateInfo.currentVersion ? " — " : null}
+                    Update available
+                    {updateInfo.latestVersion ? ` (v${updateInfo.latestVersion})` : ""}
+                    {updateInfo.latestReleaseUrl ? (
+                      <>
+                        {" "}
+                        {isAdmin ? (
+                          <a
+                            href={updateInfo.latestReleaseUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: "inherit", textDecoration: "underline" }}
+                          >
+                            GitHub release
+                          </a>
+                        ) : (
+                          <span>GitHub release</span>
+                        )}
+                      </>
+                    ) : null}
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           <nav className="app__nav" aria-label="Primary">
             <button

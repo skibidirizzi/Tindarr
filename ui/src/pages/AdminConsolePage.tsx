@@ -363,6 +363,7 @@ function CastingTab() {
   // Poll diagnostics every 5s
   useEffect(() => {
     let stop = false;
+    let timeoutId: number | null = null;
     async function poll() {
       setDiagLoading(true);
       try {
@@ -376,10 +377,13 @@ function CastingTab() {
       } finally {
         if (!stop) setDiagLoading(false);
       }
-      if (!stop) setTimeout(poll, 5000);
+      if (!stop) timeoutId = window.setTimeout(poll, 5000);
     }
     poll();
-    return () => { stop = true; };
+    return () => {
+      stop = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
   }, []);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
