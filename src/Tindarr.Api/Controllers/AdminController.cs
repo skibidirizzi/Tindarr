@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
@@ -26,10 +27,150 @@ public sealed class AdminController(
 	IJoinAddressSettingsRepository joinAddressSettings,
 	ICastingSettingsRepository castingSettings,
 	IServiceSettingsRepository serviceSettings,
+	IAdvancedSettingsRepository advancedSettings,
+	IEffectiveAdvancedSettings effectiveAdvancedSettings,
 	IPasswordHasher passwordHasher,
 	IOptions<RegistrationOptions> registrationOptions,
 	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore) : ControllerBase
 {
+	private static readonly AdvancedSettingsApiRateLimitDto ApiRateLimitDefaults = new(
+		Enabled: true,
+		PermitLimit: 200,
+		WindowMinutes: 1);
+
+	private static readonly AdvancedSettingsCleanupDto CleanupDefaults = new(
+		Enabled: true,
+		IntervalMinutes: (int)TimeSpan.FromHours(6).TotalMinutes,
+		PurgeGuestUsers: true,
+		GuestUserMaxAgeHours: (int)TimeSpan.FromDays(1).TotalHours);
+
+	private static readonly AdvancedSettingsDisplayDto DisplayDefaults = new(
+		DateTimeDisplayMode: "locale",
+		TimeZoneId: "Local",
+		DateOrder: "locale");
+
+	[HttpGet("advanced-settings")]
+	public Task<ActionResult<AdvancedSettingsDto>> GetAdvancedSettings(CancellationToken cancellationToken)
+	{
+		var api = effectiveAdvancedSettings.GetApiRateLimitOptions();
+		var cleanup = effectiveAdvancedSettings.GetCleanupOptions();
+		var hasTmdbApiKey = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbApiKey());
+		var dateTimeDisplayMode = effectiveAdvancedSettings.GetDateTimeDisplayMode();
+		var timeZoneId = effectiveAdvancedSettings.GetTimeZoneId();
+		var dateOrder = effectiveAdvancedSettings.GetDateOrder();
+
+		var dto = new AdvancedSettingsDto(
+			ApiRateLimit: new AdvancedSettingsApiRateLimitDto(api.Enabled, api.PermitLimit, (int)api.Window.TotalMinutes),
+			ApiRateLimitDefaults,
+			Cleanup: new AdvancedSettingsCleanupDto(
+				cleanup.Enabled,
+				(int)cleanup.Interval.TotalMinutes,
+				cleanup.PurgeGuestUsers,
+				(int)cleanup.GuestUserMaxAge.TotalHours),
+			CleanupDefaults,
+			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey),
+			Display: new AdvancedSettingsDisplayDto(dateTimeDisplayMode, timeZoneId, dateOrder),
+			DisplayDefaults);
+		return Task.FromResult<ActionResult<AdvancedSettingsDto>>(Ok(dto));
+	}
+
+	[HttpPut("advanced-settings")]
+	public async Task<ActionResult<AdvancedSettingsDto>> UpdateAdvancedSettings(
+		[FromBody] UpdateAdvancedSettingsRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (request.ApiRateLimitPermitLimit is int pl && (pl < 1 || pl > 10_000))
+		{
+			return BadRequest("ApiRateLimitPermitLimit must be between 1 and 10000.");
+		}
+
+		if (request.ApiRateLimitWindowMinutes is int wm && (wm < 1 || wm > 60 * 24))
+		{
+			return BadRequest("ApiRateLimitWindowMinutes must be between 1 and 1440.");
+		}
+
+		if (request.CleanupIntervalMinutes is int ci && (ci < 1 || ci > 60 * 24 * 7))
+		{
+			return BadRequest("CleanupIntervalMinutes must be between 1 and 10080.");
+		}
+
+		if (request.CleanupGuestUserMaxAgeHours is int gh && (gh < 1 || gh > 24 * 365))
+		{
+			return BadRequest("CleanupGuestUserMaxAgeHours must be between 1 and 8760.");
+		}
+
+		string? dateTimeDisplayMode = null;
+		if (request.DateTimeDisplayMode is not null)
+		{
+			var v = request.DateTimeDisplayMode.Trim().ToLowerInvariant();
+			if (v is not ("locale" or "12h" or "24h" or "relative"))
+			{
+				return BadRequest("DateTimeDisplayMode must be one of: locale, 12h, 24h, relative.");
+			}
+			dateTimeDisplayMode = v;
+		}
+
+		string? timeZoneId = request.TimeZoneId?.Trim();
+		if (timeZoneId is not null && timeZoneId.Length == 0)
+		{
+			timeZoneId = null;
+		}
+
+		string? dateOrder = null;
+		if (request.DateOrder is not null)
+		{
+			var v = request.DateOrder.Trim().ToLowerInvariant();
+			if (v is not ("locale" or "mdy" or "dmy" or "ymd"))
+			{
+				return BadRequest("DateOrder must be one of: locale, mdy, dmy, ymd.");
+			}
+			dateOrder = v;
+		}
+
+		// Only update TmdbApiKey when client explicitly sets it (TmdbApiKeySet == true); otherwise keep existing.
+		string? tmdbApiKeyForUpsert = request.TmdbApiKeySet == true
+			? (string.IsNullOrWhiteSpace(request.TmdbApiKey) ? null : request.TmdbApiKey!.Trim())
+			: null;
+		AdvancedSettingsRecord? existingRecord = null;
+		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
+		{
+			existingRecord = await advancedSettings.GetAsync(cancellationToken).ConfigureAwait(false);
+			if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true)
+			{
+				tmdbApiKeyForUpsert = existingRecord?.TmdbApiKey;
+			}
+			if (dateTimeDisplayMode is null)
+			{
+				dateTimeDisplayMode = existingRecord?.DateTimeDisplayMode;
+			}
+			if (timeZoneId is null)
+			{
+				timeZoneId = existingRecord?.TimeZoneId;
+			}
+			if (dateOrder is null)
+			{
+				dateOrder = existingRecord?.DateOrder;
+			}
+		}
+
+		var upsert = new AdvancedSettingsUpsert(
+			request.ApiRateLimitEnabled,
+			request.ApiRateLimitPermitLimit,
+			request.ApiRateLimitWindowMinutes,
+			request.CleanupEnabled,
+			request.CleanupIntervalMinutes,
+			request.CleanupPurgeGuestUsers,
+			request.CleanupGuestUserMaxAgeHours,
+			tmdbApiKeyForUpsert,
+			dateTimeDisplayMode,
+			timeZoneId,
+			dateOrder);
+		await advancedSettings.UpsertAsync(upsert, cancellationToken).ConfigureAwait(false);
+		effectiveAdvancedSettings.Invalidate();
+
+		return await GetAdvancedSettings(cancellationToken).ConfigureAwait(false);
+	}
+
 	[HttpGet("casting/diagnostics")]
 	public ActionResult<Tindarr.Contracts.Admin.CastingDiagnosticsDto> GetCastingDiagnostics()
 	{

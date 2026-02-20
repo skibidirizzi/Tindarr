@@ -107,10 +107,9 @@ WHERE Id LIKE 'guest-%'
 
 	public async Task<IReadOnlyCollection<UserRecord>> ListAsync(int skip, int take, CancellationToken cancellationToken)
 	{
-		var users = await db.Users
+		// SQLite does not support ORDER BY DateTimeOffset; materialize then order on the client.
+		var all = await db.Users
 			.AsNoTracking()
-			.Skip(Math.Max(0, skip))
-			.Take(Math.Clamp(take, 1, 500))
 			.Select(x => new UserRecord(
 				x.Id,
 				x.DisplayName,
@@ -118,10 +117,12 @@ WHERE Id LIKE 'guest-%'
 				x.PasswordHash != null && x.PasswordSalt != null && x.PasswordIterations != null))
 			.ToListAsync(cancellationToken);
 
-		// SQLite provider cannot translate DateTimeOffset ORDER BY reliably; sort in-memory.
-		users = users.OrderBy(x => x.CreatedAtUtc).ToList();
-
-		return users;
+		return all
+			.OrderBy(x => x.CreatedAtUtc)
+			.ThenBy(x => x.Id)
+			.Skip(Math.Max(0, skip))
+			.Take(Math.Clamp(take, 1, 500))
+			.ToList();
 	}
 
 	public async Task CreateAsync(CreateUserRecord user, CancellationToken cancellationToken)

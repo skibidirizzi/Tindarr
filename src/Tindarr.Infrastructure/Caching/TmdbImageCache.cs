@@ -2,11 +2,16 @@ using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Caching;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Options;
 
 namespace Tindarr.Infrastructure.Caching;
 
-public sealed class TmdbImageCache(HttpClient httpClient, IOptions<TmdbOptions> options, string sqliteDbPath) : ITmdbImageCache
+public sealed class TmdbImageCache(
+	HttpClient httpClient,
+	IOptions<TmdbOptions> options,
+	IEffectiveAdvancedSettings effectiveAdvancedSettings,
+	string sqliteDbPath) : ITmdbImageCache
 {
 	private const int BusyTimeoutMs = 5_000;
 	private const int WriteRetryCount = 6;
@@ -159,7 +164,7 @@ public sealed class TmdbImageCache(HttpClient httpClient, IOptions<TmdbOptions> 
 
 	public async Task<TmdbImageCacheResult?> GetOrFetchAsync(string size, string path, CancellationToken cancellationToken)
 	{
-		if (!_tmdb.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return null;
 		}

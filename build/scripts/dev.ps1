@@ -105,8 +105,8 @@ function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 }
 
 function Start-Api([string]$repoRoot, [string]$listenUrl, [string]$environment, [string]$lanBaseUrl) {
-	$apiDir = Join-Path $repoRoot "src\Tindarr.Api"
-	if (-not (Test-Path $apiDir)) { throw "API directory not found: $apiDir" }
+	$apiProject = Join-Path $repoRoot "src\Tindarr.Api\Tindarr.Api.csproj"
+	if (-not (Test-Path $apiProject)) { throw "API project not found: $apiProject" }
 
 	Write-Host "Starting API (dotnet watch) listening at $listenUrl ($environment)..."
 	if ($lanBaseUrl) {
@@ -122,19 +122,14 @@ function Start-Api([string]$repoRoot, [string]$listenUrl, [string]$environment, 
 		}
 	}
 
-	Push-Location $apiDir
-	try {
-		# Run in a child process so we can terminate it when needed.
-		return Start-Process -FilePath "dotnet" -ArgumentList @("watch", "run") -WorkingDirectory $apiDir -PassThru
-	}
-	finally {
-		Pop-Location
-	}
+	# Run watch from repo root with explicit project so referenced assemblies (e.g. Tindarr.Infrastructure) resolve correctly.
+	$watchArgs = @("watch", "run", "--project", $apiProject)
+	return Start-Process -FilePath "dotnet" -ArgumentList $watchArgs -WorkingDirectory $repoRoot -PassThru
 }
 
 function Start-Workers([string]$repoRoot, [string]$environment, [string]$lanBaseUrl) {
-	$workersDir = Join-Path $repoRoot "src\Tindarr.Workers"
-	if (-not (Test-Path $workersDir)) { throw "Workers directory not found: $workersDir" }
+	$workersProject = Join-Path $repoRoot "src\Tindarr.Workers\Tindarr.Workers.csproj"
+	if (-not (Test-Path $workersProject)) { throw "Workers project not found: $workersProject" }
 
 	Write-Host "Starting Workers (dotnet watch) ($environment)..."
 
@@ -147,14 +142,9 @@ function Start-Workers([string]$repoRoot, [string]$environment, [string]$lanBase
 		}
 	}
 
-	Push-Location $workersDir
-	try {
-		# Run in a child process so we can terminate it when needed.
-		return Start-Process -FilePath "dotnet" -ArgumentList @("watch", "run") -WorkingDirectory $workersDir -PassThru
-	}
-	finally {
-		Pop-Location
-	}
+	# Run watch from repo root with explicit project so referenced assemblies resolve correctly.
+	$watchArgs = @("watch", "run", "--project", $workersProject)
+	return Start-Process -FilePath "dotnet" -ArgumentList $watchArgs -WorkingDirectory $repoRoot -PassThru
 }
 
 $repoRoot = Resolve-RepoRoot
@@ -211,12 +201,12 @@ if ($lanIp) {
 try {
 	if (-not $UiOnly) {
 		$apiProc = Start-Api -repoRoot $repoRoot -listenUrl $listenUrl -environment $Environment -lanBaseUrl $lanBaseUrl
-		Start-Sleep -Seconds 5
+		Start-Sleep -Seconds 8
 		$workersProc = Start-Workers -repoRoot $repoRoot -environment $Environment -lanBaseUrl $lanBaseUrl
 	}
 
 	if (-not $ApiOnly) {
-		Start-Sleep -Seconds 5
+		Start-Sleep -Seconds 8
 		$uiProc = Start-Ui -repoRoot $repoRoot -apiUrl $proxyTarget -uiPort $UiPort
 	}
 

@@ -11,7 +11,8 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/emby")]
-public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRepository settingsRepo) : ControllerBase
+public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRepository settingsRepo)
+	: MediaServerControllerBase(settingsRepo)
 {
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<EmbyServerDto>>> ListServers(CancellationToken cancellationToken)
@@ -32,7 +33,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Emby, "emby", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -77,7 +78,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Emby, "emby", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -92,7 +93,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 		[FromQuery] string serverId,
 		CancellationToken cancellationToken)
 	{
-		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		if (!TryGetScope(serviceType, serverId, ServiceType.Emby, "emby", out var scope, out var errorResult))
 		{
 			return errorResult!;
 		}
@@ -120,28 +121,6 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 		}
 	}
 
-	private static bool TryGetScope(
-		string serviceType,
-		string serverId,
-		out ServiceScope? scope,
-		out ActionResult? errorResult)
-	{
-		errorResult = null;
-		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
-		{
-			errorResult = new BadRequestObjectResult("ServiceType and ServerId are required.");
-			return false;
-		}
-
-		if (scope!.ServiceType != ServiceType.Emby)
-		{
-			errorResult = new BadRequestObjectResult("ServiceType must be emby.");
-			return false;
-		}
-
-		return true;
-	}
-
 	private static EmbySettingsDto MapSettings(ServiceScope scope, Tindarr.Application.Abstractions.Persistence.ServiceSettingsRecord? settings)
 	{
 		var configured = settings is not null && !string.IsNullOrWhiteSpace(settings.EmbyBaseUrl);
@@ -162,12 +141,6 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 	[HttpDelete("servers/{serverId}")]
 	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
 	{
-		if (string.IsNullOrWhiteSpace(serverId))
-		{
-			return BadRequest("ServerId is required.");
-		}
-
-		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Emby, serverId.Trim()), cancellationToken);
-		return deleted ? NoContent() : NotFound("Server not found.");
+		return await DeleteServerAsync(ServiceType.Emby, serverId, cancellationToken).ConfigureAwait(false);
 	}
 }

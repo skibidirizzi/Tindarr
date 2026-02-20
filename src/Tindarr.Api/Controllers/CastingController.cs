@@ -63,6 +63,7 @@ public sealed class CastingController(
 	public async Task<IActionResult> GetRoomQrPng(
 		[FromRoute] string roomId,
 		[FromQuery] string? token,
+		[FromQuery] string? variant,
 		CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(roomId))
@@ -81,7 +82,7 @@ public sealed class CastingController(
 			return NotFound("Room not found.");
 		}
 
-		var joinUrl = await BuildJoinUrlAsync(room.RoomId, cancellationToken).ConfigureAwait(false);
+		var joinUrl = await BuildJoinUrlAsync(room.RoomId, variant, cancellationToken).ConfigureAwait(false);
 		if (joinUrl is null)
 		{
 			return BadRequest("Join URL base is not configured. Ask an admin to set LAN/WAN join address in Admin Console.");
@@ -120,7 +121,12 @@ public sealed class CastingController(
 		}
 
 		var token = castUrlTokenService.IssueRoomQrToken(roomId, DateTimeOffset.UtcNow);
-		var qrUrl = new Uri(baseUri, $"api/v1/casting/rooms/{Uri.EscapeDataString(roomId)}/qr.png?token={Uri.EscapeDataString(token)}");
+		var qrPath = $"api/v1/casting/rooms/{Uri.EscapeDataString(roomId)}/qr.png?token={Uri.EscapeDataString(token)}";
+		if (!string.IsNullOrWhiteSpace(request.Variant) && (request.Variant.Equals("lan", StringComparison.OrdinalIgnoreCase) || request.Variant.Equals("wan", StringComparison.OrdinalIgnoreCase)))
+		{
+			qrPath += "&variant=" + Uri.EscapeDataString(request.Variant.Trim().ToLowerInvariant());
+		}
+		var qrUrl = new Uri(baseUri, qrPath);
 		logger.LogInformation("Casting room QR to device {DeviceId}: {Url}", request.DeviceId, qrUrl);
 		Response.Headers["X-Tindarr-Cast-Url"] = qrUrl.ToString();
 		var serverUrls = GetServerUrlsHeaderValue();
@@ -146,6 +152,7 @@ public sealed class CastingController(
 	[Authorize]
 	public async Task<ActionResult<CastMediaUrlDto>> GetRoomQrCastUrl(
 		[FromRoute] string roomId,
+		[FromQuery] string? variant,
 		CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(roomId))
@@ -171,7 +178,12 @@ public sealed class CastingController(
 		}
 
 		var token = castUrlTokenService.IssueRoomQrToken(roomId, DateTimeOffset.UtcNow);
-		var qrUrl = new Uri(baseUri, $"api/v1/casting/rooms/{Uri.EscapeDataString(roomId)}/qr.png?token={Uri.EscapeDataString(token)}");
+		var qrPath = $"api/v1/casting/rooms/{Uri.EscapeDataString(roomId)}/qr.png?token={Uri.EscapeDataString(token)}";
+		if (!string.IsNullOrWhiteSpace(variant) && (variant.Equals("lan", StringComparison.OrdinalIgnoreCase) || variant.Equals("wan", StringComparison.OrdinalIgnoreCase)))
+		{
+			qrPath += "&variant=" + Uri.EscapeDataString(variant.Trim().ToLowerInvariant());
+		}
+		var qrUrl = new Uri(baseUri, qrPath);
 		Response.Headers["X-Tindarr-Cast-Url"] = qrUrl.ToString();
 
 		var sessionId = Guid.NewGuid().ToString();
@@ -408,8 +420,29 @@ public sealed class CastingController(
 		}
 	}
 
-	private async Task<string?> BuildJoinUrlAsync(string roomId, CancellationToken cancellationToken)
+	private async Task<string?> BuildJoinUrlAsync(string roomId, string? variant, CancellationToken cancellationToken)
 	{
+		var settings = await joinAddressSettings.GetAsync(cancellationToken).ConfigureAwait(false);
+		var lanHostPort = settings?.LanHostPort;
+		var wanHostPort = settings?.WanHostPort;
+
+		// When variant is specified (for cast QR hotswap), use that host:port.
+		if (!string.IsNullOrWhiteSpace(variant))
+		{
+			var useLan = variant.Trim().Equals("lan", StringComparison.OrdinalIgnoreCase);
+			var hostPort = useLan ? lanHostPort : wanHostPort;
+			if (string.IsNullOrWhiteSpace(hostPort))
+			{
+				hostPort = useLan ? wanHostPort : lanHostPort;
+			}
+			if (!string.IsNullOrWhiteSpace(hostPort))
+			{
+				hostPort = hostPort.Trim().TrimEnd('/');
+				var scheme = ResolveJoinScheme(hostPort, lanHostPort, wanHostPort, baseUrlOptions.Value, Request.Scheme);
+				return $"{scheme}://{hostPort}/rooms/{Uri.EscapeDataString(roomId)}";
+			}
+		}
+
 		var baseUri = await ResolveJoinBaseUriAsync(cancellationToken).ConfigureAwait(false);
 		if (baseUri is null)
 		{

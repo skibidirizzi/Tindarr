@@ -173,10 +173,10 @@ public sealed class CastingControllerSessionLifecycleTests
 			HttpContext = new DefaultHttpContext()
 		};
 		controller.ControllerContext.HttpContext.Request.Scheme = "http";
-		controller.ControllerContext.HttpContext.Request.Host = new HostString("10.0.0.1", 5000);
+		controller.ControllerContext.HttpContext.Request.Host = new HostString("10.0.0.1", 6565);
 		controller.ControllerContext.HttpContext.RequestServices = new ServiceCollection().BuildServiceProvider();
 
-		var result = await controller.GetRoomQrCastUrl("room-1", CancellationToken.None);
+		var result = await controller.GetRoomQrCastUrl("room-1", variant: null, CancellationToken.None);
 		var ok = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(result.Result);
 		var dto = Assert.IsType<CastMediaUrlDto>(ok.Value);
 		Assert.False(string.IsNullOrWhiteSpace(dto.SessionId));
@@ -291,7 +291,7 @@ public sealed class CastingControllerSessionLifecycleTests
 
 	private sealed class TestBaseUrlResolver : IBaseUrlResolver
 	{
-		public Uri GetBaseUri(IPAddress? clientIp = null) => new("http://10.0.0.1:5000");
+		public Uri GetBaseUri(IPAddress? clientIp = null) => new("http://10.0.0.1:6565");
 
 		public Uri Combine(string relativePathAndQuery, IPAddress? clientIp = null) => new(GetBaseUri(clientIp), relativePathAndQuery);
 

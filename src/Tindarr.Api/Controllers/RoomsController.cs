@@ -156,7 +156,24 @@ public sealed class RoomsController(
 			baseUrlOptions.Value,
 			Request.Scheme);
 		var join = $"{scheme}://{hostPort}/rooms/{room.RoomId}";
-		return Ok(new RoomJoinUrlResponse(join));
+
+		// Build LAN and WAN URLs for hotswapping when both are configured.
+		string? lanUrl = null;
+		string? wanUrl = null;
+		var normalizedLan = (lanHostPort ?? string.Empty).Trim().TrimEnd('/');
+		var normalizedWan = (wanHostPort ?? string.Empty).Trim().TrimEnd('/');
+		if (!string.IsNullOrWhiteSpace(normalizedLan))
+		{
+			var lanScheme = ResolveJoinScheme(normalizedLan, lanHostPort, wanHostPort, baseUrlOptions.Value, Request.Scheme);
+			lanUrl = $"{lanScheme}://{normalizedLan}/rooms/{room.RoomId}";
+		}
+		if (!string.IsNullOrWhiteSpace(normalizedWan))
+		{
+			var wanScheme = ResolveJoinScheme(normalizedWan, lanHostPort, wanHostPort, baseUrlOptions.Value, Request.Scheme);
+			wanUrl = $"{wanScheme}://{normalizedWan}/rooms/{room.RoomId}";
+		}
+
+		return Ok(new RoomJoinUrlResponse(join, lanUrl, wanUrl));
 	}
 
 	private static string ResolveJoinScheme(

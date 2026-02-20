@@ -21,6 +21,7 @@ public sealed class TindarrDbContext : DbContext
 	public DbSet<LibraryCacheEntity> LibraryCache => Set<LibraryCacheEntity>();
 	public DbSet<JoinAddressSettingsEntity> JoinAddressSettings => Set<JoinAddressSettingsEntity>();
 	public DbSet<CastingSettingsEntity> CastingSettings => Set<CastingSettingsEntity>();
+	public DbSet<AdvancedSettingsEntity> AdvancedSettings => Set<AdvancedSettingsEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{

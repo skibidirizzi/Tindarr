@@ -6,16 +6,19 @@ import {
   adminDbListMovies,
   adminCreateUser,
   adminDeleteUser,
+  adminGetAdvancedSettings,
   adminGetCastingSettings,
   adminGetJoinAddressSettings,
   adminListUsers,
   adminGetMatchSettings,
   adminSetUserPassword,
   adminSetUserRoles,
+  adminUpdateAdvancedSettings,
   adminUpdateCastingSettings,
   adminUpdateJoinAddressSettings,
   adminUpdateMatchSettings,
   adminUpdateUser,
+  getDisplaySettings,
   embyDeleteServer,
   embyListServers,
   embySyncLibrary,
@@ -59,6 +62,7 @@ import type {
 import type {
   CastingSettingsDto,
   MatchSettingsDto,
+  AdvancedSettingsDto,
   EmbyServerDto,
   JellyfinServerDto,
   JoinAddressSettingsDto,
@@ -88,6 +92,8 @@ import {
   subscribePlexBulkJob,
   type PlexBulkJob
 } from "../plex/plexBulkJob";
+import { useDisplaySettings } from "../hooks/useDisplaySettings";
+import { formatDateTime, DEFAULT_DISPLAY, getTimeZoneOptions } from "../utils/formatDateTime";
 
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT } from "../serviceScope";
 import PosterGallery from "../components/PosterGallery";
@@ -127,35 +133,48 @@ function roleButtonClass(role: AppRole) {
   return `${base} pill--contributor`;
 }
 
+type TindarrSubTab = "users" | "rooms" | "db" | "casting" | "advanced";
+type MainTab = "tindarr" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb";
+
 export default function AdminConsolePage() {
-  const [tab, setTab] = useState<"users" | "plex" | "radarr" | "jellyfin" | "emby" | "tmdb" | "rooms" | "casting" | "db">("users");
+  const [mainTab, setMainTab] = useState<MainTab>("tindarr");
+  const [tindarrSubTab, setTindarrSubTab] = useState<TindarrSubTab>("users");
 
   return (
     <section className="deck">
       <div className="deck__toolbar" style={{ justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
         <h2 style={{ margin: 0 }}>Admin Console</h2>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-          <button type="button" className={tabButtonClass(tab === "users")} onClick={() => setTab("users")}>Users</button>
-          <button type="button" className={tabButtonClass(tab === "rooms")} onClick={() => setTab("rooms")}>Rooms</button>
-          <button type="button" className={tabButtonClass(tab === "db")} onClick={() => setTab("db")}>DB</button>
-          <button type="button" className={tabButtonClass(tab === "casting")} onClick={() => setTab("casting")}>Casting</button>
-          <button type="button" className={tabButtonClass(tab === "plex")} onClick={() => setTab("plex")}>Plex</button>
-          <button type="button" className={tabButtonClass(tab === "radarr")} onClick={() => setTab("radarr")}>Radarr</button>
-          <button type="button" className={tabButtonClass(tab === "jellyfin")} onClick={() => setTab("jellyfin")}>Jellyfin</button>
-          <button type="button" className={tabButtonClass(tab === "emby")} onClick={() => setTab("emby")}>Emby</button>
-          <button type="button" className={tabButtonClass(tab === "tmdb")} onClick={() => setTab("tmdb")}>TMDB</button>
+          <button type="button" className={tabButtonClass(mainTab === "tindarr")} onClick={() => setMainTab("tindarr")}>Tindarr</button>
+          <button type="button" className={tabButtonClass(mainTab === "plex")} onClick={() => setMainTab("plex")}>Plex</button>
+          <button type="button" className={tabButtonClass(mainTab === "radarr")} onClick={() => setMainTab("radarr")}>Radarr</button>
+          <button type="button" className={tabButtonClass(mainTab === "jellyfin")} onClick={() => setMainTab("jellyfin")}>Jellyfin</button>
+          <button type="button" className={tabButtonClass(mainTab === "emby")} onClick={() => setMainTab("emby")}>Emby</button>
+          <button type="button" className={tabButtonClass(mainTab === "tmdb")} onClick={() => setMainTab("tmdb")}>TMDB</button>
         </div>
       </div>
 
-      {tab === "users" ? <UsersTab /> : null}
-      {tab === "rooms" ? <RoomsTab /> : null}
-      {tab === "db" ? <DbTab /> : null}
-      {tab === "casting" ? <CastingTab /> : null}
-      {tab === "plex" ? <PlexTab /> : null}
-      {tab === "radarr" ? <RadarrTab /> : null}
-      {tab === "jellyfin" ? <JellyfinTab /> : null}
-      {tab === "emby" ? <EmbyTab /> : null}
-      {tab === "tmdb" ? <TmdbTab /> : null}
+      {mainTab === "tindarr" ? (
+        <>
+          <div className="deck__toolbar" style={{ justifyContent: "flex-start", gap: "0.5rem", flexWrap: "wrap", paddingTop: 0 }}>
+            <button type="button" className={tabButtonClass(tindarrSubTab === "users")} onClick={() => setTindarrSubTab("users")}>Users</button>
+            <button type="button" className={tabButtonClass(tindarrSubTab === "rooms")} onClick={() => setTindarrSubTab("rooms")}>Rooms</button>
+            <button type="button" className={tabButtonClass(tindarrSubTab === "db")} onClick={() => setTindarrSubTab("db")}>DB</button>
+            <button type="button" className={tabButtonClass(tindarrSubTab === "casting")} onClick={() => setTindarrSubTab("casting")}>Casting</button>
+            <button type="button" className={tabButtonClass(tindarrSubTab === "advanced")} onClick={() => setTindarrSubTab("advanced")}>Advanced</button>
+          </div>
+          {tindarrSubTab === "users" ? <UsersTab /> : null}
+          {tindarrSubTab === "rooms" ? <RoomsTab /> : null}
+          {tindarrSubTab === "db" ? <DbTab /> : null}
+          {tindarrSubTab === "casting" ? <CastingTab /> : null}
+          {tindarrSubTab === "advanced" ? <AdvancedTab /> : null}
+        </>
+      ) : null}
+      {mainTab === "plex" ? <PlexTab /> : null}
+      {mainTab === "radarr" ? <RadarrTab /> : null}
+      {mainTab === "jellyfin" ? <JellyfinTab /> : null}
+      {mainTab === "emby" ? <EmbyTab /> : null}
+      {mainTab === "tmdb" ? <TmdbTab /> : null}
     </section>
   );
 }
@@ -171,6 +190,7 @@ function DbTab() {
   const [totalCount, setTotalCount] = useState(0);
   const [view, setView] = useState<"table" | "gallery">("table");
   const [detailsByTmdbId, setDetailsByTmdbId] = useState<Record<number, MovieDetailsDto>>({});
+  const [displaySettings, setDisplaySettings] = useState<{ dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string } | null>(null);
 
   const load = async (skip: number) => {
     setLoading(true);
@@ -193,19 +213,15 @@ function DbTab() {
   const currentPage = Math.floor(moviesSkip / pageSize) + 1;
   const totalPages = Math.max(1, Math.ceil(Math.max(0, totalCount) / pageSize));
 
-  const formatCompactUtc = (value: string | null | undefined) => {
-    if (!value) return "—";
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return d.toLocaleString(undefined, {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    });
-  };
+  useEffect(() => {
+    getDisplaySettings().then((s) => setDisplaySettings({
+      dateTimeDisplayMode: s.dateTimeDisplayMode || "locale",
+      timeZoneId: s.timeZoneId ?? "Local",
+      dateOrder: s.dateOrder ?? "locale"
+    })).catch(() => {});
+  }, []);
+
+  const formatCompactUtc = (value: string | null | undefined) => formatDateTime(value, displaySettings ?? DEFAULT_DISPLAY);
 
   useEffect(() => {
     void load(0);
@@ -357,6 +373,317 @@ function DbTab() {
   );
 }
 
+function AdvancedTab() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<AdvancedSettingsDto | null>(null);
+
+  const [apiEnabled, setApiEnabled] = useState(true);
+  const [apiPermitLimit, setApiPermitLimit] = useState("200");
+  const [apiWindowMinutes, setApiWindowMinutes] = useState("1");
+  const [cleanupEnabled, setCleanupEnabled] = useState(true);
+  const [cleanupIntervalMinutes, setCleanupIntervalMinutes] = useState("360");
+  const [cleanupPurgeGuestUsers, setCleanupPurgeGuestUsers] = useState(true);
+  const [cleanupGuestUserMaxAgeHours, setCleanupGuestUserMaxAgeHours] = useState("24");
+  const [dateTimeDisplayMode, setDateTimeDisplayMode] = useState("locale");
+  const [timeZoneId, setTimeZoneId] = useState("Local");
+  const [dateOrder, setDateOrder] = useState("locale");
+  const timeZoneOptions = useMemo(() => getTimeZoneOptions(), []);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const s = await adminGetAdvancedSettings();
+      setSettings(s);
+      setApiEnabled(s.apiRateLimit.enabled);
+      setApiPermitLimit(String(s.apiRateLimit.permitLimit));
+      setApiWindowMinutes(String(s.apiRateLimit.windowMinutes));
+      setCleanupEnabled(s.cleanup.enabled);
+      setCleanupIntervalMinutes(String(s.cleanup.intervalMinutes));
+      setCleanupPurgeGuestUsers(s.cleanup.purgeGuestUsers);
+      setCleanupGuestUserMaxAgeHours(String(s.cleanup.guestUserMaxAgeHours));
+      setDateTimeDisplayMode(s.display?.dateTimeDisplayMode ?? s.displayDefaults?.dateTimeDisplayMode ?? "locale");
+      setTimeZoneId(s.display?.timeZoneId ?? s.displayDefaults?.timeZoneId ?? "Local");
+      setDateOrder(s.display?.dateOrder ?? s.displayDefaults?.dateOrder ?? "locale");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to load advanced settings.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const differsFromDefault = (): boolean => {
+    if (!settings) return false;
+    return (
+      apiEnabled !== settings.apiRateLimitDefaults.enabled ||
+      Number(apiPermitLimit) !== settings.apiRateLimitDefaults.permitLimit ||
+      Number(apiWindowMinutes) !== settings.apiRateLimitDefaults.windowMinutes ||
+      cleanupEnabled !== settings.cleanupDefaults.enabled ||
+      Number(cleanupIntervalMinutes) !== settings.cleanupDefaults.intervalMinutes ||
+      cleanupPurgeGuestUsers !== settings.cleanupDefaults.purgeGuestUsers ||
+      Number(cleanupGuestUserMaxAgeHours) !== settings.cleanupDefaults.guestUserMaxAgeHours ||
+      dateTimeDisplayMode !== (settings.displayDefaults?.dateTimeDisplayMode ?? "locale") ||
+      timeZoneId !== (settings.displayDefaults?.timeZoneId ?? "Local") ||
+      dateOrder !== (settings.displayDefaults?.dateOrder ?? "locale")
+    );
+  };
+
+  const onSave = async () => {
+    if ((showApiRateLimitWarning || showCleanupWarning) && !window.confirm(
+      "One or more settings differ from their defaults. Changing these can affect API rate limiting and cleanup behavior. Only change if you understand the impact. Continue?"
+    )) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await adminUpdateAdvancedSettings({
+        apiRateLimitEnabled: apiEnabled,
+        apiRateLimitPermitLimit: Math.max(1, Math.min(10_000, Math.floor(Number(apiPermitLimit))) || 200),
+        apiRateLimitWindowMinutes: Math.max(1, Math.min(1440, Math.floor(Number(apiWindowMinutes))) || 1),
+        cleanupEnabled,
+        cleanupIntervalMinutes: Math.max(1, Math.min(10080, Math.floor(Number(cleanupIntervalMinutes))) || 360),
+        cleanupPurgeGuestUsers,
+        cleanupGuestUserMaxAgeHours: Math.max(1, Math.min(8760, Math.floor(Number(cleanupGuestUserMaxAgeHours))) || 24),
+        dateTimeDisplayMode: dateTimeDisplayMode || null,
+        timeZoneId: timeZoneId || null,
+        dateOrder: dateOrder || null
+      });
+      setSettings(updated);
+      setApiEnabled(updated.apiRateLimit.enabled);
+      setApiPermitLimit(String(updated.apiRateLimit.permitLimit));
+      setApiWindowMinutes(String(updated.apiRateLimit.windowMinutes));
+      setCleanupEnabled(updated.cleanup.enabled);
+      setCleanupIntervalMinutes(String(updated.cleanup.intervalMinutes));
+      setCleanupPurgeGuestUsers(updated.cleanup.purgeGuestUsers);
+      setCleanupGuestUserMaxAgeHours(String(updated.cleanup.guestUserMaxAgeHours));
+      setDateTimeDisplayMode(updated.display?.dateTimeDisplayMode ?? updated.displayDefaults?.dateTimeDisplayMode ?? "locale");
+      setTimeZoneId(updated.display?.timeZoneId ?? updated.displayDefaults?.timeZoneId ?? "Local");
+      setDateOrder(updated.display?.dateOrder ?? updated.displayDefaults?.dateOrder ?? "locale");
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to save advanced settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const showApiRateLimitWarning =
+    settings &&
+    (apiEnabled !== settings.apiRateLimitDefaults.enabled ||
+      Number(apiPermitLimit) !== settings.apiRateLimitDefaults.permitLimit ||
+      Number(apiWindowMinutes) !== settings.apiRateLimitDefaults.windowMinutes);
+  const showCleanupWarning =
+    settings &&
+    (cleanupEnabled !== settings.cleanupDefaults.enabled ||
+      Number(cleanupIntervalMinutes) !== settings.cleanupDefaults.intervalMinutes ||
+      cleanupPurgeGuestUsers !== settings.cleanupDefaults.purgeGuestUsers ||
+      Number(cleanupGuestUserMaxAgeHours) !== settings.cleanupDefaults.guestUserMaxAgeHours);
+
+  return (
+    <>
+      <div className="deck__toolbar" style={{ justifyContent: "flex-end" }}>
+        <button type="button" className="app__navLink" onClick={() => void load()} disabled={loading}>
+          Refresh
+        </button>
+      </div>
+      {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+      {loading ? <div className="deck__state">Loading…</div> : null}
+
+      {!loading && settings ? (
+        <div className="deck__state" style={{ textAlign: "left", maxWidth: 640 }}>
+          <p style={{ marginTop: 0, color: "#8c93a6" }}>
+            API rate limiting and room/guest cleanup. Changes take effect immediately. Values that differ from defaults are highlighted.
+          </p>
+
+          {(showApiRateLimitWarning || showCleanupWarning) ? (
+            <div
+              role="alert"
+              style={{
+                marginBottom: "1rem",
+                padding: "0.75rem 1rem",
+                borderRadius: 8,
+                background: "rgba(255, 193, 7, 0.15)",
+                border: "1px solid rgba(255, 193, 7, 0.5)",
+                color: "#e0e0e0"
+              }}
+            >
+              <strong>Warning:</strong> One or more settings differ from their defaults. Only change these if you understand the impact on rate limiting and cleanup behavior.
+            </div>
+          ) : null}
+
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>API rate limit</h3>
+          <div style={{ display: "grid", gap: "0.75rem", marginBottom: "1.5rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <input
+                type="checkbox"
+                checked={apiEnabled}
+                onChange={(e) => setApiEnabled(e.target.checked)}
+              />
+              <span>Enabled (default: {settings.apiRateLimitDefaults.enabled ? "on" : "off"})</span>
+              {apiEnabled !== settings.apiRateLimitDefaults.enabled ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}> — differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Permit limit (requests per window). Default: {settings.apiRateLimitDefaults.permitLimit}</span>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={10000}
+                value={apiPermitLimit}
+                onChange={(e) => setApiPermitLimit(e.target.value)}
+              />
+              {Number(apiPermitLimit) !== settings.apiRateLimitDefaults.permitLimit ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Window (minutes). Default: {settings.apiRateLimitDefaults.windowMinutes}</span>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={1440}
+                value={apiWindowMinutes}
+                onChange={(e) => setApiWindowMinutes(e.target.value)}
+              />
+              {Number(apiWindowMinutes) !== settings.apiRateLimitDefaults.windowMinutes ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+          </div>
+
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Cleanup (room &amp; guest)</h3>
+          <div style={{ display: "grid", gap: "0.75rem", marginBottom: "1.5rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <input
+                type="checkbox"
+                checked={cleanupEnabled}
+                onChange={(e) => setCleanupEnabled(e.target.checked)}
+              />
+              <span>Enabled (default: {settings.cleanupDefaults.enabled ? "on" : "off"})</span>
+              {cleanupEnabled !== settings.cleanupDefaults.enabled ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}> — differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Interval (minutes). Default: {settings.cleanupDefaults.intervalMinutes}</span>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={10080}
+                value={cleanupIntervalMinutes}
+                onChange={(e) => setCleanupIntervalMinutes(e.target.value)}
+              />
+              {Number(cleanupIntervalMinutes) !== settings.cleanupDefaults.intervalMinutes ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <input
+                type="checkbox"
+                checked={cleanupPurgeGuestUsers}
+                onChange={(e) => setCleanupPurgeGuestUsers(e.target.checked)}
+              />
+              <span>Purge guest users (default: {settings.cleanupDefaults.purgeGuestUsers ? "on" : "off"})</span>
+              {cleanupPurgeGuestUsers !== settings.cleanupDefaults.purgeGuestUsers ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}> — differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Guest user max age (hours). Default: {settings.cleanupDefaults.guestUserMaxAgeHours}</span>
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={8760}
+                value={cleanupGuestUserMaxAgeHours}
+                onChange={(e) => setCleanupGuestUserMaxAgeHours(e.target.value)}
+              />
+              {Number(cleanupGuestUserMaxAgeHours) !== settings.cleanupDefaults.guestUserMaxAgeHours ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+          </div>
+
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Date/Time display</h3>
+          <div style={{ display: "grid", gap: "0.75rem", marginBottom: "1.5rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Format: Default Locale</span>
+              <select
+                className="input"
+                value={dateTimeDisplayMode}
+                onChange={(e) => setDateTimeDisplayMode(e.target.value)}
+              >
+                <option value="locale">Locale (browser default)</option>
+                <option value="12h">12-hour (AM/PM)</option>
+                <option value="24h">24-hour</option>
+                <option value="relative">Relative (e.g. &quot;2 hours ago&quot;)</option>
+              </select>
+              {dateTimeDisplayMode !== (settings.displayDefaults?.dateTimeDisplayMode ?? "locale") ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Time zone. Default: Local</span>
+              <select
+                className="input"
+                value={timeZoneId}
+                onChange={(e) => setTimeZoneId(e.target.value)}
+              >
+                {timeZoneOptions.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz === "Local" ? "Local (browser)" : tz}
+                  </option>
+                ))}
+                {timeZoneId && !timeZoneOptions.includes(timeZoneId) ? (
+                  <option value={timeZoneId}>{timeZoneId} (saved)</option>
+                ) : null}
+              </select>
+              {timeZoneId !== (settings.displayDefaults?.timeZoneId ?? "Local") ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Date order (e.g. 02/20/2026 vs 20/02/2026). Default: Locale</span>
+              <select
+                className="input"
+                value={dateOrder}
+                onChange={(e) => setDateOrder(e.target.value)}
+              >
+                <option value="locale">Locale (browser default)</option>
+                <option value="mdy">Month/Day/Year (02/20/2026)</option>
+                <option value="dmy">Day/Month/Year (20/02/2026)</option>
+                <option value="ymd">Year-Month-Day (2026-02-20)</option>
+              </select>
+              {dateOrder !== (settings.displayDefaults?.dateOrder ?? "locale") ? (
+                <span style={{ color: "#ffc107", fontSize: "0.9rem" }}>Differs from default</span>
+              ) : null}
+            </label>
+          </div>
+
+          <button
+            type="button"
+            className="pill pill--neutral is-on"
+            onClick={() => void onSave()}
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function CastingTab() {
   // Diagnostics state
   const [diagnostics, setDiagnostics] = useState<CastingDiagnosticsDto | null>(null);
@@ -407,6 +734,7 @@ function CastingTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<CastingSettingsDto | null>(null);
+  const [displaySettings, setDisplaySettings] = useState<{ dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string } | null>(null);
 
   const [preferredSubtitleSource, setPreferredSubtitleSource] = useState("");
   const [subtitleFallback, setSubtitleFallback] = useState("");
@@ -465,6 +793,14 @@ function CastingTab() {
     { value: "external", label: "External (sidecar/assigned)" },
     { value: "embedded", label: "Embedded (in file)" }
   ], []);
+
+  useEffect(() => {
+    getDisplaySettings().then((s) => setDisplaySettings({
+      dateTimeDisplayMode: s.dateTimeDisplayMode || "locale",
+      timeZoneId: s.timeZoneId ?? "Local",
+      dateOrder: s.dateOrder ?? "locale"
+    })).catch(() => {});
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -544,8 +880,8 @@ function CastingTab() {
                 {diagnostics.activeSessions.map((s: CastingSessionDto) => (
                   <li key={s.sessionId}>
                     <b>{s.contentTitle}</b> on <b>{s.deviceId}</b> ({s.sessionState})<br />
-                    Started: {new Date(s.startedAtUtc).toLocaleString()}<br />
-                    Expires: {new Date(s.expiresAtUtc).toLocaleString()}<br />
+                    Started: {formatDateTime(s.startedAtUtc, displaySettings ?? DEFAULT_DISPLAY)}<br />
+                    Expires: {formatDateTime(s.expiresAtUtc, displaySettings ?? DEFAULT_DISPLAY)}<br />
                     Runtime: {s.contentRuntimeSeconds}s
                   </li>
                 ))}
@@ -556,7 +892,7 @@ function CastingTab() {
               <ul style={{ margin: 0, paddingLeft: 20, maxHeight: 200, overflowY: "auto" }}>
                 {diagnostics.recentEvents.map((e: CastingEventDto) => (
                   <li key={e.eventId}>
-                    [{new Date(e.occurredAtUtc).toLocaleTimeString()}] <b>{e.eventType}</b>: {e.message}
+                    [{formatDateTime(e.occurredAtUtc, displaySettings ?? DEFAULT_DISPLAY)}] <b>{e.eventType}</b>: {e.message}
                     {e.deviceId ? <> (Device: {e.deviceId})</> : null}
                     {e.errorDetails ? <div style={{ color: "#c00" }}>{e.errorDetails}</div> : null}
                   </li>
@@ -700,7 +1036,7 @@ function CastingTab() {
             Save
           </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Updated: {settings?.updatedAtUtc ?? ""}
+            Updated: {settings?.updatedAtUtc ? formatDateTime(settings.updatedAtUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
       </div>
@@ -713,6 +1049,7 @@ function RoomsTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<JoinAddressSettingsDto | null>(null);
+  const displaySettings = useDisplaySettings();
 
   const [lanHostPort, setLanHostPort] = useState("");
   const [wanHostPort, setWanHostPort] = useState("");
@@ -794,7 +1131,7 @@ function RoomsTab() {
           </div>
           <div>
             <div style={{ color: "#8c93a6", fontWeight: 700, marginBottom: "0.25rem" }}>WAN Host:Port</div>
-            <input className="input" value={wanHostPort} onChange={(e) => setWanHostPort(e.target.value)} placeholder="203.0.113.10:4886" />
+            <input className="input" value={wanHostPort} onChange={(e) => setWanHostPort(e.target.value)} placeholder="203.0.113.10:6565" />
           </div>
         </div>
 
@@ -821,7 +1158,7 @@ function RoomsTab() {
             Save
           </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Updated: {settings?.updatedAtUtc ?? ""}
+            Updated: {settings?.updatedAtUtc ? formatDateTime(settings.updatedAtUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
       </div>
@@ -835,6 +1172,7 @@ function TmdbTab() {
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<TmdbCacheSettingsDto | null>(null);
 	const [matchSettings, setMatchSettings] = useState<MatchSettingsDto | null>(null);
+  const displaySettings = useDisplaySettings();
 	const [matchMinUsers, setMatchMinUsers] = useState("");
 	const [matchMinUserPercent, setMatchMinUserPercent] = useState("");
 	const [matchSaving, setMatchSaving] = useState(false);
@@ -865,6 +1203,11 @@ function TmdbTab() {
   const [rateLimitOverride, setRateLimitOverride] = useState(false);
   const [discoverLimitPerUser, setDiscoverLimitPerUser] = useState("200");
 
+  const [tmdbApiKeyInput, setTmdbApiKeyInput] = useState("");
+  const [tmdbApiKeyDirty, setTmdbApiKeyDirty] = useState(false);
+  const [hasTmdbApiKey, setHasTmdbApiKey] = useState(false);
+  const [tmdbKeySaving, setTmdbKeySaving] = useState(false);
+
   const isRunning = buildStatus?.state === "running";
 
   const load = async () => {
@@ -890,6 +1233,17 @@ function TmdbTab() {
 			setMatchSettings(null);
 			setMatchMinUsers("");
 			setMatchMinUserPercent("");
+		}
+
+		try {
+			const adv = await adminGetAdvancedSettings();
+			setHasTmdbApiKey(adv.tmdb.hasTmdbApiKey);
+			setTmdbApiKeyInput("");
+			setTmdbApiKeyDirty(false);
+		} catch {
+			setHasTmdbApiKey(false);
+			setTmdbApiKeyInput("");
+			setTmdbApiKeyDirty(false);
 		}
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Failed to load TMDB cache settings.";
@@ -1129,17 +1483,72 @@ function TmdbTab() {
     }
   };
 
+  const onSaveTmdbApiKey = async () => {
+    if (!tmdbApiKeyDirty) return;
+    setTmdbKeySaving(true);
+    setError(null);
+    try {
+      const current = await adminGetAdvancedSettings();
+      const updated = await adminUpdateAdvancedSettings({
+        apiRateLimitEnabled: current.apiRateLimit.enabled,
+        apiRateLimitPermitLimit: current.apiRateLimit.permitLimit,
+        apiRateLimitWindowMinutes: current.apiRateLimit.windowMinutes,
+        cleanupEnabled: current.cleanup.enabled,
+        cleanupIntervalMinutes: current.cleanup.intervalMinutes,
+        cleanupPurgeGuestUsers: current.cleanup.purgeGuestUsers,
+        cleanupGuestUserMaxAgeHours: current.cleanup.guestUserMaxAgeHours,
+        tmdbApiKeySet: true,
+        tmdbApiKey: tmdbApiKeyInput.trim() || null,
+        dateTimeDisplayMode: current.display?.dateTimeDisplayMode ?? current.displayDefaults?.dateTimeDisplayMode ?? undefined,
+        timeZoneId: current.display?.timeZoneId ?? current.displayDefaults?.timeZoneId ?? undefined,
+        dateOrder: current.display?.dateOrder ?? current.displayDefaults?.dateOrder ?? undefined
+      });
+      setHasTmdbApiKey(updated.tmdb.hasTmdbApiKey);
+      setTmdbApiKeyInput("");
+      setTmdbApiKeyDirty(false);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Failed to save TMDB API key.";
+      setError(msg);
+    } finally {
+      setTmdbKeySaving(false);
+    }
+  };
+
   return (
     <section style={{ marginTop: "1rem" }}>
-      <h3 style={{ marginTop: 0 }}>TMDB Cache</h3>
-
+      <h3 style={{ marginTop: 0 }}>API key</h3>
       <div className="deck__state" style={{ textAlign: "left" }}>
-        <p style={{ marginTop: 0 }}>
-          Controls the local TMDB metadata pool and optional poster caching. The workers service keeps this warm for near-instant swipe decks.
+        <p style={{ marginTop: 0, marginBottom: "0.5rem", color: "#8c93a6", fontSize: "0.9rem" }}>
+          Overrides environment/config. Current: {hasTmdbApiKey ? "configured" : "not set (env fallback)"}. Leave blank to keep current; enter a key to store in DB.
         </p>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "flex-end", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", minWidth: 200 }}>
+            <span>TMDB API key (v3)</span>
+            <input
+              type="password"
+              className="input"
+              autoComplete="off"
+              placeholder="Leave blank to keep current"
+              value={tmdbApiKeyInput}
+              onChange={(e) => {
+                setTmdbApiKeyInput(e.target.value);
+                setTmdbApiKeyDirty(true);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className="button"
+            onClick={() => void onSaveTmdbApiKey()}
+            disabled={!tmdbApiKeyDirty || tmdbKeySaving}
+          >
+            {tmdbKeySaving ? "Saving…" : "Save key"}
+          </button>
+        </div>
+      </div>
 
-      <div style={{ marginTop: "1rem" }}>
-        <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Matching</h4>
+      <h3 style={{ marginTop: "1rem" }}>Matching</h3>
+      <div className="deck__state" style={{ textAlign: "left" }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", maxWidth: 560 }}>
           <label style={{ display: "grid", gap: "0.25rem" }}>
             <span>Min users</span>
@@ -1167,34 +1576,22 @@ function TmdbTab() {
             Save matching
           </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Updated: {matchSettings?.updatedAtUtc ?? ""}
+            Updated: {matchSettings?.updatedAtUtc ? formatDateTime(matchSettings.updatedAtUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
       </div>
 
-        {loading ? <div className="deck__state">Loading…</div> : null}
-        {error ? <div className="deck__state deck__state--error">{error}</div> : null}
+      <h3 style={{ marginTop: "1rem" }}>Prewarm</h3>
 
-        {!loading && settings ? (
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Max cache rows</span>
-              <input
-                className="input"
-                inputMode="numeric"
-                value={maxRows}
-                onChange={(e) => setMaxRows(e.target.value)}
-                placeholder="5000"
-              />
-            </label>
+      {loading ? <div className="deck__state">Loading…</div> : null}
+      {error ? <div className="deck__state deck__state--error">{error}</div> : null}
 
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Current rows</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{settings.currentRows}</div>
-            </div>
-
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Max movies</span>
+      {!loading && settings ? (
+        <div className="deck__state" style={{ textAlign: "left" }}>
+          <h4 style={{ marginTop: 0, marginBottom: "0.75rem", fontWeight: 600 }}>Pool &amp; cache</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: "1rem 1.5rem", marginBottom: "1rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Max movies in pool</span>
               <input
                 className="input"
                 inputMode="numeric"
@@ -1203,55 +1600,38 @@ function TmdbTab() {
                 placeholder="20000"
               />
             </label>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Current movies</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Movies in pool</span>
               <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{settings.currentMovies}</div>
             </div>
-
-            <label style={{ display: "grid", gap: "0.25rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
               <span>Poster mode</span>
               <select className="input" value={posterMode} onChange={(e) => setPosterMode(e.target.value)}>
                 <option value="Tmdb">Use TMDB image URLs</option>
                 <option value="LocalProxy">Cache images locally (proxy)</option>
               </select>
             </label>
-
-            <label style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Prewarm original language</span>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Prewarm language</span>
               <input
                 className="input"
                 value={prewarmOriginalLanguage}
                 onChange={(e) => setPrewarmOriginalLanguage(e.target.value)}
-                placeholder="(use user preferences)"
+                placeholder="(default)"
                 list="tmdb_prewarm_language"
               />
             </label>
-
-            <label style={{ display: "grid", gap: "0.25rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
               <span>Prewarm region</span>
               <input
                 className="input"
                 value={prewarmRegion}
                 onChange={(e) => setPrewarmRegion(e.target.value)}
-                placeholder="(use user preferences)"
+                placeholder="(default)"
                 list="tmdb_prewarm_region"
               />
             </label>
-
-            <datalist id="tmdb_prewarm_language">
-              {TMDB_LANGUAGES.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </datalist>
-
-            <datalist id="tmdb_prewarm_region">
-              {TMDB_REGIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </datalist>
-
-            <label style={{ display: "grid", gap: "0.25rem" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
               <span>Max image cache (MB)</span>
               <input
                 className="input"
@@ -1261,50 +1641,57 @@ function TmdbTab() {
                 placeholder="512"
               />
             </label>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Image cache used (MB)</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{imageUsedMb}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+              <span>Image cache used</span>
+              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{imageUsedMb} MB</div>
             </div>
-
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             <button type="button" className="button" onClick={onSave} disabled={saving}>
               {saving ? "Saving…" : "Save"}
             </button>
-
             <button type="button" className="button button--neutral" onClick={load} disabled={saving}>
               Refresh
             </button>
           </div>
-        ) : null}
-      </div>
 
-      <h3 style={{ marginTop: "1rem" }}>Build DB now</h3>
-      <div className="deck__state" style={{ textAlign: "left" }}>
-        <p style={{ marginTop: 0 }}>
-          Runs an on-demand TMDB pull to populate the local metadata pool for all users. Use this after changing TMDB settings, or if you want to warm the pool immediately.
+          <datalist id="tmdb_prewarm_language">
+            {TMDB_LANGUAGES.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </datalist>
+          <datalist id="tmdb_prewarm_region">
+            {TMDB_REGIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </datalist>
+        </div>
+      ) : null}
+
+      <div className="deck__state" style={{ textAlign: "left", marginTop: "1.25rem" }}>
+        <h4 style={{ marginTop: 0, marginBottom: "0.5rem", fontWeight: 600 }}>Build DB now</h4>
+        <p style={{ marginTop: 0, marginBottom: "1rem", color: "#8c93a6", fontSize: "0.9rem" }}>
+          Run an on-demand pull to fill the movie pool. Use after changing settings or to warm the pool immediately.
         </p>
 
         {buildLoading ? <div className="deck__state">Loading status…</div> : null}
         {buildError ? <div className="deck__state deck__state--error">{buildError}</div> : null}
 
-        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-          <label style={{ display: "grid", gap: "0.25rem" }}>
-            <span>Rate limit override</span>
-            <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-              <input
-                type="checkbox"
-                checked={rateLimitOverride}
-                disabled={isRunning}
-                onChange={(e) => setRateLimitOverride(e.target.checked)}
-              />
-              <span>Bypass TMDB rate limiting (use carefully)</span>
-            </label>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={rateLimitOverride}
+              disabled={isRunning}
+              onChange={(e) => setRateLimitOverride(e.target.checked)}
+            />
+            <span>Bypass rate limit</span>
           </label>
-
-          <label style={{ display: "grid", gap: "0.25rem" }}>
-            <span>Discover limit per user</span>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <span>Discover per user</span>
             <input
               className="input"
+              style={{ width: 72 }}
               inputMode="numeric"
               value={discoverLimitPerUser}
               disabled={isRunning}
@@ -1312,11 +1699,9 @@ function TmdbTab() {
               placeholder="200"
             />
           </label>
-
           <button type="button" className="button" onClick={onStartBuild} disabled={buildStarting || buildCanceling}>
             {buildStarting ? "Starting…" : isRunning ? "Build running" : "Build DB now"}
           </button>
-
           <button
             type="button"
             className="button button--neutral"
@@ -1325,55 +1710,36 @@ function TmdbTab() {
           >
             {buildCanceling ? "Canceling…" : "Cancel"}
           </button>
-
           <button type="button" className="button button--neutral" onClick={loadBuild} disabled={buildStarting || buildCanceling}>
             Refresh status
           </button>
         </div>
 
         {buildStatus ? (
-          <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "flex-end" }}>
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Status</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{buildStatus.state}</div>
+          <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 1rem", alignItems: "center", fontSize: "0.9rem" }}>
+              <span style={{ color: "#8c93a6" }}>Status:</span>
+              <span className="pill pill--neutral is-on">{buildStatus.state}</span>
+              <span style={{ color: "#8c93a6" }}>Users</span>
+              <span className="pill pill--neutral is-on">{buildStatus.usersProcessed}/{buildStatus.usersTotal}</span>
+              <span style={{ color: "#8c93a6" }}>Discovered</span>
+              <span className="pill pill--neutral is-on">{buildStatus.moviesDiscovered}</span>
+              <span style={{ color: "#8c93a6" }}>Details</span>
+              <span className="pill pill--neutral is-on">{buildStatus.detailsFetched}</span>
+              <span style={{ color: "#8c93a6" }}>Images</span>
+              <span className="pill pill--neutral is-on">{buildStatus.imagesFetched}</span>
+              {buildStatus.currentUserId ? (
+                <>
+                  <span style={{ color: "#8c93a6" }}>Current user</span>
+                  <span className="pill pill--neutral is-on">{buildStatus.currentUserId}</span>
+                </>
+              ) : null}
+              {buildStatus.lastMessage ? (
+                <span style={{ color: "#8c93a6", marginLeft: "0.25rem" }}>— {buildStatus.lastMessage}</span>
+              ) : null}
             </div>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Users</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>
-                {buildStatus.usersProcessed}/{buildStatus.usersTotal}
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Current user</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{buildStatus.currentUserId ?? "—"}</div>
-            </div>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Discovered</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{buildStatus.moviesDiscovered}</div>
-            </div>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Details</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{buildStatus.detailsFetched}</div>
-            </div>
-
-            <div style={{ display: "grid", gap: "0.25rem" }}>
-              <span>Images</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content" }}>{buildStatus.imagesFetched}</div>
-            </div>
-
-            <div style={{ display: "grid", gap: "0.25rem", minWidth: 240 }}>
-              <span>Message</span>
-              <div className="pill pill--neutral is-on" style={{ width: "fit-content", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {buildStatus.lastMessage ?? "—"}
-              </div>
-            </div>
-
             {buildStatus.lastError ? (
-              <div className="deck__state deck__state--error" style={{ width: "100%" }}>{buildStatus.lastError}</div>
+              <div className="deck__state deck__state--error" style={{ marginTop: "0.75rem" }}>{buildStatus.lastError}</div>
             ) : null}
           </div>
         ) : null}
@@ -1847,6 +2213,7 @@ function PlexTab() {
   const [moviesBusyId, setMoviesBusyId] = useState<number | null>(null);
   const [plexBulkJob, setPlexBulkJob] = useState<PlexBulkJob | null>(() => getPlexBulkJob());
   const previousBulkRunning = useRef<boolean>(Boolean(getPlexBulkJob()?.running));
+  const displaySettings = useDisplaySettings();
 
   const load = async () => {
     setLoading(true);
@@ -2193,7 +2560,7 @@ function PlexTab() {
                   <tr key={s.serverId}>
                     <td className="adminTable__mono">{s.name}</td>
                     <td>{s.version ?? ""}</td>
-                    <td>{s.lastLibrarySyncUtc ?? ""}</td>
+                    <td>{s.lastLibrarySyncUtc ? formatDateTime(s.lastLibrarySyncUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}</td>
                     <td style={{ textAlign: "right" }}>
 						<div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
 							<button type="button" className="pill pill--neutral is-on" onClick={() => void onSyncLibrary(s.serverId)}>
@@ -2334,11 +2701,13 @@ function RadarrTab() {
   const [serverId, setServerId] = useState("default");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionTestStatus, setConnectionTestStatus] = useState<"idle" | "success" | "error">("idle");
   const [settings, setSettings] = useState<RadarrSettingsDto | null>(null);
 	const [matchSettings, setMatchSettings] = useState<MatchSettingsDto | null>(null);
 	const [matchMinUsers, setMatchMinUsers] = useState<string>("");
 	const [matchMinUserPercent, setMatchMinUserPercent] = useState<string>("");
 	const [matchSaving, setMatchSaving] = useState(false);
+  const displaySettings = useDisplaySettings();
 
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -2354,6 +2723,7 @@ function RadarrTab() {
   const load = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const sid = serverId.trim() || "default";
       const s = await radarrGetSettings("radarr", sid);
@@ -2432,17 +2802,28 @@ function RadarrTab() {
   const onTest = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const result = await radarrTestConnection("radarr", serverId.trim() || "default");
-      if (!result.ok) {
+      if (result.ok) {
+        setConnectionTestStatus("success");
+      } else {
+        setConnectionTestStatus("error");
         setError(result.message ?? "Radarr test failed.");
       }
     } catch (e) {
+      setConnectionTestStatus("error");
       setError(e instanceof ApiError ? e.message : "Failed to test Radarr.");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (connectionTestStatus !== "success" && connectionTestStatus !== "error") return;
+    const t = setTimeout(() => setConnectionTestStatus("idle"), 2500);
+    return () => clearTimeout(t);
+  }, [connectionTestStatus]);
 
   const onSyncLibrary = async () => {
     setLoading(true);
@@ -2597,18 +2978,29 @@ function RadarrTab() {
         <button type="button" className="pill pill--neutral is-on" onClick={() => void onSaveMatching()} disabled={loading || matchSaving}>
           Save matching
         </button>
-          <button type="button" className="pill pill--neutral is-on" onClick={() => void onTest()} disabled={loading}>
-            Test connection
+          <button
+            type="button"
+            className={
+              connectionTestStatus === "success"
+                ? "pill pill--good is-on"
+                : connectionTestStatus === "error"
+                  ? "pill pill--bad is-on"
+                  : "pill pill--neutral is-on"
+            }
+            onClick={() => void onTest()}
+            disabled={loading}
+          >
+            {loading ? "Testing…" : connectionTestStatus === "success" ? "✓" : connectionTestStatus === "error" ? "✗" : "Test connection"}
           </button>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSyncLibrary()} disabled={loading}>
             Sync library
           </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Last sync: {settings?.lastLibrarySyncUtc ?? ""}
+            Last sync: {settings?.lastLibrarySyncUtc ? formatDateTime(settings.lastLibrarySyncUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
       <div style={{ marginTop: "0.5rem", color: "#8c93a6", fontWeight: 700 }}>
-        Match settings updated: {matchSettings?.updatedAtUtc ?? ""}
+        Match settings updated: {matchSettings?.updatedAtUtc ? formatDateTime(matchSettings.updatedAtUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
       </div>
       </div>
     </>
@@ -2618,14 +3010,17 @@ function RadarrTab() {
 function JellyfinTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connectionTestStatus, setConnectionTestStatus] = useState<"idle" | "success" | "error">("idle");
   const [servers, setServers] = useState<JellyfinServerDto[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const displaySettings = useDisplaySettings();
 
   const load = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const list = await jellyfinListServers();
       setServers(list);
@@ -2649,6 +3044,7 @@ function JellyfinTab() {
   const onSave = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       try {
         const updated = await jellyfinUpsertSettings({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }, false);
@@ -2676,17 +3072,28 @@ function JellyfinTab() {
     if (!selectedServerId) return;
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const result = await jellyfinTestConnection("jellyfin", selectedServerId);
-      if (!result.ok) {
+      if (result.ok) {
+        setConnectionTestStatus("success");
+      } else {
+        setConnectionTestStatus("error");
         setError(result.message ?? "Jellyfin test failed.");
       }
     } catch (e) {
+      setConnectionTestStatus("error");
       setError(e instanceof ApiError ? e.message : "Failed to test Jellyfin.");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (connectionTestStatus !== "success" && connectionTestStatus !== "error") return;
+    const t = setTimeout(() => setConnectionTestStatus("idle"), 2500);
+    return () => clearTimeout(t);
+  }, [connectionTestStatus]);
 
   const onSync = async () => {
     if (!selectedServerId) return;
@@ -2744,8 +3151,19 @@ function JellyfinTab() {
               </option>
             ))}
           </select>
-          <button type="button" className="pill pill--neutral is-on" onClick={() => void onTest()} disabled={loading || !selectedServerId}>
-            Test
+          <button
+            type="button"
+            className={
+              connectionTestStatus === "success"
+                ? "pill pill--good is-on"
+                : connectionTestStatus === "error"
+                  ? "pill pill--bad is-on"
+                  : "pill pill--neutral is-on"
+            }
+            onClick={() => void onTest()}
+            disabled={loading || !selectedServerId}
+          >
+            {loading ? "Testing…" : connectionTestStatus === "success" ? "✓" : connectionTestStatus === "error" ? "✗" : "Test"}
           </button>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSync()} disabled={loading || !selectedServerId}>
             Sync library
@@ -2760,7 +3178,7 @@ function JellyfinTab() {
         Delete
       </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Last sync: {selected?.lastLibrarySyncUtc ?? ""}
+            Last sync: {selected?.lastLibrarySyncUtc ? formatDateTime(selected.lastLibrarySyncUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
 
@@ -2791,14 +3209,17 @@ function JellyfinTab() {
 function EmbyTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [connectionTestStatus, setConnectionTestStatus] = useState<"idle" | "success" | "error">("idle");
   const [servers, setServers] = useState<EmbyServerDto[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string>("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const displaySettings = useDisplaySettings();
 
   const load = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const list = await embyListServers();
       setServers(list);
@@ -2822,6 +3243,7 @@ function EmbyTab() {
   const onSave = async () => {
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       try {
         const updated = await embyUpsertSettings({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }, false);
@@ -2849,17 +3271,28 @@ function EmbyTab() {
     if (!selectedServerId) return;
     setLoading(true);
     setError(null);
+    setConnectionTestStatus("idle");
     try {
       const result = await embyTestConnection("emby", selectedServerId);
-      if (!result.ok) {
+      if (result.ok) {
+        setConnectionTestStatus("success");
+      } else {
+        setConnectionTestStatus("error");
         setError(result.message ?? "Emby test failed.");
       }
     } catch (e) {
+      setConnectionTestStatus("error");
       setError(e instanceof ApiError ? e.message : "Failed to test Emby.");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (connectionTestStatus !== "success" && connectionTestStatus !== "error") return;
+    const t = setTimeout(() => setConnectionTestStatus("idle"), 2500);
+    return () => clearTimeout(t);
+  }, [connectionTestStatus]);
 
   const onSync = async () => {
     if (!selectedServerId) return;
@@ -2917,8 +3350,19 @@ function EmbyTab() {
               </option>
             ))}
           </select>
-          <button type="button" className="pill pill--neutral is-on" onClick={() => void onTest()} disabled={loading || !selectedServerId}>
-            Test
+          <button
+            type="button"
+            className={
+              connectionTestStatus === "success"
+                ? "pill pill--good is-on"
+                : connectionTestStatus === "error"
+                  ? "pill pill--bad is-on"
+                  : "pill pill--neutral is-on"
+            }
+            onClick={() => void onTest()}
+            disabled={loading || !selectedServerId}
+          >
+            {loading ? "Testing…" : connectionTestStatus === "success" ? "✓" : connectionTestStatus === "error" ? "✗" : "Test"}
           </button>
           <button type="button" className="pill pill--neutral is-on" onClick={() => void onSync()} disabled={loading || !selectedServerId}>
             Sync library
@@ -2933,7 +3377,7 @@ function EmbyTab() {
         Delete
       </button>
           <div style={{ marginLeft: "auto", color: "#8c93a6", fontWeight: 700 }}>
-            Last sync: {selected?.lastLibrarySyncUtc ?? ""}
+            Last sync: {selected?.lastLibrarySyncUtc ? formatDateTime(selected.lastLibrarySyncUtc, displaySettings ?? DEFAULT_DISPLAY) : ""}
           </div>
         </div>
 

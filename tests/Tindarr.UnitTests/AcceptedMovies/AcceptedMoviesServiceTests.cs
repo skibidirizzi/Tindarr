@@ -26,6 +26,73 @@ public sealed class AcceptedMoviesServiceTests
 		Assert.Equal("curator-1", list[0].AcceptedByUserId);
 	}
 
+	[Theory]
+	[InlineData(null)]
+	[InlineData("")]
+	[InlineData("   ")]
+	public async Task ForceAcceptAsync_ThrowsArgumentException_WhenCuratorUserIdIsNullOrWhitespace(string? curatorUserId)
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+
+		var ex = await Assert.ThrowsAsync<ArgumentException>(
+			() => service.ForceAcceptAsync(curatorUserId!, scope, 123, CancellationToken.None));
+
+		Assert.Contains("UserId is required.", ex.Message);
+		Assert.Equal("curatorUserId", ex.ParamName);
+	}
+
+	[Fact]
+	public async Task ListAsync_ClampsLimitTo1_WhenLimitIsZero()
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+		await service.ForceAcceptAsync("c1", scope, 1, CancellationToken.None);
+		await service.ForceAcceptAsync("c1", scope, 2, CancellationToken.None);
+
+		var list = await service.ListAsync(scope, limit: 0, CancellationToken.None);
+
+		Assert.NotNull(list);
+		Assert.Single(list);
+	}
+
+	[Fact]
+	public async Task ListAsync_ClampsLimitTo500_WhenLimitExceeds500()
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+		for (var i = 0; i < 600; i++)
+		{
+			await service.ForceAcceptAsync("c1", scope, 1000 + i, CancellationToken.None);
+		}
+
+		var list = await service.ListAsync(scope, limit: 10000, CancellationToken.None);
+
+		Assert.NotNull(list);
+		Assert.Equal(500, list.Count);
+	}
+
+	[Fact]
+	public async Task ListAsync_ReturnsResultsOrderedByAcceptedAtDescending()
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+		await service.ForceAcceptAsync("c1", scope, 101, CancellationToken.None);
+		await service.ForceAcceptAsync("c1", scope, 102, CancellationToken.None);
+		await service.ForceAcceptAsync("c1", scope, 103, CancellationToken.None);
+
+		var list = await service.ListAsync(scope, limit: 10, CancellationToken.None);
+
+		Assert.Equal(3, list.Count);
+		Assert.Equal(103, list[0].TmdbId);
+		Assert.Equal(102, list[1].TmdbId);
+		Assert.Equal(101, list[2].TmdbId);
+	}
+
 	private sealed class FakeAcceptedMovieRepository : IAcceptedMovieRepository
 	{
 		private readonly Dictionary<(ServiceType ServiceType, string ServerId, int TmdbId), AcceptedMovie> _store = new();

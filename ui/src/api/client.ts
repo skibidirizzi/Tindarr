@@ -47,6 +47,9 @@ import type {
   UpdateCastingSettingsRequest,
   MatchSettingsDto,
   UpdateMatchSettingsRequest,
+  AdvancedSettingsDto,
+  AdvancedSettingsDisplayDto,
+  UpdateAdvancedSettingsRequest,
   TmdbCacheSettingsDto,
   UpdateTmdbCacheSettingsRequest,
   StartTmdbBuildRequest,
@@ -277,6 +280,28 @@ export async function adminUpdateMatchSettings(
   });
 }
 
+export async function adminGetAdvancedSettings(): Promise<AdvancedSettingsDto> {
+  return apiRequest<AdvancedSettingsDto>({
+    path: "/api/v1/admin/advanced-settings"
+  });
+}
+
+export async function adminUpdateAdvancedSettings(
+  request: UpdateAdvancedSettingsRequest
+): Promise<AdvancedSettingsDto> {
+  return apiRequest<AdvancedSettingsDto>({
+    path: "/api/v1/admin/advanced-settings",
+    method: "PUT",
+    body: request
+  });
+}
+
+export async function getDisplaySettings(): Promise<AdvancedSettingsDisplayDto> {
+  return apiRequest<AdvancedSettingsDisplayDto>({
+    path: "/api/v1/settings/display"
+  });
+}
+
 export async function adminDbListMovies(params: { skip?: number; take?: number } = {}): Promise<AdminDbMovieListResponse> {
   const scope = resolveScope();
   return apiRequest<AdminDbMovieListResponse>({
@@ -351,18 +376,19 @@ export async function listCastDevices(): Promise<CastDeviceDto[]> {
   });
 }
 
-export async function castRoomQr(roomId: string, deviceId: string): Promise<void> {
+export async function castRoomQr(roomId: string, deviceId: string, variant?: "lan" | "wan"): Promise<void> {
   await apiRequest<void>({
     path: `/api/v1/casting/rooms/${encodeURIComponent(roomId)}/qr`,
     method: "POST",
-    body: { deviceId }
+    body: { deviceId, ...(variant != null ? { variant } : {}) }
   });
 }
 
-export async function getRoomQrCastUrl(roomId: string): Promise<CastMediaUrlDto> {
+export async function getRoomQrCastUrl(roomId: string, variant?: "lan" | "wan"): Promise<CastMediaUrlDto> {
   return apiRequest<CastMediaUrlDto>({
     path: `/api/v1/casting/rooms/${encodeURIComponent(roomId)}/qr/cast-url`,
-    method: "GET"
+    method: "GET",
+    ...(variant != null ? { query: { variant } } : {})
   });
 }
 

@@ -10,7 +10,7 @@ export default defineConfig({
       // Dev convenience: let the UI call /api/v1/* on the Vite origin.
       // The dev script sets VITE_PROXY_TARGET; default is local API.
       "/api": {
-        target: process.env.VITE_PROXY_TARGET ?? "http://localhost:5080",
+        target: process.env.VITE_PROXY_TARGET ?? "http://localhost:6565",
         changeOrigin: true,
         secure: false
       }

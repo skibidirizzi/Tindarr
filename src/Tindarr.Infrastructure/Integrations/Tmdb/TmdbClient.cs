@@ -5,6 +5,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Integrations;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Options;
 using Tindarr.Contracts.Movies;
@@ -12,7 +13,11 @@ using Tindarr.Domain.Interactions;
 
 namespace Tindarr.Infrastructure.Integrations.Tmdb;
 
-public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> options, ILogger<TmdbClient> logger) : ITmdbClient
+public sealed class TmdbClient(
+	HttpClient httpClient,
+	IOptions<TmdbOptions> options,
+	IEffectiveAdvancedSettings effectiveAdvancedSettings,
+	ILogger<TmdbClient> logger) : ITmdbClient
 {
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 	private readonly TmdbOptions _tmdb = options.Value;
@@ -23,7 +28,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		int limit,
 		CancellationToken cancellationToken)
 	{
-		if (!_tmdb.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return [];
 		}
@@ -150,7 +155,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 		int limit,
 		CancellationToken cancellationToken)
 	{
-		if (!_tmdb.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return [];
 		}
@@ -267,7 +272,7 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 			return null;
 		}
 
-		if (!_tmdb.HasCredentials)
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
 			return null;
 		}
@@ -455,11 +460,12 @@ public sealed class TmdbClient(HttpClient httpClient, IOptions<TmdbOptions> opti
 	{
 		var parts = new List<string>(capacity: (query?.Count ?? 0) + 1);
 
-		// If a v3 api key is configured, include it (legacy / compatible path).
+		// If a v3 api key is configured (DB or env), include it (legacy / compatible path).
 		// If we're using Bearer token auth (ReadAccessToken), we intentionally avoid query-string secrets.
-		if (!string.IsNullOrWhiteSpace(_tmdb.ApiKey))
+		var apiKey = effectiveAdvancedSettings.GetEffectiveTmdbApiKey();
+		if (!string.IsNullOrWhiteSpace(apiKey))
 		{
-			parts.Add($"api_key={Uri.EscapeDataString(_tmdb.ApiKey)}");
+			parts.Add($"api_key={Uri.EscapeDataString(apiKey)}");
 		}
 
 		if (query is not null)

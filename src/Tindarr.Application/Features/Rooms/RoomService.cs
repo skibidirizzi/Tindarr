@@ -114,6 +114,11 @@ public sealed class RoomService(
 			throw new InvalidOperationException("User is not a member of this room.");
 		}
 
+		if (!room.IsClosed)
+		{
+			throw new InvalidOperationException("Swipe deck is not available until the room is closed to new users.");
+		}
+
 		var candidates = await source.GetCandidatesAsync(userId, room.Scope, cancellationToken);
 
 		var roomInteractions = await interactions.ListAsync(roomId, limit: 50_000, cancellationToken);
@@ -174,6 +179,11 @@ public sealed class RoomService(
 		if (room is null)
 		{
 			throw new InvalidOperationException("Room not found.");
+		}
+
+		if (!room.IsClosed)
+		{
+			throw new InvalidOperationException("Matches are not available until the room is closed to new users.");
 		}
 
 		var list = await interactions.ListAsync(roomId, limit: 50_000, cancellationToken);

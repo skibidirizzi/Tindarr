@@ -63,3 +63,6 @@ src/Tindarr.Api/tmdbmetadata.db*
 
 # TMDB cached images (test/runtime)
 src/Tindarr.Api/tmdb-images/
+
+# Local tracking of GH issues needing implementation (do not commit)
+issues-needing-implementation.txt

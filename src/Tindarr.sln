@@ -1,4 +1,4 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -16,6 +16,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.Workers", "Tindarr.Workers\Tindarr.Workers.csproj", "{37DB0F04-ADAF-4B56-959D-091524C3380B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.UnitTests", "..\tests\Tindarr.UnitTests\Tindarr.UnitTests.csproj", "{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tindarr.IntegrationTests", "..\tests\Tindarr.IntegrationTests\Tindarr.IntegrationTests.csproj", "{2DFF4D24-E1BD-48B7-A65F-2A3EF3207CA8}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -54,5 +56,9 @@ Global
 		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1DFF4D24-E1BD-48B7-A65F-2A3EF3207CA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2DFF4D24-E1BD-48B7-A65F-2A3EF3207CA8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2DFF4D24-E1BD-48B7-A65F-2A3EF3207CA8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2DFF4D24-E1BD-48B7-A65F-2A3EF3207CA8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2DFF4D24-E1BD-48B7-A65F-2A3EF3207CA8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

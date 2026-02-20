@@ -31,6 +31,7 @@ Tindarr/
 				AcceptedMoviesController.cs
 				TmdbController.cs
 				RadarrController.cs
+				MediaServerControllerBase.cs
 				PlexController.cs
 				JellyfinController.cs
 				EmbyController.cs
@@ -38,6 +39,7 @@ Tindarr/
 				PlaybackController.cs
 				CastController.cs
 				AdminController.cs
+				SettingsController.cs
 			Middleware/
 				CorrelationIdMiddleware.cs
 				ExceptionHandlingMiddleware.cs
