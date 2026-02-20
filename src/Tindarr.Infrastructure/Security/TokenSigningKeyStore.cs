@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Tindarr.Application.Abstractions.Security;
@@ -92,8 +93,85 @@ public sealed class DbOrFileTokenSigningKeyStore : ITokenSigningKeyStore
 		};
 
 		var serialized = JsonSerializer.Serialize(created, new JsonSerializerOptions { WriteIndented = true });
-		File.WriteAllText(filePath, serialized);
+		WriteSecure(filePath, serialized);
 		return created;
+	}
+
+	private static void WriteSecure(string path, string content)
+	{
+		var lockPath = path + ".lock";
+
+		using var lockStream = new FileStream(
+			lockPath,
+			FileMode.OpenOrCreate,
+			FileAccess.ReadWrite,
+			FileShare.None);
+
+		try
+		{
+			using var writeStream = new FileStream(
+				path,
+				FileMode.Create,
+				FileAccess.Write,
+				FileShare.None);
+
+			using var writer = new StreamWriter(writeStream, leaveOpen: true);
+			writer.Write(content);
+			writer.Flush();
+
+			SetRestrictivePermissions(path);
+		}
+		finally
+		{
+			lockStream.Close();
+			try { File.Delete(lockPath); } catch { /* best-effort cleanup */ }
+		}
+	}
+
+	private static void SetRestrictivePermissions(string path)
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			SetWindowsRestrictiveAcl(path);
+		}
+		else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+		{
+			SetPosixRestrictiveMode(path);
+		}
+	}
+
+	[SupportedOSPlatform("windows")]
+	private static void SetWindowsRestrictiveAcl(string path)
+	{
+		try
+		{
+			var fileInfo = new System.IO.FileInfo(path);
+			var acl = fileInfo.GetAccessControl();
+			acl.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+			acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+				System.Security.Principal.WindowsIdentity.GetCurrent().Name,
+				System.Security.AccessControl.FileSystemRights.FullControl,
+				System.Security.AccessControl.AccessControlType.Allow));
+			fileInfo.SetAccessControl(acl);
+		}
+		catch
+		{
+			// Non-fatal: permissions may not be settable in all environments (e.g., containers).
+		}
+	}
+
+	[SupportedOSPlatform("linux")]
+	[SupportedOSPlatform("macos")]
+	private static void SetPosixRestrictiveMode(string path)
+	{
+		try
+		{
+			File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+		}
+		catch
+		{
+			// Non-fatal: permissions may not be settable in all environments.
+		}
 	}
 
 	private static string ResolveFilePath(string fileNameOrPath)

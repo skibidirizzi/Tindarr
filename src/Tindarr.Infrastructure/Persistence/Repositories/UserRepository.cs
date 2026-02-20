@@ -109,6 +109,8 @@ WHERE Id LIKE 'guest-%'
 	{
 		var users = await db.Users
 			.AsNoTracking()
+			.OrderBy(x => x.CreatedAtUtc)
+			.ThenBy(x => x.Id)
 			.Skip(Math.Max(0, skip))
 			.Take(Math.Clamp(take, 1, 500))
 			.Select(x => new UserRecord(
@@ -117,9 +119,6 @@ WHERE Id LIKE 'guest-%'
 				x.CreatedAtUtc,
 				x.PasswordHash != null && x.PasswordSalt != null && x.PasswordIterations != null))
 			.ToListAsync(cancellationToken);
-
-		// SQLite provider cannot translate DateTimeOffset ORDER BY reliably; sort in-memory.
-		users = users.OrderBy(x => x.CreatedAtUtc).ToList();
 
 		return users;
 	}

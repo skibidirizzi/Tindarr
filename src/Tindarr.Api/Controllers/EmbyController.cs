@@ -126,9 +126,17 @@ public sealed class EmbyController(IEmbyService embyService) : ControllerBase
 		out ActionResult? errorResult)
 	{
 		errorResult = null;
-		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
+
+		if (string.IsNullOrWhiteSpace(serviceType) || string.IsNullOrWhiteSpace(serverId))
 		{
 			errorResult = new BadRequestObjectResult("ServiceType and ServerId are required.");
+			scope = null;
+			return false;
+		}
+
+		if (!ServiceScope.TryCreate(serviceType, serverId, out scope))
+		{
+			errorResult = new BadRequestObjectResult("Invalid serviceType or serverId.");
 			return false;
 		}
 

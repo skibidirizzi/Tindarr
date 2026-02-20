@@ -45,7 +45,18 @@ public sealed class PlexLibrarySyncWorker(
 			}
 
 			var serviceScope = new ServiceScope(entry.ServiceType, entry.ServerId);
-			await plexService.EnsureLibrarySyncAsync(serviceScope, stoppingToken);
+			try
+			{
+				await plexService.EnsureLibrarySyncAsync(serviceScope, stoppingToken);
+			}
+			catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				Logger.LogError(ex, "Plex library sync failed for server {ServerId}; skipping.", entry.ServerId);
+			}
 		}
 	}
 }

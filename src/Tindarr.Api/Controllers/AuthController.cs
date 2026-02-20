@@ -82,8 +82,19 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 			return Ok(new MeResponse(userId, displayName, new[] { Tindarr.Api.Auth.Policies.GuestRole }));
 		}
 
-		var me = await authService.GetMeAsync(currentUser.UserId, cancellationToken);
-		return Ok(new MeResponse(me.UserId, me.DisplayName, me.Roles));
+		try
+		{
+			var me = await authService.GetMeAsync(currentUser.UserId, cancellationToken);
+			return Ok(new MeResponse(me.UserId, me.DisplayName, me.Roles));
+		}
+		catch (ArgumentException)
+		{
+			return Unauthorized();
+		}
+		catch (InvalidOperationException)
+		{
+			return Unauthorized();
+		}
 	}
 
 	[HttpPost("set-password")]

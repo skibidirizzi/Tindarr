@@ -26,6 +26,38 @@ public sealed class AcceptedMoviesServiceTests
 		Assert.Equal("curator-1", list[0].AcceptedByUserId);
 	}
 
+	[Fact]
+	public async Task ListAsync_enforces_limit_and_orders_most_recent_first()
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+
+		foreach (var movieId in Enumerable.Range(1, 5))
+		{
+			await service.ForceAcceptAsync("curator-1", scope, movieId, CancellationToken.None);
+		}
+
+		var list = await service.ListAsync(scope, limit: 3, CancellationToken.None);
+
+		Assert.Equal(3, list.Count);
+		Assert.Equal(new[] { 5, 4, 3 }, list.Select(m => m.TmdbId).ToArray());
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData("")]
+	[InlineData("   ")]
+	public async Task ForceAcceptAsync_throws_for_invalid_curator_user_id(string? curatorUserId)
+	{
+		var repo = new FakeAcceptedMovieRepository();
+		var service = new AcceptedMoviesService(repo);
+		var scope = new ServiceScope(ServiceType.Tmdb, "tmdb");
+
+		await Assert.ThrowsAsync<ArgumentException>(() =>
+			service.ForceAcceptAsync(curatorUserId!, scope, 123, CancellationToken.None));
+	}
+
 	private sealed class FakeAcceptedMovieRepository : IAcceptedMovieRepository
 	{
 		private readonly Dictionary<(ServiceType ServiceType, string ServerId, int TmdbId), AcceptedMovie> _store = new();
