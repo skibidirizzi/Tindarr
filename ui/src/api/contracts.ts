@@ -28,6 +28,26 @@ export type MeResponse = {
   roles: string[];
 };
 
+export type InfoResponse = {
+  name: string;
+  version: string;
+  environment: string;
+  utcNow: string;
+};
+
+export type AdminUpdateCheckResponse = {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  checkedAtUtc: string;
+  latestReleaseUrl: string | null;
+  latestReleaseName: string | null;
+  publishedAtUtc: string | null;
+  isPreRelease: boolean | null;
+  releaseNotes: string | null;
+  error: string | null;
+};
+
 export type UserDto = {
   userId: string;
   displayName: string;

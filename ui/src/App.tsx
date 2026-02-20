@@ -12,8 +12,8 @@ import NotFoundPage from "./pages/NotFoundPage";
 import { useAuth } from "./auth/AuthContext";
 import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
 import PlexBulkJobToast from "./components/PlexBulkJobToast";
-import { fetchConfiguredScopes } from "./api/client";
-import type { ServiceScopeOptionDto } from "./api/contracts";
+import { adminFetchUpdateCheck, fetchConfiguredScopes, fetchInfo } from "./api/client";
+import type { AdminUpdateCheckResponse, InfoResponse, ServiceScopeOptionDto } from "./api/contracts";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, type ServiceScope } from "./serviceScope";
 
 const HEADER_COLLAPSED_KEY = "tindarr:headerCollapsed:v1";
@@ -66,6 +66,10 @@ function AppLayout() {
   const location = useLocation();
   const isAdmin = user?.roles?.includes("Admin") ?? false;
 
+  const [info, setInfo] = useState<InfoResponse | null>(null);
+  const [adminUpdate, setAdminUpdate] = useState<AdminUpdateCheckResponse | null>(null);
+  const [adminUpdateRefreshing, setAdminUpdateRefreshing] = useState(false);
+
   const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
   const [availableScopes, setAvailableScopes] = useState<ServiceScopeOptionDto[]>([]);
 
@@ -82,6 +86,36 @@ function AppLayout() {
       .then(setAvailableScopes)
       .catch((err) => console.error("Failed to fetch configured scopes:", err));
   }, []);
+
+  useEffect(() => {
+    fetchInfo()
+      .then(setInfo)
+      .catch((err) => console.warn("Failed to fetch build info:", err));
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminUpdate(null);
+      return;
+    }
+
+    adminFetchUpdateCheck()
+      .then(setAdminUpdate)
+      .catch((err) => console.warn("Failed to fetch admin update check:", err));
+  }, [isAdmin]);
+
+  const refreshAdminUpdateCheck = async () => {
+    if (!isAdmin) return;
+    setAdminUpdateRefreshing(true);
+    try {
+      const fresh = await adminFetchUpdateCheck({ force: true });
+      setAdminUpdate(fresh);
+    } catch (err) {
+      console.warn("Failed to refresh admin update check:", err);
+    } finally {
+      setAdminUpdateRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -131,6 +165,49 @@ function AppLayout() {
         <div className="app__headerInner">
           <div className="app__brand">
             <h1>Tindarr</h1>
+            {info ? (
+              <p>
+                {info.version ? `v${info.version}` : null}
+                {isAdmin ? (
+                  <>
+                    {adminUpdate?.updateAvailable ? (
+                      <>
+                        {info.version ? " — " : null}
+                        Update available
+                        {adminUpdate.latestVersion ? ` (v${adminUpdate.latestVersion})` : ""}
+                        {adminUpdate.latestReleaseUrl ? (
+                          <>
+                            {" "}
+                            <a
+                              href={adminUpdate.latestReleaseUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: "inherit", textDecoration: "underline" }}
+                            >
+                              GitHub release
+                            </a>
+                          </>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        {" "}
+                        <button
+                          type="button"
+                          className="pill"
+                          onClick={refreshAdminUpdateCheck}
+                          disabled={adminUpdateRefreshing}
+                          style={{ padding: "0.25rem 0.55rem", fontSize: "0.85rem" }}
+                          title="Check for updates"
+                        >
+                          {adminUpdateRefreshing ? "Checking…" : "Check for updates"}
+                        </button>
+                      </>
+                    )}
+                  </>
+                ) : null}
+              </p>
+            ) : null}
           </div>
           <nav className="app__nav" aria-label="Primary">
             <button

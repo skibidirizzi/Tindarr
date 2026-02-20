@@ -64,10 +64,49 @@ import type {
   CastDeviceDto,
   CastMovieRequest,
   CastMediaUrlDto,
-  GetMovieCastUrlRequest
+  GetMovieCastUrlRequest,
+  InfoResponse,
+  AdminUpdateCheckResponse
 } from "./contracts";
+import type { CastingDiagnosticsDto } from "./contracts-casting-diagnostics";
 import { ApiError, apiRequest } from "./http";
 import { getCachedJson, setCachedJson } from "./localCache";
+
+export async function fetchInfo(): Promise<InfoResponse> {
+  const cacheKey = "tindarr:info:v1";
+  const cached = getCachedJson<InfoResponse>(cacheKey);
+  if (cached) return cached;
+
+  const fresh = await apiRequest<InfoResponse>({
+    path: "/api/v1/info"
+  });
+
+  // Version changes only on deploy; cache fairly long.
+  setCachedJson(cacheKey, fresh, 24 * 60 * 60 * 1000);
+  return fresh;
+}
+
+export async function adminFetchUpdateCheck(options?: { force?: boolean }): Promise<AdminUpdateCheckResponse> {
+  const cacheKey = "tindarr:adminUpdateCheck:v1";
+  if (!options?.force) {
+    const cached = getCachedJson<AdminUpdateCheckResponse>(cacheKey);
+    if (cached) return cached;
+  }
+
+  const fresh = await apiRequest<AdminUpdateCheckResponse>({
+    path: "/api/v1/admin/update"
+  });
+
+  // Keep this fairly short so “update available” doesn’t lag too long.
+  setCachedJson(cacheKey, fresh, 10 * 60 * 1000);
+  return fresh;
+}
+
+export async function adminGetCastingDiagnostics(): Promise<CastingDiagnosticsDto> {
+  return apiRequest<CastingDiagnosticsDto>({
+    path: "/api/v1/admin/casting/diagnostics"
+  });
+}
 
 function resolveScope(serviceType?: string, serverId?: string) {
   const stored = getServiceScope();

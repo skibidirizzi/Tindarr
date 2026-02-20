@@ -139,6 +139,8 @@ builder.Services.AddOptions<LoggingOptions>()
 	.Validate(o => o.IsValid(), "Invalid Logging configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddHealthChecks();
+
 builder.Services.AddOptions<TmdbOptions>()
 	.BindConfiguration(TmdbOptions.SectionName)
 	.Validate(o => o.IsValid(), "Invalid Tmdb configuration.")
@@ -169,6 +171,11 @@ builder.Services.AddOptions<PlaybackOptions>()
 	.Validate(o => o.IsValid(), "Invalid Playback configuration.")
 	.ValidateOnStart();
 
+builder.Services.AddOptions<UpdateCheckOptions>()
+	.BindConfiguration(UpdateCheckOptions.SectionName)
+	.Validate(o => o.IsValid(), "Invalid UpdateCheck configuration.")
+	.ValidateOnStart();
+
 builder.Services.AddOptions<WindowsServiceOptions>()
 	.BindConfiguration(WindowsServiceOptions.SectionName);
 
@@ -188,6 +195,7 @@ builder.Services.AddSingleton<ITokenSigningKeyStore, DbOrFileTokenSigningKeyStor
 builder.Services.AddSingleton<ITokenService, JwtTokenService>();
 builder.Services.AddSingleton<IPlaybackTokenService, PlaybackTokenService>();
 builder.Services.AddSingleton<ICastUrlTokenService, CastUrlTokenService>();
+builder.Services.AddSingleton<Tindarr.Infrastructure.Casting.CastingSessionStore>();
 
 builder.Services.AddSingleton<Tindarr.Application.Interfaces.Casting.ICastClient, SharpCasterCastClient>();
 
@@ -283,6 +291,15 @@ builder.Services.AddScoped<EfCoreInteractionStore>();
 builder.Services.AddSingleton<Tindarr.Infrastructure.Interactions.InMemoryInteractionStore>();
 builder.Services.AddScoped<IInteractionStore, Tindarr.Infrastructure.Interactions.RoutingInteractionStore>();
 builder.Services.AddMemoryCache();
+
+builder.Services.AddHttpClient<Tindarr.Api.Services.IUpdateChecker, Tindarr.Api.Services.GitHubReleaseUpdateChecker>((sp, client) =>
+{
+	client.BaseAddress = new Uri("https://api.github.com/");
+	client.Timeout = TimeSpan.FromSeconds(10);
+	client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+	client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+	client.DefaultRequestHeaders.UserAgent.ParseAdd("Tindarr");
+});
 
 // Persist TMDB metadata separately from the main tindarr.db.
 // This avoids repeated upstream TMDB calls across restarts.
@@ -386,8 +403,8 @@ if (isWindowsService)
 app.UseCors("devclient");
 
 app.UseMiddleware<CorrelationIdMiddleware>();
-app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<RequestLoggingMiddleware>();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -396,6 +413,20 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHealthChecks("/health");
+app.MapHealthChecks("/api/v1/health");
+
+static object BuildInfo(IHostEnvironment env) => new
+{
+	Name = "Tindarr",
+	Version = Tindarr.Application.Common.TindarrVersion.Current.ToString(3),
+	Environment = env.EnvironmentName,
+	UtcNow = DateTimeOffset.UtcNow.ToString("O")
+};
+
+app.MapGet("/info", (IHostEnvironment env) => Results.Ok(BuildInfo(env)));
+app.MapGet("/api/v1/info", (IHostEnvironment env) => Results.Ok(BuildInfo(env)));
 
 // SPA fallback for non-API routes only.
 app.MapFallback(async context =>

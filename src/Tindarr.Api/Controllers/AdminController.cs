@@ -24,9 +24,16 @@ public sealed class AdminController(
 	ICastingSettingsRepository castingSettings,
 	IServiceSettingsRepository serviceSettings,
 	IPasswordHasher passwordHasher,
-	IOptions<RegistrationOptions> registrationOptions) : ControllerBase
+	IOptions<RegistrationOptions> registrationOptions,
+	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore) : ControllerBase
 {
-	private readonly RegistrationOptions registration = registrationOptions.Value;
+	[HttpGet("casting/diagnostics")]
+	public ActionResult<Tindarr.Contracts.Admin.CastingDiagnosticsDto> GetCastingDiagnostics()
+	{
+		var diagnostics = castingSessionStore.GetDiagnostics();
+		return Ok(diagnostics);
+	}
+
 
 	[HttpGet("join-address")]
 	public async Task<ActionResult<JoinAddressSettingsDto>> GetJoinAddressSettings(CancellationToken cancellationToken)
@@ -319,10 +326,10 @@ public sealed class AdminController(
 		var now = DateTimeOffset.UtcNow;
 		await users.CreateAsync(new CreateUserRecord(id, displayName, now), cancellationToken);
 
-		var hashed = passwordHasher.Hash(request.Password, registration.PasswordHashIterations);
+		var hashed = passwordHasher.Hash(request.Password, registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [registration.DefaultRole])
+		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [registrationOptions.Value.DefaultRole])
 			.Where(r => !string.IsNullOrWhiteSpace(r))
 			.Select(r => r.Trim())
 			.ToList();
@@ -399,7 +406,7 @@ public sealed class AdminController(
 			return BadRequest(ex.Message);
 		}
 
-		var hashed = passwordHasher.Hash(request.NewPassword, registration.PasswordHashIterations);
+		var hashed = passwordHasher.Hash(request.NewPassword, registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 		return NoContent();
 	}

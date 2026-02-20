@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Tindarr.Infrastructure\Tindarr.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Tindarr.Application\Tindarr.Application.csproj" />
+    <ProjectReference Include="..\..\src\Tindarr.Api\Tindarr.Api.csproj" />
   </ItemGroup>
 
 </Project>
