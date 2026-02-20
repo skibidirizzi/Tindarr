@@ -4,9 +4,18 @@ import QRCode from "qrcode";
 import SwipeCardComponent from "../components/SwipeCard";
 import MovieDetailsModal from "../components/MovieDetailsModal";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
-import { castRoomQr, closeRoom, createRoom, fetchRoomSwipeDeck, fetchSwipeDeck, getRoom, getRoomJoinUrl, getRoomMatches, getRoomQrCastUrl, joinRoom, listCastDevices, sendRoomSwipe } from "../api/client";
+import { castRoomQr, closeRoom, createRoom, endCastingSession, fetchRoomSwipeDeck, fetchSwipeDeck, getRoom, getRoomJoinUrl, getRoomMatches, getRoomQrCastUrl, joinRoom, listCastDevices, sendRoomSwipe } from "../api/client";
 import type { CastDeviceDto, RoomJoinUrlResponse, RoomMatchesResponse, RoomStateResponse } from "../api/contracts";
-import { ensureGoogleCastSdkLoaded, getCurrentCastDevice, initGoogleCastContext, loadMediaToCastSession, requestCastSession, shouldUseGoogleCastSdk } from "../casting/googleCast";
+import {
+  ensureGoogleCastSdkLoaded,
+  getCurrentCastDevice,
+  initGoogleCastContext,
+  loadMediaToCastSession,
+  requestCastSession,
+  shouldUseGoogleCastSdk,
+  subscribeToCastMediaFinished,
+  subscribeToCastSessionEnded
+} from "../casting/googleCast";
 import { ApiError } from "../api/http";
 import { useAuth } from "../auth/AuthContext";
 import type { SwipeAction, SwipeCard } from "../types";
@@ -35,6 +44,42 @@ export default function RoomPage() {
   const [casting, setCasting] = useState(false);
   const [castMessage, setCastMessage] = useState<string | null>(null);
   const [castUiMode, setCastUiMode] = useState<"sdk" | "fallback">(() => (shouldUseGoogleCastSdk() ? "sdk" : "fallback"));
+
+  const qrCastSessionIdRef = useRef<string | null>(null);
+  const qrEndInFlightRef = useRef(false);
+
+  async function endActiveQrCastSessionBestEffort(): Promise<void> {
+    const sessionId = qrCastSessionIdRef.current;
+    if (!sessionId) return;
+    if (qrEndInFlightRef.current) return;
+
+    qrEndInFlightRef.current = true;
+    try {
+      await endCastingSession(sessionId);
+    } catch (e) {
+      // best-effort
+      void e;
+    } finally {
+      qrCastSessionIdRef.current = null;
+      qrEndInFlightRef.current = false;
+    }
+  }
+
+  useEffect(() => {
+    if (castUiMode !== "sdk") return;
+
+    const unsubEnded = subscribeToCastSessionEnded(() => {
+      void endActiveQrCastSessionBestEffort();
+    });
+    const unsubFinished = subscribeToCastMediaFinished(() => {
+      void endActiveQrCastSessionBestEffort();
+    });
+
+    return () => {
+      unsubEnded();
+      unsubFinished();
+    };
+  }, [castUiMode]);
 
   const [cards, setCards] = useState<SwipeCard[]>([]);
   const [deckLoading, setDeckLoading] = useState(false);
@@ -278,6 +323,9 @@ export default function RoomPage() {
     try {
       const updated = await closeRoom(roomId);
       setRoom(updated);
+
+			// Once the room is closed, the invite QR is no longer needed.
+			await endActiveQrCastSessionBestEffort();
     } catch (e) {
       if (e instanceof ApiError) {
         setError(e.message);
@@ -338,12 +386,19 @@ export default function RoomPage() {
         }
 
         const media = await getRoomQrCastUrl(roomId);
-        await loadMediaToCastSession({
-          url: media.url,
-          contentType: media.contentType,
-          title: media.title,
-          subTitle: media.subTitle,
-        });
+
+        qrCastSessionIdRef.current = media.sessionId ?? null;
+        try {
+          await loadMediaToCastSession({
+            url: media.url,
+            contentType: media.contentType,
+            title: media.title,
+            subTitle: media.subTitle,
+          });
+        } catch (e) {
+          await endActiveQrCastSessionBestEffort();
+          throw e;
+        }
 
         setCastMessage("Casting QR…");
         return;

@@ -310,5 +310,8 @@ public sealed class PlexPlaybackProviderStreamSelectionTests
 
 		public Task UpsertAsync(ServiceScope scope, ServiceSettingsUpsert upsert, CancellationToken cancellationToken) =>
 			throw new NotSupportedException();
+
+		public Task<bool> DeleteAsync(ServiceScope scope, CancellationToken cancellationToken) =>
+			throw new NotSupportedException();
 	}
 }

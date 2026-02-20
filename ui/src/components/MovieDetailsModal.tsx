@@ -1,9 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../api/http";
-import { castMovie, fetchMovieDetails, getMovieCastUrl, listCastDevices } from "../api/client";
+import { castMovie, endCastingSession, fetchMovieDetails, getMovieCastUrl, listCastDevices } from "../api/client";
 import type { CastDeviceDto, MovieDetailsDto } from "../api/contracts";
 import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
-import { ensureGoogleCastSdkLoaded, getCurrentCastDevice, initGoogleCastContext, loadMediaToCastSession, requestCastSession, shouldUseGoogleCastSdk } from "../casting/googleCast";
+import {
+  ensureGoogleCastSdkLoaded,
+  getCurrentCastDevice,
+  initGoogleCastContext,
+  loadMediaToCastSession,
+  requestCastSession,
+  shouldUseGoogleCastSdk,
+  subscribeToCastMediaFinished,
+  subscribeToCastSessionEnded
+} from "../casting/googleCast";
 
 type MovieDetailsModalProps = {
   tmdbId: number;
@@ -23,6 +32,44 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
   const [casting, setCasting] = useState(false);
   const [castMessage, setCastMessage] = useState<string | null>(null);
   const [castUiMode, setCastUiMode] = useState<"sdk" | "fallback">(() => (shouldUseGoogleCastSdk() ? "sdk" : "fallback"));
+
+  const castSessionIdRef = useRef<string | null>(null);
+  const endInFlightRef = useRef(false);
+
+  async function endActiveCastSessionBestEffort(): Promise<void> {
+    const sessionId = castSessionIdRef.current;
+    if (!sessionId) return;
+    if (endInFlightRef.current) return;
+
+    endInFlightRef.current = true;
+    try {
+      await endCastingSession(sessionId);
+    } catch (e) {
+      // best-effort
+      void e;
+    } finally {
+      castSessionIdRef.current = null;
+      endInFlightRef.current = false;
+    }
+  }
+
+  // For SDK casting, end the server-side session when the Cast session ends
+  // or when playback finishes (best-effort; not all receivers report this reliably).
+  useEffect(() => {
+    if (castUiMode !== "sdk") return;
+
+    const unsubEnded = subscribeToCastSessionEnded(() => {
+      void endActiveCastSessionBestEffort();
+    });
+    const unsubFinished = subscribeToCastMediaFinished(() => {
+      void endActiveCastSessionBestEffort();
+    });
+
+    return () => {
+      unsubEnded();
+      unsubFinished();
+    };
+  }, [castUiMode]);
 
   const posterUrl = details?.posterUrl ?? null;
 
@@ -115,9 +162,9 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
 
         initGoogleCastContext();
 
-        const current = getCurrentCastDevice();
+        let current = getCurrentCastDevice();
         if (!current) {
-          await requestCastSession();
+          current = await requestCastSession();
         }
 
         const media = await getMovieCastUrl({
@@ -125,14 +172,22 @@ export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModal
           serverId: currentScope.serverId,
           tmdbId,
           title: details?.title ?? null,
+          deviceId: current.friendlyName,
         });
 
-        await loadMediaToCastSession({
-          url: media.url,
-          contentType: media.contentType,
-          title: media.title,
-          subTitle: media.subTitle,
-        });
+        castSessionIdRef.current = media.sessionId ?? null;
+
+        try {
+          await loadMediaToCastSession({
+            url: media.url,
+            contentType: media.contentType,
+            title: media.title,
+            subTitle: media.subTitle,
+          });
+        } catch (e) {
+          await endActiveCastSessionBestEffort();
+          throw e;
+        }
 
         setCastMessage("Casting…");
         return;

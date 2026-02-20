@@ -1,5 +1,8 @@
+using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
 using Tindarr.Api.Services;
@@ -26,8 +29,126 @@ public sealed class PlexController(
 	ITmdbMetadataStore tmdbMetadataStore,
 	ITmdbImageCache imageCache,
 	IOptions<TmdbOptions> tmdbOptions,
-	IUserPreferencesService preferencesService) : ControllerBase
+	IUserPreferencesService preferencesService,
+	IServiceSettingsRepository settingsRepo) : ControllerBase
 {
+	[Authorize(Policy = Policies.AdminOnly)]
+	[HttpGet("library/sync/status/stream")]
+	public async Task GetLibrarySyncStatusStream(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		CancellationToken cancellationToken)
+	{
+		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		{
+			Response.StatusCode = (errorResult as ObjectResult)?.StatusCode ?? StatusCodes.Status400BadRequest;
+			return;
+		}
+
+		Response.ContentType = "text/event-stream";
+		Response.Headers.CacheControl = "no-cache";
+		Response.Headers.Connection = "keep-alive";
+		Response.Headers["X-Accel-Buffering"] = "no";
+
+		var jsonOptions = HttpContext.RequestServices
+			.GetRequiredService<IOptions<JsonOptions>>()
+			.Value
+			.JsonSerializerOptions;
+
+		PlexLibrarySyncStatusDto ToDto(PlexLibrarySyncJobStatus status) => new(
+			ServiceType: status.ServiceType,
+			ServerId: status.ServerId,
+			State: status.State.ToString().ToLowerInvariant(),
+			TotalSections: status.TotalSections,
+			ProcessedSections: status.ProcessedSections,
+			TotalItems: status.TotalItems,
+			ProcessedItems: status.ProcessedItems,
+			TmdbIdsFound: status.TmdbIdsFound,
+			StartedAtUtc: status.StartedAtUtc,
+			FinishedAtUtc: status.FinishedAtUtc,
+			Message: status.Message,
+			UpdatedAtUtc: status.UpdatedAtUtc);
+
+		static async Task WriteComment(HttpResponse response, string text, CancellationToken ct)
+		{
+			await response.WriteAsync($": {text}\n\n", ct);
+			await response.Body.FlushAsync(ct);
+		}
+
+		static async Task WriteEvent(HttpResponse response, string eventName, string json, CancellationToken ct)
+		{
+			await response.WriteAsync($"event: {eventName}\n", ct);
+			await response.WriteAsync($"data: {json}\n\n", ct);
+			await response.Body.FlushAsync(ct);
+		}
+
+		var channel = Channel.CreateUnbounded<PlexLibrarySyncJobStatus>(new UnboundedChannelOptions
+		{
+			SingleReader = true,
+			SingleWriter = false
+		});
+
+		void Push(PlexLibrarySyncJobStatus status)
+		{
+			if (status.ServiceType.Equals(scope!.ServiceType.ToString().ToLowerInvariant(), StringComparison.OrdinalIgnoreCase)
+				&& status.ServerId.Equals(scope.ServerId, StringComparison.OrdinalIgnoreCase))
+			{
+				channel.Writer.TryWrite(status);
+			}
+		}
+
+		EventHandler<PlexLibrarySyncJobStatus> handler = (_, status) => Push(status);
+		librarySyncJob.StatusChanged += handler;
+
+		var keepAliveInterval = TimeSpan.FromSeconds(15);
+
+		try
+		{
+			var initial = librarySyncJob.GetStatus(scope!);
+			await WriteEvent(Response, "status", JsonSerializer.Serialize(ToDto(initial), jsonOptions), cancellationToken);
+
+			// If nothing is running, we can close the stream after emitting the snapshot.
+			if (initial.State != PlexLibrarySyncJobState.Running)
+			{
+				return;
+			}
+
+			while (!cancellationToken.IsCancellationRequested)
+			{
+				var delayTask = Task.Delay(keepAliveInterval, cancellationToken);
+				var readTask = channel.Reader.ReadAsync(cancellationToken).AsTask();
+				var completed = await Task.WhenAny(delayTask, readTask).ConfigureAwait(false);
+
+				if (completed == delayTask)
+				{
+					await WriteComment(Response, "keepalive", cancellationToken);
+					continue;
+				}
+
+				var next = await readTask.ConfigureAwait(false);
+				// Drain any queued statuses; only emit the latest.
+				while (channel.Reader.TryRead(out var extra))
+				{
+					next = extra;
+				}
+
+				await WriteEvent(Response, "status", JsonSerializer.Serialize(ToDto(next), jsonOptions), cancellationToken);
+				if (next.State != PlexLibrarySyncJobState.Running)
+				{
+					return;
+				}
+			}
+		}
+		catch (OperationCanceledException)
+		{
+			// client disconnected
+		}
+		finally
+		{
+			librarySyncJob.StatusChanged -= handler;
+		}
+	}
+
 	[Authorize(Policy = Policies.AdminOnly)]
 	[HttpGet("auth/status")]
 	public async Task<ActionResult<PlexAuthStatusResponse>> GetAuthStatus(CancellationToken cancellationToken)
@@ -105,6 +226,24 @@ public sealed class PlexController(
 		{
 			return StatusCode(StatusCodes.Status504GatewayTimeout, "Plex request timed out.");
 		}
+	}
+
+	[Authorize(Policy = Policies.AdminOnly)]
+	[HttpDelete("servers/{serverId}")]
+	public async Task<IActionResult> DeleteServer([FromRoute] string serverId, CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(serverId))
+		{
+			return BadRequest("ServerId is required.");
+		}
+
+		if (string.Equals(serverId, PlexConstants.AccountServerId, StringComparison.OrdinalIgnoreCase))
+		{
+			return BadRequest("Cannot delete plex-account settings.");
+		}
+
+		var deleted = await settingsRepo.DeleteAsync(new ServiceScope(ServiceType.Plex, serverId.Trim()), cancellationToken);
+		return deleted ? NoContent() : NotFound("Server not found.");
 	}
 
 	[Authorize(Policy = Policies.AdminOnly)]

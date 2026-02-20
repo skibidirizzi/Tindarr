@@ -114,6 +114,54 @@ export function getCurrentCastDevice(): CastDeviceInfo | null {
   return name ? { friendlyName: name } : null;
 }
 
+export function subscribeToCastSessionEnded(onEnded: () => void): () => void {
+  if (!isCastFrameworkReady()) return () => {};
+
+  const castAny = (window as any).cast as any;
+  const context = castAny.framework.CastContext.getInstance();
+  const eventType = castAny.framework.CastContextEventType?.SESSION_STATE_CHANGED ?? "sessionstatechanged";
+
+  const handler = (evt: any) => {
+    const state = String(evt?.sessionState ?? "");
+    const ended = castAny.framework.SessionState?.SESSION_ENDED;
+    if (ended && evt?.sessionState === ended) {
+      onEnded();
+      return;
+    }
+
+    if (state.toUpperCase() === "SESSION_ENDED") {
+      onEnded();
+    }
+  };
+
+  context.addEventListener(eventType, handler);
+  return () => context.removeEventListener(eventType, handler);
+}
+
+export function subscribeToCastMediaFinished(onFinished: () => void): () => void {
+  if (!isCastFrameworkReady()) return () => {};
+
+  const castAny = (window as any).cast as any;
+  const RemotePlayer = castAny.framework?.RemotePlayer;
+  const RemotePlayerController = castAny.framework?.RemotePlayerController;
+  const eventType = castAny.framework?.RemotePlayerEventType?.PLAYER_STATE_CHANGED;
+  if (!RemotePlayer || !RemotePlayerController || !eventType) return () => {};
+
+  const player = new RemotePlayer();
+  const controller = new RemotePlayerController(player);
+
+  const handler = () => {
+    const playerState = String(player?.playerState ?? "").toUpperCase();
+    const idleReason = String(player?.idleReason ?? "").toUpperCase();
+    if (playerState === "IDLE" && idleReason === "FINISHED") {
+      onFinished();
+    }
+  };
+
+  controller.addEventListener(eventType, handler);
+  return () => controller.removeEventListener(eventType, handler);
+}
+
 export async function loadMediaToCastSession(args: { url: string; contentType: string; title: string; subTitle?: string | null }): Promise<void> {
   if (!isCastFrameworkReady()) {
     throw new Error("Cast framework not ready");

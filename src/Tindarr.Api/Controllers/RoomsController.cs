@@ -232,7 +232,7 @@ public sealed class RoomsController(
 				return NotFound("Room not found.");
 			}
 
-			var cards = await roomService.GetSwipeDeckAsync(roomId, userId, Math.Clamp(limit, 1, 50), cancellationToken);
+			var cards = await roomService.GetSwipeDeckAsync(roomId, userId, Math.Clamp(limit, 10, 50), cancellationToken);
 			var response = new SwipeDeckResponse(
 				room.Scope.ServiceType.ToString().ToLowerInvariant(),
 				room.Scope.ServerId,

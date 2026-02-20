@@ -9,6 +9,8 @@ public interface IServiceSettingsRepository
 	Task<IReadOnlyList<ServiceSettingsRecord>> ListAsync(ServiceType serviceType, CancellationToken cancellationToken);
 
 	Task UpsertAsync(ServiceScope scope, ServiceSettingsUpsert upsert, CancellationToken cancellationToken);
+
+	Task<bool> DeleteAsync(ServiceScope scope, CancellationToken cancellationToken);
 }
 
 public sealed record ServiceSettingsRecord(

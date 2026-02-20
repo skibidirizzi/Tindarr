@@ -4,4 +4,5 @@ public sealed record CastMediaUrlDto(
 	string Url,
 	string ContentType,
 	string Title,
-	string? SubTitle);
+	string? SubTitle,
+	string? SessionId = null);

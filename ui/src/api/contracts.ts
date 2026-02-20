@@ -268,6 +268,7 @@ export type CastMediaUrlDto = {
   contentType: string;
   title: string;
   subTitle: string | null;
+  sessionId?: string | null;
 };
 
 export type GetMovieCastUrlRequest = {
@@ -275,6 +276,7 @@ export type GetMovieCastUrlRequest = {
   serverId: string;
   tmdbId: number;
   title?: string | null;
+  deviceId?: string | null;
 };
 
 export type MovieDetailsDto = {

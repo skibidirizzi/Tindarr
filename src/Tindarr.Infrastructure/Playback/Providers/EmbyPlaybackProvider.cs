@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Playback;
@@ -12,7 +13,7 @@ public sealed class EmbyPlaybackProvider(
 	IServiceSettingsRepository settingsRepo,
 	ICastingSettingsRepository castingSettingsRepo,
 	HttpClient httpClient,
-	ILogger<EmbyPlaybackProvider> logger) : IDirectPlaybackProvider
+	ILogger<EmbyPlaybackProvider> logger) : IDirectPlaybackProvider, ICastPlaybackProvider
 {
 	private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -20,16 +21,99 @@ public sealed class EmbyPlaybackProvider(
 
 	public async Task<Uri?> TryBuildDirectMovieStreamUrlAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
 	{
-		var upstream = await BuildMovieStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+		// Direct URLs are only used for cast devices; prefer a cast-compatible request.
+		var upstream = await BuildMovieCastStreamRequestAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
 		if (!upstream.Headers.TryGetValue("X-Emby-Token", out var token) || string.IsNullOrWhiteSpace(token))
 		{
 			return null;
 		}
 
-		return AppendOrReplaceQuery(upstream.Uri, "api_key", token);
+		// Cast devices can't send headers; include token in query.
+		var uri = AppendOrReplaceQuery(upstream.Uri, "api_key", token);
+		uri = AppendOrReplaceQuery(uri, "X-Emby-Token", token);
+		return uri;
 	}
 
 	public async Task<UpstreamPlaybackRequest> BuildMovieStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var (baseUrl, apiKey, _userId, itemId, streamSelection) = await ResolveContextAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+
+		var queryParts = new List<string>(capacity: 10)
+		{
+			$"api_key={Uri.EscapeDataString(apiKey)}",
+			"Static=true"
+		};
+		if (streamSelection.AudioStreamIndex is not null)
+		{
+			queryParts.Add($"AudioStreamIndex={streamSelection.AudioStreamIndex.Value}");
+		}
+		if (streamSelection.SubtitleStreamIndex is not null)
+		{
+			queryParts.Add($"SubtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
+		}
+		if (!string.IsNullOrWhiteSpace(streamSelection.SubtitleMethod))
+		{
+			queryParts.Add($"SubtitleMethod={Uri.EscapeDataString(streamSelection.SubtitleMethod!)}");
+		}
+
+		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream?{string.Join("&", queryParts)}", UriKind.Absolute);
+		return new UpstreamPlaybackRequest(
+			Uri: upstreamUri,
+			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				["X-Emby-Token"] = apiKey
+			});
+	}
+
+	public async Task<UpstreamPlaybackRequest> BuildMovieCastStreamRequestAsync(ServiceScope scope, int tmdbId, CancellationToken cancellationToken)
+	{
+		var (baseUrl, apiKey, userId, itemId, streamSelection) = await ResolveContextAsync(scope, tmdbId, cancellationToken).ConfigureAwait(false);
+		var mediaSourceId = await TryGetMediaSourceIdAsync(httpClient, baseUrl, apiKey, userId, itemId, cancellationToken).ConfigureAwait(false);
+
+		// Chromecast audio decoding is more limited than Emby's normal web clients.
+		// Force an mp4 container + AAC audio, and cap channels to stereo as a safe default.
+		var queryParts = new List<string>(capacity: 16)
+		{
+			$"api_key={Uri.EscapeDataString(apiKey)}",
+			"Static=false",
+			"AudioCodec=aac",
+			"MaxAudioChannels=2",
+			$"DeviceId={Uri.EscapeDataString(BuildCastDeviceId(scope))}",
+			"VideoCodec=h264",
+			"MaxWidth=1920",
+			"MaxHeight=1080",
+			"VideoBitRate=8000000"
+		};
+		if (!string.IsNullOrWhiteSpace(mediaSourceId))
+		{
+			queryParts.Add($"MediaSourceId={Uri.EscapeDataString(mediaSourceId)}");
+		}
+		if (streamSelection.AudioStreamIndex is not null)
+		{
+			queryParts.Add($"AudioStreamIndex={streamSelection.AudioStreamIndex.Value}");
+		}
+		// IMPORTANT: MP4 cannot mux common text subtitle codecs (e.g. SRT/subrip).
+		// Only request subtitles when we are burning them into video (Encode).
+		if (streamSelection.SubtitleStreamIndex is not null
+			&& string.Equals(streamSelection.SubtitleMethod, "Encode", StringComparison.OrdinalIgnoreCase))
+		{
+			queryParts.Add($"SubtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
+			queryParts.Add("SubtitleMethod=Encode");
+		}
+
+		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream.mp4?{string.Join("&", queryParts)}", UriKind.Absolute);
+		return new UpstreamPlaybackRequest(
+			Uri: upstreamUri,
+			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				["X-Emby-Token"] = apiKey
+			});
+	}
+
+	private async Task<(string BaseUrl, string ApiKey, string UserId, string ItemId, StreamSelection StreamSelection)> ResolveContextAsync(
+		ServiceScope scope,
+		int tmdbId,
+		CancellationToken cancellationToken)
 	{
 		var settings = await settingsRepo.GetAsync(scope, cancellationToken).ConfigureAwait(false);
 		if (settings is null || string.IsNullOrWhiteSpace(settings.EmbyBaseUrl) || string.IsNullOrWhiteSpace(settings.EmbyApiKey))
@@ -55,27 +139,42 @@ public sealed class EmbyPlaybackProvider(
 		var castingSettings = await castingSettingsRepo.GetAsync(cancellationToken).ConfigureAwait(false);
 		var streamSelection = await TrySelectStreamsAsync(httpClient, baseUrl, apiKey, userId, itemId, castingSettings, cancellationToken).ConfigureAwait(false);
 
-		var queryParts = new List<string>(capacity: 8) { "static=true" };
-		if (streamSelection.AudioStreamIndex is not null)
+		return (baseUrl, apiKey, userId, itemId, streamSelection);
+	}
+
+	private static string BuildCastDeviceId(ServiceScope scope)
+	{
+		var serverId = (scope.ServerId ?? string.Empty).Trim();
+		if (string.IsNullOrWhiteSpace(serverId))
 		{
-			queryParts.Add($"AudioStreamIndex={streamSelection.AudioStreamIndex.Value}");
-		}
-		if (streamSelection.SubtitleStreamIndex is not null)
-		{
-			queryParts.Add($"SubtitleStreamIndex={streamSelection.SubtitleStreamIndex.Value}");
-		}
-		if (!string.IsNullOrWhiteSpace(streamSelection.SubtitleMethod))
-		{
-			queryParts.Add($"SubtitleMethod={Uri.EscapeDataString(streamSelection.SubtitleMethod!)}");
+			return "tindarr-cast";
 		}
 
-		var upstreamUri = new Uri($"{baseUrl}Videos/{Uri.EscapeDataString(itemId)}/stream?{string.Join("&", queryParts)}", UriKind.Absolute);
-		return new UpstreamPlaybackRequest(
-			Uri: upstreamUri,
-			Headers: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-			{
-				["X-Emby-Token"] = apiKey
-			});
+		return $"tindarr-cast:{serverId}";
+	}
+
+	private static async Task<string?> TryGetMediaSourceIdAsync(
+		HttpClient client,
+		string baseUrl,
+		string apiKey,
+		string userId,
+		string itemId,
+		CancellationToken cancellationToken)
+	{
+		var uri = new Uri($"{baseUrl}Items/{Uri.EscapeDataString(itemId)}/PlaybackInfo?UserId={Uri.EscapeDataString(userId)}", UriKind.Absolute);
+		using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+		request.Headers.Accept.ParseAdd("application/json");
+		request.Headers.Add("X-Emby-Token", apiKey);
+		using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+		if (!response.IsSuccessStatusCode)
+		{
+			return null;
+		}
+
+		var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+		var dto = JsonSerializer.Deserialize<PlaybackInfoResponseDto>(json, Json);
+		var id = dto?.MediaSources?.FirstOrDefault(ms => !string.IsNullOrWhiteSpace(ms.Id))?.Id;
+		return string.IsNullOrWhiteSpace(id) ? null : id.Trim();
 	}
 
 	private static Uri AppendOrReplaceQuery(Uri uri, string key, string value)
@@ -493,10 +592,37 @@ public sealed class EmbyPlaybackProvider(
 		int tmdbId,
 		CancellationToken cancellationToken)
 	{
+		static bool HasRequestedTmdbId(ItemDto item, int requestedTmdbId)
+		{
+			if (item.ProviderIds is null || item.ProviderIds.Count == 0)
+			{
+				return false;
+			}
+
+			var expected = requestedTmdbId.ToString(CultureInfo.InvariantCulture);
+			foreach (var kvp in item.ProviderIds)
+			{
+				var key = (kvp.Key ?? string.Empty).Trim();
+				if (!key.Contains("tmdb", StringComparison.OrdinalIgnoreCase))
+				{
+					continue;
+				}
+
+				var value = (kvp.Value ?? string.Empty).Trim();
+				if (string.Equals(value, expected, StringComparison.OrdinalIgnoreCase)
+					|| string.Equals(value, $"tmdb.{expected}", StringComparison.OrdinalIgnoreCase))
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
 		var candidates = new[]
 		{
-			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1&Fields=ProviderIds&AnyProviderIdEquals=tmdb.{tmdbId}",
-			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=1&Fields=ProviderIds&AnyProviderIdEquals=Tmdb.{tmdbId}",
+			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=10&Fields=ProviderIds&AnyProviderIdEquals=tmdb.{tmdbId}",
+			$"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Limit=10&Fields=ProviderIds&AnyProviderIdEquals=Tmdb.{tmdbId}",
 		};
 
 		foreach (var query in candidates)
@@ -513,9 +639,44 @@ public sealed class EmbyPlaybackProvider(
 
 			var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 			var dto = JsonSerializer.Deserialize<ItemsResponseDto>(json, Json);
-			var id = dto?.Items?.FirstOrDefault()?.Id;
+			var match = dto?.Items?.FirstOrDefault(i => i is not null && HasRequestedTmdbId(i, tmdbId));
+			var id = match?.Id;
 			if (!string.IsNullOrWhiteSpace(id))
 			{
+				return id.Trim();
+			}
+		}
+
+		// Fallback: page through the user's movie library and locate an item whose ProviderIds contains the TMDB id.
+		// This avoids incorrectly returning the library's first movie if server-side filtering is unavailable.
+		const int pageSize = 200;
+		const int maxToScan = 5000;
+		for (var startIndex = 0; startIndex < maxToScan; startIndex += pageSize)
+		{
+			var query = $"Users/{Uri.EscapeDataString(userId)}/Items?IncludeItemTypes=Movie&Recursive=true&Fields=ProviderIds&StartIndex={startIndex}&Limit={pageSize}";
+			var uri = new Uri($"{baseUrl}{query}", UriKind.Absolute);
+			using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+			request.Headers.Accept.ParseAdd("application/json");
+			request.Headers.Add("X-Emby-Token", apiKey);
+
+			using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+			if (!response.IsSuccessStatusCode)
+			{
+				break;
+			}
+
+			var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+			var dto = JsonSerializer.Deserialize<ItemsResponseDto>(json, Json);
+			if (dto?.Items is not { Count: > 0 })
+			{
+				break;
+			}
+
+			var match = dto.Items.FirstOrDefault(i => i is not null && HasRequestedTmdbId(i, tmdbId));
+			var id = match?.Id;
+			if (!string.IsNullOrWhiteSpace(id))
+			{
+				logger.LogDebug("emby item id lookup: found TMDB match via fallback scan. TmdbId={TmdbId} StartIndex={StartIndex}", tmdbId, startIndex);
 				return id.Trim();
 			}
 		}
@@ -556,7 +717,16 @@ public sealed class EmbyPlaybackProvider(
 		[property: JsonPropertyName("Items")] List<ItemDto>? Items,
 		[property: JsonPropertyName("TotalRecordCount")] int TotalRecordCount);
 
-	private sealed record ItemDto([property: JsonPropertyName("Id")] string? Id);
+	private sealed record ItemDto(
+		[property: JsonPropertyName("Id")] string? Id,
+		[property: JsonPropertyName("ProviderIds")] Dictionary<string, string>? ProviderIds);
+
+	private sealed record PlaybackInfoResponseDto(
+		[property: JsonPropertyName("MediaSources")] List<MediaSourceInfoDto>? MediaSources,
+		[property: JsonPropertyName("PlaySessionId")] string? PlaySessionId,
+		[property: JsonPropertyName("ErrorCode")] string? ErrorCode);
+
+	private sealed record MediaSourceInfoDto([property: JsonPropertyName("Id")] string? Id);
 
 	private sealed record ItemDetailsDto([property: JsonPropertyName("MediaStreams")] List<MediaStreamDto>? MediaStreams);
 

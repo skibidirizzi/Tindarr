@@ -216,6 +216,7 @@ try {
 	}
 
 	if (-not $ApiOnly) {
+		Start-Sleep -Seconds 5
 		$uiProc = Start-Ui -repoRoot $repoRoot -apiUrl $proxyTarget -uiPort $UiPort
 	}
 

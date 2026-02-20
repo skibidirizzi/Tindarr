@@ -24,7 +24,7 @@ public sealed class SwipeDeckController(ISwipeDeckService swipeDeckService) : Co
         try
         {
             var userId = User.GetUserId();
-            var cards = await swipeDeckService.GetDeckAsync(userId, scope!, Math.Clamp(limit, 1, 50), cancellationToken);
+            var cards = await swipeDeckService.GetDeckAsync(userId, scope!, Math.Clamp(limit, 10, 50), cancellationToken);
             var response = new SwipeDeckResponse(scope!.ServiceType.ToString().ToLowerInvariant(), scope.ServerId, cards.Select(Map).ToList());
 
             return Ok(response);

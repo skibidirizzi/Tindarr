@@ -30,6 +30,10 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 		string contentType,
 		int contentRuntimeSeconds)
 	{
+		// If a device starts a new cast, consider the previous session ended.
+		// This keeps diagnostics accurate even when the receiver never calls back (e.g. user stops early).
+		EndOtherSessionsForDevice(deviceId, exceptSessionId: sessionId);
+
 		var expiresAt = DateTime.UtcNow.AddSeconds(contentRuntimeSeconds + 120);
 
 		var session = new CastingSessionDto(
@@ -61,6 +65,36 @@ public sealed class CastingSessionStore(IMemoryCache cache)
 			ErrorDetails: null));
 
 		SessionStarted?.Invoke(this, new CastingEventArgs(sessionId, deviceId));
+	}
+
+	private void EndOtherSessionsForDevice(string deviceId, string exceptSessionId)
+	{
+		if (string.IsNullOrWhiteSpace(deviceId))
+		{
+			return;
+		}
+
+		HashSet<string> sessionIds;
+		lock (_lock)
+		{
+			sessionIds = LoadSessionIndexNoLock();
+		}
+
+		foreach (var id in sessionIds)
+		{
+			if (string.Equals(id, exceptSessionId, StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			var key = $"{SessionKeyPrefix}{id}";
+			if (cache.TryGetValue(key, out CastingSessionDto? session)
+				&& session is not null
+				&& string.Equals(session.DeviceId, deviceId, StringComparison.Ordinal))
+			{
+				EndSession(id);
+			}
+		}
 	}
 
 	/// <summary>
