@@ -12,6 +12,8 @@ public sealed class AdvancedSettingsEntity
 	public int? CleanupGuestUserMaxAgeHours { get; set; }
 	/// <summary>TMDB API key (v3). When set, overrides Tmdb:ApiKey / TMDB_API_KEY. Never returned to clients.</summary>
 	public string? TmdbApiKey { get; set; }
+	/// <summary>TMDB Read Access Token (Bearer). When set, overrides Tmdb:ReadAccessToken. Never returned to clients.</summary>
+	public string? TmdbReadAccessToken { get; set; }
 	/// <summary>How to display date/time in the UI: locale, 12h, 24h, relative. Null = use default (locale).</summary>
 	public string? DateTimeDisplayMode { get; set; }
 	/// <summary>Time zone for display: Local, UTC, or IANA id (e.g. America/New_York). Null = Local.</summary>

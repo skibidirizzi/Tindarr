@@ -33,6 +33,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 				CleanupPurgeGuestUsers = upsert.CleanupPurgeGuestUsers,
 				CleanupGuestUserMaxAgeHours = upsert.CleanupGuestUserMaxAgeHours,
 				TmdbApiKey = upsert.TmdbApiKey,
+				TmdbReadAccessToken = upsert.TmdbReadAccessToken,
 				DateTimeDisplayMode = upsert.DateTimeDisplayMode,
 				TimeZoneId = upsert.TimeZoneId,
 				DateOrder = upsert.DateOrder,
@@ -50,6 +51,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupPurgeGuestUsers = upsert.CleanupPurgeGuestUsers;
 			entity.CleanupGuestUserMaxAgeHours = upsert.CleanupGuestUserMaxAgeHours;
 			entity.TmdbApiKey = upsert.TmdbApiKey;
+			entity.TmdbReadAccessToken = upsert.TmdbReadAccessToken;
 			entity.DateTimeDisplayMode = upsert.DateTimeDisplayMode;
 			entity.TimeZoneId = upsert.TimeZoneId;
 			entity.DateOrder = upsert.DateOrder;
@@ -66,6 +68,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupPurgeGuestUsers,
 			entity.CleanupGuestUserMaxAgeHours,
 			entity.TmdbApiKey,
+			entity.TmdbReadAccessToken,
 			entity.DateTimeDisplayMode,
 			entity.TimeZoneId,
 			entity.DateOrder,
@@ -83,6 +86,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupPurgeGuestUsers,
 			entity.CleanupGuestUserMaxAgeHours,
 			entity.TmdbApiKey,
+			entity.TmdbReadAccessToken,
 			entity.DateTimeDisplayMode,
 			entity.TimeZoneId,
 			entity.DateOrder,

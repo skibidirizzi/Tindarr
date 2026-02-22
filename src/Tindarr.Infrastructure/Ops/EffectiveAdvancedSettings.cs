@@ -18,7 +18,7 @@ public sealed class EffectiveAdvancedSettings(
 	private readonly CleanupOptions _cleanupConfig = cleanupOptions.Value;
 	private readonly TmdbOptions _tmdbConfig = tmdbOptions.Value;
 
-	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string DateTimeDisplayMode, string TimeZoneId, string DateOrder)? _cache;
+	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string? TmdbReadAccessToken, string DateTimeDisplayMode, string TimeZoneId, string DateOrder)? _cache;
 	private readonly object _lock = new();
 	private const string DefaultDateTimeDisplayMode = "locale";
 	private const string DefaultTimeZoneId = "Local";
@@ -47,13 +47,24 @@ public sealed class EffectiveAdvancedSettings(
 		return _tmdbConfig.ApiKey ?? string.Empty;
 	}
 
+	public string GetEffectiveTmdbReadAccessToken()
+	{
+		EnsureLoaded();
+		var fromDb = _cache!.Value.TmdbReadAccessToken;
+		if (!string.IsNullOrWhiteSpace(fromDb))
+		{
+			return fromDb.Trim();
+		}
+		return _tmdbConfig.ReadAccessToken ?? string.Empty;
+	}
+
 	public bool HasEffectiveTmdbCredentials()
 	{
 		if (!string.IsNullOrWhiteSpace(GetEffectiveTmdbApiKey()))
 		{
 			return true;
 		}
-		return !string.IsNullOrWhiteSpace(_tmdbConfig.ReadAccessToken);
+		return !string.IsNullOrWhiteSpace(GetEffectiveTmdbReadAccessToken());
 	}
 
 	public string GetDateTimeDisplayMode()
@@ -111,10 +122,11 @@ public sealed class EffectiveAdvancedSettings(
 			var api = MergeApiRateLimit(record);
 			var cleanup = MergeCleanup(record);
 			var tmdbKey = record?.TmdbApiKey;
+			var tmdbToken = record?.TmdbReadAccessToken;
 			var displayMode = NormalizeDateTimeDisplayMode(record?.DateTimeDisplayMode);
 			var timeZoneId = NormalizeTimeZoneId(record?.TimeZoneId);
 			var dateOrder = NormalizeDateOrder(record?.DateOrder);
-			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), displayMode, timeZoneId, dateOrder);
+			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), string.IsNullOrWhiteSpace(tmdbToken) ? null : tmdbToken!.Trim(), displayMode, timeZoneId, dateOrder);
 		}
 	}
 

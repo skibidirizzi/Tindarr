@@ -1,6 +1,6 @@
 Param(
-	# Where the API should listen (also used as Vite proxy target)
-	[string]$ApiUrl = "http://localhost:5080",
+	# Where the API should listen (also used as Vite proxy target). Use 0.0.0.0 to accept connections from LAN.
+	[string]$ApiUrl = "http://0.0.0.0:5080",
 
 	# Vite dev server port
 	[int]$UiPort = 6565,
@@ -79,6 +79,23 @@ function Get-PrivateIPv4 {
 	}
 }
 
+function Build-Ui([string]$repoRoot) {
+	$uiDir = Join-Path $repoRoot "ui"
+	if (-not (Test-Path $uiDir)) { throw "UI directory not found: $uiDir" }
+
+	Write-Host "Building frontend..."
+	Push-Location $uiDir
+	try {
+		if (-not (Test-Path (Join-Path $uiDir "node_modules"))) {
+			npm install
+		}
+		npm run build
+	}
+	finally {
+		Pop-Location
+	}
+}
+
 function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 	$uiDir = Join-Path $repoRoot "ui"
 	if (-not (Test-Path $uiDir)) { throw "UI directory not found: $uiDir" }
@@ -88,6 +105,7 @@ function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 	# Keep it simple: let npm manage the dev server process.
 	$env:VITE_PROXY_TARGET = $apiUrl
 	$env:VITE_API_BASE_URL = ""   # use same-origin + proxy during dev
+	$env:VITE_UI_PORT = $uiPort   # so Vite HMR client connects to the correct port
 
 	Push-Location $uiDir
 	try {
@@ -97,7 +115,8 @@ function Start-Ui([string]$repoRoot, [string]$apiUrl, [int]$uiPort) {
 		}
 
 		# Run Vite dev server in a child process so we can clean it up.
-		return Start-Process -FilePath "npm.cmd" -ArgumentList @("run", "dev", "--", "--host", "0.0.0.0", "--port", "$uiPort") -WorkingDirectory $uiDir -PassThru
+		# Port and host come from env (VITE_UI_PORT) and config so HMR uses same port.
+		return Start-Process -FilePath "npx.cmd" -ArgumentList @("vite", "--host", "0.0.0.0", "--port", "$uiPort") -WorkingDirectory $uiDir -PassThru
 	}
 	finally {
 		Pop-Location
@@ -199,10 +218,15 @@ if ($lanIp) {
 }
 
 try {
+	# Always rebuild frontend so ui/dist (and API wwwroot on next build) is up to date.
+	if (-not $ApiOnly) {
+		Build-Ui -repoRoot $repoRoot
+	}
+
 	if (-not $UiOnly) {
 		$apiProc = Start-Api -repoRoot $repoRoot -listenUrl $listenUrl -environment $Environment -lanBaseUrl $lanBaseUrl
-		Start-Sleep -Seconds 8
-		$workersProc = Start-Workers -repoRoot $repoRoot -environment $Environment -lanBaseUrl $lanBaseUrl
+		# Workers run in-process with the API (same as release); no separate Workers process.
+		$workersProc = $null
 	}
 
 	if (-not $ApiOnly) {
@@ -211,8 +235,7 @@ try {
 	}
 
 	Write-Host ""
-	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  (listen: $listenUrl)" }
-	if ($workersProc) { Write-Host "WRK PID: $($workersProc.Id)" }
+	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  (listen: $listenUrl, workers in-process)" }
 	if ($lanBaseUrl) { Write-Host "LAN Base: $lanBaseUrl" }
 	if ($uiProc)  { Write-Host "UI  PID: $($uiProc.Id)  (http://localhost:$UiPort)" }
 	Write-Host "Press Ctrl+C to stop."

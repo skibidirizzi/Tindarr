@@ -41,6 +41,7 @@ using Tindarr.Infrastructure.Playback.Providers;
 using Tindarr.Infrastructure.EmbyCache;
 using Tindarr.Infrastructure.JellyfinCache;
 using Tindarr.Infrastructure.PlexCache;
+using Tindarr.Infrastructure.Ops;
 using Tindarr.Infrastructure.Persistence;
 using Tindarr.Infrastructure.Persistence.Repositories;
 using Tindarr.Infrastructure.Security;
@@ -50,6 +51,30 @@ using Tindarr.Api.Services;
 
 var isWindowsService = WindowsServiceHostSetup.IsRunningAsWindowsService();
 var contentRoot = isWindowsService ? AppContext.BaseDirectory : null;
+
+// When installed via MSI, port is stored in %ProgramData%\Tindarr\port.txt. Read it and bind Kestrel to http://localhost:{port}.
+// If file missing or invalid, fallback to 6565. Must run cleanly as a service: builder.Host.UseWindowsService().
+const int DefaultPort = 6565;
+int configuredPort = DefaultPort;
+if (OperatingSystem.IsWindows())
+{
+	try
+	{
+		var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+		var portPath = Path.Combine(programData, "Tindarr", "port.txt");
+		if (File.Exists(portPath))
+		{
+			var portStr = File.ReadAllText(portPath).Trim();
+			if (!string.IsNullOrWhiteSpace(portStr) && int.TryParse(portStr, out var p) && p >= 1024 && p <= 65535)
+				configuredPort = p;
+		}
+	}
+	catch
+	{
+		// Use default port.
+	}
+}
+
 string? dataDirOverride = null;
 
 // WebRoot must be configured at builder creation time (cannot be changed later).
@@ -82,6 +107,12 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 	ContentRootPath = contentRoot,
 	WebRootPath = webRoot
 });
+
+// Respect ASPNETCORE_URLS when set (e.g. dev.ps1). Otherwise bind to 0.0.0.0 so Chromecast/LAN can reach the API.
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+{
+	builder.WebHost.UseUrls($"http://0.0.0.0:{configuredPort}");
+}
 
 // When running as a console app (not a service) outside Development, use a writable data dir
 // so the app works when installed under Program Files. Service and Development keep existing behavior.
@@ -215,6 +246,10 @@ builder.Services.AddRateLimiter(options =>
 		{
 			return RateLimitPartition.GetNoLimiter("excluded");
 		}
+		if (path.StartsWith("/api/v1/setup", StringComparison.OrdinalIgnoreCase))
+		{
+			return RateLimitPartition.GetNoLimiter("setup");
+		}
 
 		var effective = context.RequestServices.GetRequiredService<Tindarr.Application.Abstractions.Ops.IEffectiveAdvancedSettings>();
 		var apiLimitOpts = effective.GetApiRateLimitOptions();
@@ -244,6 +279,11 @@ builder.Services.AddSingleton<IBaseUrlResolver>(sp =>
 });
 
 builder.Services.AddSingleton<ILanAddressResolver, LanAddressResolver>();
+builder.Services.AddHttpClient("WanAddressResolver", client =>
+{
+	client.Timeout = TimeSpan.FromSeconds(2);
+});
+builder.Services.AddSingleton<IWanAddressResolver, WanAddressResolver>();
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
@@ -406,6 +446,7 @@ builder.Services.AddSingleton<ITmdbImageCache>(sp =>
 builder.Services.AddSingleton<ITmdbBuildJob, TmdbBuildJob>();
 
 builder.Services.AddSingleton<ITmdbRateLimiter, Tindarr.Infrastructure.Caching.TokenBucketRateLimiter>();
+builder.Services.AddTransient<TmdbAuthHandler>();
 builder.Services.AddTransient<TmdbCachingHandler>();
 builder.Services.AddTransient<TmdbRateLimitingHandler>();
 
@@ -414,14 +455,9 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 	var tmdb = sp.GetRequiredService<IOptions<TmdbOptions>>().Value;
 	client.BaseAddress = new Uri(tmdb.BaseUrl);
 	client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-
-	// Prefer Bearer token auth when provided (recommended by TMDB; avoids query-string secrets).
-	if (!string.IsNullOrWhiteSpace(tmdb.ReadAccessToken))
-	{
-		client.DefaultRequestHeaders.Authorization =
-			new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tmdb.ReadAccessToken);
-	}
+	// Bearer token is set per-request by TmdbAuthHandler from effective settings (DB or config).
 })
+.AddHttpMessageHandler<TmdbAuthHandler>()
 .AddHttpMessageHandler<TmdbCachingHandler>()
 .AddHttpMessageHandler<TmdbRateLimitingHandler>()
 .AddHttpMessageHandler(() => new TmdbRetryHandler(maxRetries: 3));
@@ -454,6 +490,22 @@ builder.Services.AddSingleton<Tindarr.Application.Interfaces.Rooms.IRoomLifetime
 builder.Services.AddScoped<Tindarr.Application.Interfaces.Rooms.IRoomService, Tindarr.Application.Features.Rooms.RoomService>();
 
 builder.Services.AddHostedService<Tindarr.Api.Hosting.RoomCleanupHostedService>();
+
+// Background workers (same as Tindarr.Workers; run in-process so release/deployed API has full functionality).
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.OutboxWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.TmdbMetadataWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.TmdbDiscoverPrewarmWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.TmdbDetailsBackfillWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.MatchComputationWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.MediaServerSyncWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.RadarrAutoAddWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.RadarrSuperlikeAddWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.PlexLibrarySyncWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.CleanupWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.HealthHeartbeatWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.RecommendationWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.ImageCacheWorker>();
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.CastSessionWorker>();
 
 // Keep DB location stable across Debug/Release so migrations and runtime match.
 // Integration tests set Database:DataDir to a unique dir and Database:UseConfigDataDir=true so we do not override with ContentRootPath.
@@ -532,6 +584,15 @@ UpdatedAtUtc TEXT NOT NULL)");
 		try
 		{
 			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN DateOrder TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN TmdbReadAccessToken TEXT NULL");
 		}
 		catch
 		{

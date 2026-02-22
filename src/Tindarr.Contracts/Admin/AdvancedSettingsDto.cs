@@ -22,9 +22,9 @@ public sealed record AdvancedSettingsDisplayDto(
 	string DateOrder);
 
 /// <summary>
-/// TMDB-related advanced settings. Key value is never exposed (INV-0006).
+/// TMDB-related advanced settings. Key and token are never exposed (INV-0006).
 /// </summary>
-public sealed record AdvancedSettingsTmdbDto(bool HasTmdbApiKey);
+public sealed record AdvancedSettingsTmdbDto(bool HasTmdbApiKey, bool HasTmdbReadAccessToken);
 
 public sealed record AdvancedSettingsApiRateLimitDto(
 	bool Enabled,

@@ -20,14 +20,15 @@ function Resolve-RepoRoot {
 }
 
 $repoRoot = Resolve-RepoRoot
-$defaultPublishDir = Join-Path $repoRoot "artifacts\publish\api"
+$defaultPublishDir = Join-Path $repoRoot "dist\api"
 $defaultMsiPath = Join-Path $repoRoot "artifacts\Tindarr.msi"
 
 if ([string]::IsNullOrWhiteSpace($PublishDir)) { $PublishDir = $defaultPublishDir }
 if ([string]::IsNullOrWhiteSpace($MsiPath)) { $MsiPath = $defaultMsiPath }
 
 $apiCsproj = Join-Path $repoRoot "src\Tindarr.Api\Tindarr.Api.csproj"
-$wxsPath = Join-Path $repoRoot "installer\windows\wix\Tindarr.wxs"
+$customActionsCsproj = Join-Path $repoRoot "installer\Tindarr.Installer\CustomActions\CustomActions.csproj"
+$wxsPath = Join-Path $repoRoot "installer\Tindarr.Installer\Product.wxs"
 $uiDir = Join-Path $repoRoot "ui"
 $uiDistDir = Join-Path $uiDir "dist"
 
@@ -125,12 +126,51 @@ Get-ChildItem -Path $publishWebRoot -Force -ErrorAction SilentlyContinue | Remov
 Copy-Item -Path (Join-Path $uiDistDir "*") -Destination $publishWebRoot -Recurse -Force
 
 Write-Host ""
+# WiX bind phase requires the Windows Installer service (error 1631 if unavailable).
+$msiService = Get-Service -Name "msiserver" -ErrorAction SilentlyContinue
+if ($null -eq $msiService) {
+    Write-Host "Warning: Windows Installer service (msiserver) not found. MSI bind may fail with error 1631." -ForegroundColor Yellow
+} elseif ($msiService.Status -ne "Running") {
+    Write-Host "Starting Windows Installer service (required for MSI bind)..." -ForegroundColor Yellow
+    Start-Service -Name "msiserver" -ErrorAction SilentlyContinue
+    $msiService.Refresh()
+    if ($msiService.Status -ne "Running") {
+        Write-Host "Could not start Windows Installer service. If bind fails with error 1631:" -ForegroundColor Yellow
+        Write-Host "  1. Run this script as Administrator, or" -ForegroundColor Yellow
+        Write-Host "  2. In an elevated cmd: net start msiserver" -ForegroundColor Yellow
+        Write-Host "  3. Ensure project and output paths are on a local Windows drive (not WSL/network)." -ForegroundColor Yellow
+    }
+}
+if ($repoRoot -match "\\\\wsl" -or $MsiPath -match "\\\\wsl") {
+    Write-Host "Warning: WSL paths can cause error 1631. Build from a native Windows path (e.g. C:\Projects\...)." -ForegroundColor Yellow
+}
+
+Write-Host "Building custom actions (C# CA DLL)..."
+dotnet build "$customActionsCsproj" -c $Configuration
+$caDllPath = Join-Path $repoRoot "installer\Tindarr.Installer\CustomActions\bin\$Configuration\net48\Tindarr.Installer.CustomActions.CA.dll"
+if (-not (Test-Path $caDllPath)) {
+    throw "Custom action DLL not found: $caDllPath"
+}
+$caDllPath = (Resolve-Path $caDllPath).Path
+
 Write-Host "Building MSI..."
-wix build "$wxsPath" `
-    -arch x64 `
-    -d PublishDir="$PublishDir" `
-    -ext WixToolset.UI.wixext `
-    -o "$MsiPath"
+# Build to a temp path first: Windows Installer bind often fails (1631) when the output path is
+# under certain drives (OneDrive, network, junctions). Building to %TEMP% then copying avoids that.
+$msiTempPath = Join-Path ([System.IO.Path]::GetTempPath()) "Tindarr_build_$([Guid]::NewGuid().ToString('N').Substring(0,8)).msi"
+$installerDir = Split-Path -Parent $wxsPath
+Push-Location $installerDir
+try {
+    wix build (Split-Path -Leaf $wxsPath) `
+        -arch x64 `
+        -d PublishDir="$PublishDir" `
+        -d CustomActionDll="$caDllPath" `
+        -ext WixToolset.UI.wixext `
+        -o "$msiTempPath"
+    Copy-Item -Path $msiTempPath -Destination $MsiPath -Force
+} finally {
+    Pop-Location
+    if (Test-Path $msiTempPath) { Remove-Item $msiTempPath -Force -ErrorAction SilentlyContinue }
+}
 
 Write-Host ""
 Write-Host "Done."

@@ -15,10 +15,29 @@ public sealed class RoomService(
 	ISwipeDeckSource source,
 	ILibraryCacheRepository libraryCache) : IRoomService
 {
-	public async Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, CancellationToken cancellationToken)
+	public async Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, string? roomName, CancellationToken cancellationToken)
 	{
 		var now = DateTimeOffset.UtcNow;
-		var roomId = Guid.NewGuid().ToString("N");
+		string roomId;
+		if (!string.IsNullOrWhiteSpace(roomName))
+		{
+			var slug = NormalizeRoomNameToSlug(roomName);
+			if (string.IsNullOrEmpty(slug))
+				throw new ArgumentException("Room name must contain at least one letter or digit after normalization.");
+			if (slug.Length < 3)
+				throw new ArgumentException("Room name must be at least 3 characters after normalization.");
+			if (slug.Length > 63)
+				throw new ArgumentException("Room name must be at most 63 characters.");
+			var existing = await rooms.GetAsync(slug, cancellationToken);
+			if (existing is not null)
+				throw new InvalidOperationException("Room name already in use.");
+			roomId = slug;
+		}
+		else
+		{
+			roomId = Guid.NewGuid().ToString("N");
+		}
+
 		var state = new RoomState(
 			RoomId: roomId,
 			OwnerUserId: ownerUserId,
@@ -30,6 +49,31 @@ public sealed class RoomService(
 
 		await rooms.CreateAsync(state, cancellationToken);
 		return state;
+	}
+
+	/// <summary>Normalizes a display name to a URL-safe slug: lowercase, alphanumeric and hyphens only.</summary>
+	private static string NormalizeRoomNameToSlug(string roomName)
+	{
+		var s = roomName.Trim();
+		if (s.Length == 0) return string.Empty;
+		var sb = new System.Text.StringBuilder(s.Length);
+		var lastWasHyphen = false;
+		foreach (var c in s.ToLowerInvariant())
+		{
+			if (char.IsLetterOrDigit(c))
+			{
+				sb.Append(c);
+				lastWasHyphen = false;
+			}
+			else if (c is ' ' or '-' or '_' && !lastWasHyphen)
+			{
+				sb.Append('-');
+				lastWasHyphen = true;
+			}
+		}
+		// Trim leading/trailing hyphens
+		var result = sb.ToString().Trim('-');
+		return result;
 	}
 
 	public async Task<RoomState> JoinAsync(string roomId, string userId, CancellationToken cancellationToken)

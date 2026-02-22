@@ -77,6 +77,26 @@ public sealed class RadarrController(IRadarrService radarrService) : ControllerB
 		return Ok(new RadarrConnectionTestResponse(result.Ok, result.Message));
 	}
 
+	[HttpPost("auto-add-accepted-movies")]
+	public async Task<ActionResult<RadarrAutoAddResponse>> AutoAddAcceptedMovies(
+		[FromQuery] string serviceType,
+		[FromQuery] string serverId,
+		CancellationToken cancellationToken)
+	{
+		if (!TryGetScope(serviceType, serverId, out var scope, out var errorResult))
+		{
+			return errorResult!;
+		}
+
+		var result = await radarrService.AutoAddAcceptedMoviesAsync(scope!, cancellationToken);
+		return Ok(new RadarrAutoAddResponse(
+			result.Attempted,
+			result.Added,
+			result.SkippedExisting,
+			result.Failed,
+			result.Message));
+	}
+
 	[HttpGet("quality-profiles")]
 	public async Task<ActionResult<IReadOnlyList<RadarrQualityProfileDto>>> GetQualityProfiles(
 		[FromQuery] string serviceType,

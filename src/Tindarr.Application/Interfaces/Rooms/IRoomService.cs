@@ -6,7 +6,7 @@ namespace Tindarr.Application.Interfaces.Rooms;
 
 public interface IRoomService
 {
-	Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, CancellationToken cancellationToken);
+	Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, string? roomName, CancellationToken cancellationToken);
 	Task<RoomState> JoinAsync(string roomId, string userId, CancellationToken cancellationToken);
 	Task<RoomState> CloseAsync(string roomId, string ownerUserId, CancellationToken cancellationToken);
 	Task<RoomState?> GetAsync(string roomId, CancellationToken cancellationToken);

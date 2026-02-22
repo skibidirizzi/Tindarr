@@ -23,6 +23,7 @@ reference_rules:
       - Tindarr.Application
       - Tindarr.Infrastructure
       - Tindarr.Contracts
+      - Tindarr.Workers
     Tindarr.Workers:
       - Tindarr.Application
       - Tindarr.Infrastructure
@@ -170,6 +171,12 @@ api_host:
         lifetime: scoped
       - service: Tindarr.Application.Abstractions.Ops.IBaseUrlResolver
         impl: Tindarr.Application.Services.BaseUrlResolver
+        lifetime: singleton
+      - service: Tindarr.Application.Interfaces.Ops.ILanAddressResolver
+        impl: Tindarr.Application.Services.LanAddressResolver
+        lifetime: singleton
+      - service: Tindarr.Application.Interfaces.Ops.IWanAddressResolver
+        impl: Tindarr.Infrastructure.Ops.WanAddressResolver
         lifetime: singleton
       - service: Tindarr.Application.Abstractions.ServiceScopes.IServiceScopeResolver
         impl: Tindarr.Application.Services.ServiceScopeResolver

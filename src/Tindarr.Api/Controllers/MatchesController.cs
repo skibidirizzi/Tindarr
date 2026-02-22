@@ -16,7 +16,8 @@ namespace Tindarr.Api.Controllers;
 public sealed class MatchesController(
 	IInteractionStore interactionStore,
 	IMatchingEngine matchingEngine,
-	IServiceSettingsRepository settingsRepo) : ControllerBase
+	IServiceSettingsRepository settingsRepo,
+	IUserRepository userRepo) : ControllerBase
 {
 	[HttpGet]
 	public async Task<ActionResult<MatchesResponse>> List(
@@ -52,7 +53,7 @@ public sealed class MatchesController(
 			return Ok(new MatchesResponse(
 				scope!.ServiceType.ToString().ToLowerInvariant(),
 				scope.ServerId,
-				ids.Select(id => new MatchDto(id)).ToList()));
+				ids.Select(id => new MatchDto(id, [])).ToList()));
 		}
 
 		minUsers = Math.Clamp(minUsers, 2, 50);
@@ -93,9 +94,75 @@ public sealed class MatchesController(
 
 		var tmdbIds = matchingEngine.ComputeLikedByAllMatches(scope!, interactions, effectiveMinUsers, effectiveMinUserPercent);
 
+		var matchedWithDisplayNames = await BuildMatchedWithDisplayNamesAsync(
+			userId,
+			scope!,
+			interactions,
+			tmdbIds,
+			cancellationToken);
+
 		return Ok(new MatchesResponse(
 			scope!.ServiceType.ToString().ToLowerInvariant(),
 			scope.ServerId,
-			tmdbIds.Select(id => new MatchDto(id)).ToList()));
+			tmdbIds.Select(id => new MatchDto(id, matchedWithDisplayNames.TryGetValue(id, out var names) ? names : [])).ToList()));
+	}
+
+	/// <summary>
+	/// For each matched tmdbId, get display names of other users (excluding current) who liked/superliked it.
+	/// </summary>
+	private async Task<Dictionary<int, IReadOnlyList<string>>> BuildMatchedWithDisplayNamesAsync(
+		string currentUserId,
+		ServiceScope scope,
+		IReadOnlyList<Interaction> interactions,
+		IReadOnlyList<int> tmdbIds,
+		CancellationToken cancellationToken)
+	{
+		var tmdbIdSet = tmdbIds.ToHashSet();
+		var scoped = interactions
+			.Where(x => x.Scope.ServiceType == scope.ServiceType && x.Scope.ServerId == scope.ServerId && tmdbIdSet.Contains(x.TmdbId))
+			.ToList();
+
+		var latest = new Dictionary<(string UserId, int TmdbId), Interaction>(capacity: scoped.Count);
+		foreach (var interaction in scoped)
+		{
+			if (interaction.Action is not InteractionAction.Like and not InteractionAction.Superlike)
+				continue;
+			var key = (interaction.UserId, interaction.TmdbId);
+			if (!latest.TryGetValue(key, out var existing) || interaction.CreatedAtUtc >= existing.CreatedAtUtc)
+				latest[key] = interaction;
+		}
+
+		var userIdsByTmdbId = new Dictionary<int, List<string>>();
+		foreach (var kv in latest)
+		{
+			var (uid, tmdbId) = kv.Key;
+			if (uid == currentUserId)
+				continue;
+			if (!userIdsByTmdbId.TryGetValue(tmdbId, out var list))
+			{
+				list = [];
+				userIdsByTmdbId[tmdbId] = list;
+			}
+			if (!list.Contains(uid))
+				list.Add(uid);
+		}
+
+		var allUserIds = userIdsByTmdbId.Values.SelectMany(x => x).Distinct().ToList();
+		var displayNamesByUserId = new Dictionary<string, string>(allUserIds.Count);
+		foreach (var uid in allUserIds)
+		{
+			var user = await userRepo.FindByIdAsync(uid, cancellationToken);
+			displayNamesByUserId[uid] = user?.DisplayName ?? uid;
+		}
+
+		var result = new Dictionary<int, IReadOnlyList<string>>(tmdbIds.Count);
+		foreach (var tmdbId in tmdbIds)
+		{
+			IReadOnlyList<string> names = userIdsByTmdbId.TryGetValue(tmdbId, out var uids)
+				? uids.Select(u => displayNamesByUserId.TryGetValue(u, out var n) ? n : u).ToList()
+				: [];
+			result[tmdbId] = names;
+		}
+		return result;
 	}
 }

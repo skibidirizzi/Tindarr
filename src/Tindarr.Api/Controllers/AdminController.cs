@@ -55,6 +55,7 @@ public sealed class AdminController(
 		var api = effectiveAdvancedSettings.GetApiRateLimitOptions();
 		var cleanup = effectiveAdvancedSettings.GetCleanupOptions();
 		var hasTmdbApiKey = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbApiKey());
+		var hasTmdbReadAccessToken = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbReadAccessToken());
 		var dateTimeDisplayMode = effectiveAdvancedSettings.GetDateTimeDisplayMode();
 		var timeZoneId = effectiveAdvancedSettings.GetTimeZoneId();
 		var dateOrder = effectiveAdvancedSettings.GetDateOrder();
@@ -68,7 +69,7 @@ public sealed class AdminController(
 				cleanup.PurgeGuestUsers,
 				(int)cleanup.GuestUserMaxAge.TotalHours),
 			CleanupDefaults,
-			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey),
+			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey, hasTmdbReadAccessToken),
 			Display: new AdvancedSettingsDisplayDto(dateTimeDisplayMode, timeZoneId, dateOrder),
 			DisplayDefaults);
 		return Task.FromResult<ActionResult<AdvancedSettingsDto>>(Ok(dto));
@@ -131,13 +132,21 @@ public sealed class AdminController(
 		string? tmdbApiKeyForUpsert = request.TmdbApiKeySet == true
 			? (string.IsNullOrWhiteSpace(request.TmdbApiKey) ? null : request.TmdbApiKey!.Trim())
 			: null;
+		// Only update TmdbReadAccessToken when client explicitly sets it (TmdbReadAccessTokenSet == true); otherwise keep existing.
+		string? tmdbReadAccessTokenForUpsert = request.TmdbReadAccessTokenSet == true
+			? (string.IsNullOrWhiteSpace(request.TmdbReadAccessToken) ? null : request.TmdbReadAccessToken!.Trim())
+			: null;
 		AdvancedSettingsRecord? existingRecord = null;
-		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
+		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
 		{
 			existingRecord = await advancedSettings.GetAsync(cancellationToken).ConfigureAwait(false);
 			if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true)
 			{
 				tmdbApiKeyForUpsert = existingRecord?.TmdbApiKey;
+			}
+			if (tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true)
+			{
+				tmdbReadAccessTokenForUpsert = existingRecord?.TmdbReadAccessToken;
 			}
 			if (dateTimeDisplayMode is null)
 			{
@@ -162,6 +171,7 @@ public sealed class AdminController(
 			request.CleanupPurgeGuestUsers,
 			request.CleanupGuestUserMaxAgeHours,
 			tmdbApiKeyForUpsert,
+			tmdbReadAccessTokenForUpsert,
 			dateTimeDisplayMode,
 			timeZoneId,
 			dateOrder);

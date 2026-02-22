@@ -11,20 +11,31 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/jellyfin")]
-public sealed class JellyfinController(IJellyfinService jellyfinService, IServiceSettingsRepository settingsRepo)
+public sealed class JellyfinController(
+	IJellyfinService jellyfinService,
+	IServiceSettingsRepository settingsRepo,
+	ILibraryCacheRepository libraryCache)
 	: MediaServerControllerBase(settingsRepo)
 {
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<JellyfinServerDto>>> ListServers(CancellationToken cancellationToken)
 	{
 		var servers = await jellyfinService.ListServersAsync(cancellationToken);
-		return Ok(servers.Select(s => new JellyfinServerDto(
-			s.ServerId,
-			s.Name,
-			s.BaseUrl,
-			s.Version,
-			s.LastLibrarySyncUtc,
-			s.UpdatedAtUtc)).ToList());
+		var result = new List<JellyfinServerDto>(servers.Count);
+		foreach (var s in servers)
+		{
+			var scope = new ServiceScope(ServiceType.Jellyfin, s.ServerId);
+			var count = await libraryCache.CountTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+			result.Add(new JellyfinServerDto(
+				s.ServerId,
+				s.Name,
+				s.BaseUrl,
+				s.Version,
+				s.LastLibrarySyncUtc,
+				s.UpdatedAtUtc,
+				count));
+		}
+		return Ok(result);
 	}
 
 	[HttpGet("settings")]

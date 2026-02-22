@@ -70,13 +70,16 @@ public sealed class AuthService(
 		}
 
 		var now = DateTimeOffset.UtcNow;
+		var existingUsers = await users.ListAsync(0, 1, cancellationToken);
+		var isFirstUser = existingUsers.Count == 0;
+
 		await users.CreateAsync(new CreateUserRecord(normalizedUserId, normalizedDisplayName, now), cancellationToken);
 
 		var hashed = passwordHasher.Hash(password, registration.PasswordHashIterations);
 		await users.SetPasswordAsync(normalizedUserId, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
 		var rolesToSet = new List<string> { registration.DefaultRole };
-		if (string.Equals(normalizedUserId, "admin", StringComparison.OrdinalIgnoreCase))
+		if (isFirstUser || string.Equals(normalizedUserId, "admin", StringComparison.OrdinalIgnoreCase))
 		{
 			rolesToSet.Add("Admin");
 		}

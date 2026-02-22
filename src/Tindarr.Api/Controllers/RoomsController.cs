@@ -31,13 +31,24 @@ public sealed class RoomsController(
 		}
 
 		var userId = User.GetUserId();
-		var room = await roomService.CreateAsync(userId, scope!, cancellationToken);
-		return Ok(new CreateRoomResponse(
-			room.RoomId,
-			room.OwnerUserId,
-			scope!.ServiceType.ToString().ToLowerInvariant(),
-			scope.ServerId,
-			room.Members.Select(m => new RoomMemberDto(m.UserId, m.JoinedAtUtc.ToString("O"))).ToList()));
+		try
+		{
+			var room = await roomService.CreateAsync(userId, scope!, request.RoomName, cancellationToken);
+			return Ok(new CreateRoomResponse(
+				room.RoomId,
+				room.OwnerUserId,
+				scope!.ServiceType.ToString().ToLowerInvariant(),
+				scope.ServerId,
+				room.Members.Select(m => new RoomMemberDto(m.UserId, m.JoinedAtUtc.ToString("O"))).ToList()));
+		}
+		catch (ArgumentException ex)
+		{
+			return BadRequest(ex.Message);
+		}
+		catch (InvalidOperationException ex) when (string.Equals(ex.Message, "Room name already in use.", StringComparison.Ordinal))
+		{
+			return Conflict(ex.Message);
+		}
 	}
 
 	[HttpPost("{roomId}/join")]
@@ -225,6 +236,11 @@ public sealed class RoomsController(
 	public async Task<ActionResult<RoomSwipeResponse>> Swipe([FromRoute] string roomId, [FromBody] RoomSwipeRequest request, CancellationToken cancellationToken)
 	{
 		var userId = User.GetUserId();
+		// INV-0013: room mode disables superlikes (not compatible with shared selection rules).
+		if (request.Action == SwipeActionDto.Superlike)
+		{
+			return BadRequest("Superlike is not allowed in rooms.");
+		}
 		try
 		{
 			var action = MapAction(request.Action);

@@ -16,6 +16,7 @@ public sealed record AdvancedSettingsRecord(
 	bool? CleanupPurgeGuestUsers,
 	int? CleanupGuestUserMaxAgeHours,
 	string? TmdbApiKey,
+	string? TmdbReadAccessToken,
 	string? DateTimeDisplayMode,
 	string? TimeZoneId,
 	string? DateOrder,
@@ -30,6 +31,7 @@ public sealed record AdvancedSettingsUpsert(
 	bool? CleanupPurgeGuestUsers,
 	int? CleanupGuestUserMaxAgeHours,
 	string? TmdbApiKey,
+	string? TmdbReadAccessToken,
 	string? DateTimeDisplayMode,
 	string? TimeZoneId,
 	string? DateOrder);

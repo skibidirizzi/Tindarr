@@ -18,6 +18,11 @@ public interface IEffectiveAdvancedSettings
 	string GetEffectiveTmdbApiKey();
 
 	/// <summary>
+	/// TMDB Read Access Token (Bearer): DB value if set and non-empty, otherwise Tmdb:ReadAccessToken.
+	/// </summary>
+	string GetEffectiveTmdbReadAccessToken();
+
+	/// <summary>
 	/// True if TMDB is configured (effective API key or Read Access Token present).
 	/// </summary>
 	bool HasEffectiveTmdbCredentials();

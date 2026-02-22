@@ -190,6 +190,7 @@ builder.Services.AddSingleton<ITmdbImageCache>(sp =>
 });
 
 builder.Services.AddSingleton<ITmdbRateLimiter, TokenBucketRateLimiter>();
+builder.Services.AddTransient<Tindarr.Infrastructure.Integrations.Tmdb.Http.TmdbAuthHandler>();
 builder.Services.AddTransient<TmdbCachingHandler>();
 builder.Services.AddTransient<TmdbRateLimitingHandler>();
 
@@ -198,13 +199,8 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 	var tmdb = sp.GetRequiredService<IOptions<TmdbOptions>>().Value;
 	client.BaseAddress = new Uri(tmdb.BaseUrl);
 	client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-
-	if (!string.IsNullOrWhiteSpace(tmdb.ReadAccessToken))
-	{
-		client.DefaultRequestHeaders.Authorization =
-			new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tmdb.ReadAccessToken);
-	}
 })
+.AddHttpMessageHandler<Tindarr.Infrastructure.Integrations.Tmdb.Http.TmdbAuthHandler>()
 .AddHttpMessageHandler<TmdbCachingHandler>()
 .AddHttpMessageHandler<TmdbRateLimitingHandler>()
 .AddHttpMessageHandler(() => new TmdbRetryHandler(maxRetries: 3));

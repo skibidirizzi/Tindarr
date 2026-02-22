@@ -1,320 +1,328 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "../api/http";
-import { castMovie, endCastingSession, fetchMovieDetails, getMovieCastUrl, listCastDevices } from "../api/client";
-import type { CastDeviceDto, MovieDetailsDto } from "../api/contracts";
-import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, type ServiceScope } from "../serviceScope";
-import {
-  ensureGoogleCastSdkLoaded,
-  getCurrentCastDevice,
-  initGoogleCastContext,
-  loadMediaToCastSession,
-  requestCastSession,
-  shouldUseGoogleCastSdk,
-  subscribeToCastMediaFinished,
-  subscribeToCastSessionEnded
-} from "../casting/googleCast";
+import { useEffect, useState } from 'react'
+import { apiClient, type MovieDetailsDto } from '../lib/api'
 
-type MovieDetailsModalProps = {
-  tmdbId: number;
-  onClose: () => void;
-};
+export interface MovieDetailsModalScope {
+  serviceType: string
+  serverId: string
+}
 
-export default function MovieDetailsModal({ tmdbId, onClose }: MovieDetailsModalProps) {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [details, setDetails] = useState<MovieDetailsDto | null>(null);
+export interface MovieDetailsModalProps {
+  /** When set, modal is open and shows this movie. */
+  movie: MovieDetailsDto | null
+  /** When set and movie is null, modal fetches details by tmdbId. */
+  tmdbId?: number | null
+  /** When set and is a media-server scope (not tmdb/tmdb), show Cast option. */
+  scope?: MovieDetailsModalScope | null
+  /** When set (e.g. in Rooms), Cast is only shown if the movie's tmdbId is in this list. */
+  matchedTmdbIds?: number[] | null
+  onClose: () => void
+}
 
-  const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
+function formatRuntime(minutes: number | null | undefined): string {
+  if (minutes == null || minutes < 1) return '—'
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m} min`
+  return m === 0 ? `${h} h` : `${h} h ${m} min`
+}
 
-  const [castDevices, setCastDevices] = useState<CastDeviceDto[]>([]);
-  const [castDeviceId, setCastDeviceId] = useState<string>("");
-  const [castLoading, setCastLoading] = useState(false);
-  const [casting, setCasting] = useState(false);
-  const [castMessage, setCastMessage] = useState<string | null>(null);
-  const [castUiMode, setCastUiMode] = useState<"sdk" | "fallback">(() => (shouldUseGoogleCastSdk() ? "sdk" : "fallback"));
-
-  const castSessionIdRef = useRef<string | null>(null);
-  const endInFlightRef = useRef(false);
-
-  async function endActiveCastSessionBestEffort(): Promise<void> {
-    const sessionId = castSessionIdRef.current;
-    if (!sessionId) return;
-    if (endInFlightRef.current) return;
-
-    endInFlightRef.current = true;
-    try {
-      await endCastingSession(sessionId);
-    } catch (e) {
-      // best-effort
-      void e;
-    } finally {
-      castSessionIdRef.current = null;
-      endInFlightRef.current = false;
-    }
+function languageDisplayName(code: string | null | undefined): string {
+  if (code == null || code === '') return '—'
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? code
+  } catch {
+    return code
   }
+}
 
-  // For SDK casting, end the server-side session when the Cast session ends
-  // or when playback finishes (best-effort; not all receivers report this reliably).
-  useEffect(() => {
-    if (castUiMode !== "sdk") return;
-
-    const unsubEnded = subscribeToCastSessionEnded(() => {
-      void endActiveCastSessionBestEffort();
-    });
-    const unsubFinished = subscribeToCastMediaFinished(() => {
-      void endActiveCastSessionBestEffort();
-    });
-
-    return () => {
-      unsubEnded();
-      unsubFinished();
-    };
-  }, [castUiMode]);
-
-  const posterUrl = details?.posterUrl ?? null;
-
-  const subtitle = useMemo(() => {
-    if (!details) return null;
-    const parts: string[] = [];
-    if (details.releaseYear) parts.push(String(details.releaseYear));
-    if (details.mpaaRating) parts.push(details.mpaaRating);
-    if (details.runtimeMinutes) parts.push(`${details.runtimeMinutes} min`);
-    if (details.originalLanguage) parts.push(details.originalLanguage.toUpperCase());
-    return parts.length ? parts.join(" • ") : null;
-  }, [details]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const d = await fetchMovieDetails(tmdbId);
-        setDetails(d);
-      } catch (err) {
-        if (err instanceof ApiError) setError(err.message);
-        else if (err instanceof Error) setError(err.message);
-        else setError("Failed to load movie details.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [tmdbId]);
-
-  useEffect(() => {
-    function handleScopeUpdated() {
-      setCurrentScope(getServiceScope());
-    }
-
-    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
-    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
-  }, []);
-
-  useEffect(() => {
-    // Reset cast state when scope changes.
-    setCastDevices([]);
-    setCastDeviceId("");
-    setCastMessage(null);
-  }, [currentScope.serviceType, currentScope.serverId]);
-
-  const isMediaServerScope = useMemo(() => {
-    return currentScope.serviceType === "plex" || currentScope.serviceType === "jellyfin" || currentScope.serviceType === "emby";
-  }, [currentScope.serviceType]);
-
-  async function onLoadCastDevices() {
-    if (castUiMode === "sdk") return;
-    setCastLoading(true);
-    setCastMessage(null);
-    setError(null);
-    try {
-      const devices = await listCastDevices();
-      setCastDevices(devices);
-      if (devices.length && !castDeviceId) {
-        setCastDeviceId(devices[0].id);
-      }
-      if (!devices.length) {
-        setCastMessage("No cast devices found.");
-      }
-    } catch (e) {
-      if (e instanceof ApiError) {
-        setError(e.message);
-      } else {
-        setError("Failed to discover cast devices.");
-      }
-    } finally {
-      setCastLoading(false);
-    }
-  }
-
-  async function onCastMovie() {
-    if (castUiMode === "fallback" && !castDeviceId) return;
-
-    setCasting(true);
-    setCastMessage(null);
-    setError(null);
-    try {
-      if (castUiMode === "sdk") {
-        const ok = await ensureGoogleCastSdkLoaded();
-        if (!ok) {
-          setCastUiMode("fallback");
-          setCastMessage("Google Cast isn’t available in this browser. Use the device picker below.");
-          return;
-        }
-
-        initGoogleCastContext();
-
-        let current = getCurrentCastDevice();
-        if (!current) {
-          current = await requestCastSession();
-        }
-
-        const media = await getMovieCastUrl({
-          serviceType: currentScope.serviceType,
-          serverId: currentScope.serverId,
-          tmdbId,
-          title: details?.title ?? null,
-          deviceId: current.friendlyName,
-        });
-
-        castSessionIdRef.current = media.sessionId ?? null;
-
-        try {
-          await loadMediaToCastSession({
-            url: media.url,
-            contentType: media.contentType,
-            title: media.title,
-            subTitle: media.subTitle,
-          });
-        } catch (e) {
-          await endActiveCastSessionBestEffort();
-          throw e;
-        }
-
-        setCastMessage("Casting…");
-        return;
-      }
-
-      await castMovie({
-        deviceId: castDeviceId,
-        serviceType: currentScope.serviceType,
-        serverId: currentScope.serverId,
-        tmdbId,
-        title: details?.title ?? null
-      });
-      setCastMessage("Casting…");
-    } catch (e) {
-      if (e instanceof ApiError) {
-        setError(e.message);
-      } else {
-        setError(
-          "Failed to cast movie. If you are running on localhost, configure a LAN join address (Admin Console) and ensure the API is reachable from your Chromecast (bind to 0.0.0.0 / LAN IP).",
-        );
-      }
-    } finally {
-      setCasting(false);
-    }
-  }
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
+function Pill({
+  label,
+  value,
+  valueOnly,
+  className = '',
+}: {
+  label: string
+  value: string
+  valueOnly?: boolean
+  className?: string
+}) {
   return (
-    <div className="modal modal--above" aria-hidden={false}>
-      <div className="modal__backdrop" onClick={onClose} />
-      <div className="modal__panel" role="dialog" aria-modal="true" aria-label="Movie details" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__header">
-          <div style={{ minWidth: 0 }}>
-            <h2 className="modal__title" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {details?.title ?? `TMDB #${tmdbId}`}
-            </h2>
-            {subtitle ? <p className="modal__subtitle">{subtitle}</p> : null}
-          </div>
-          <button type="button" className="button button--ghost modal__close" onClick={onClose}>
+    <div
+      className={`min-w-[4.5rem] max-w-[10rem] rounded-lg px-3 py-2 backdrop-blur-sm ${className || 'bg-black/60'}`}
+    >
+      {!valueOnly && (
+        <span className="block text-[10px] font-medium uppercase tracking-wider text-gray-400">
+          {label}
+        </span>
+      )}
+      <span className="block text-sm font-medium text-white leading-tight">{value}</span>
+    </div>
+  )
+}
+
+/** MPAA rating pill background: green (G) → yellow → red (NC-17), same transparency as other pills. */
+function mpaaPillBgClass(rating: string): string {
+  const r = rating.toUpperCase()
+  if (r === 'G') return 'bg-emerald-600/60'
+  if (r === 'PG') return 'bg-lime-500/60'
+  if (r === 'PG-13') return 'bg-yellow-500/60'
+  if (r === 'R') return 'bg-orange-500/60'
+  if (r === 'NC-17') return 'bg-red-600/60'
+  return 'bg-black/60'
+}
+
+function isMediaServerScope(scope: MovieDetailsModalScope | null | undefined): boolean {
+  if (!scope) return false
+  return scope.serviceType !== 'tmdb' || scope.serverId !== 'tmdb'
+}
+
+export default function MovieDetailsModal({
+  movie: initialMovie,
+  tmdbId,
+  scope,
+  matchedTmdbIds,
+  onClose,
+}: MovieDetailsModalProps) {
+  const [movie, setMovie] = useState<MovieDetailsDto | null>(initialMovie ?? null)
+  const [loading, setLoading] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [castDevices, setCastDevices] = useState<{ id: string; name: string }[]>([])
+  const [selectedCastDeviceId, setSelectedCastDeviceId] = useState<string>('')
+  const [casting, setCasting] = useState(false)
+  const [castError, setCastError] = useState<string | null>(null)
+
+  const isOpen = initialMovie != null || (tmdbId != null && tmdbId > 0)
+  const isMatchedMovie =
+    matchedTmdbIds == null || (movie != null && matchedTmdbIds.includes(movie.tmdbId))
+  const showCast =
+    isMediaServerScope(scope) && movie != null && isMatchedMovie
+
+  useEffect(() => {
+    if (initialMovie != null) {
+      setMovie(initialMovie)
+      setFetchError(null)
+      return
+    }
+    if (tmdbId != null && tmdbId > 0) {
+      setMovie(null)
+      setFetchError(null)
+      setLoading(true)
+      apiClient
+        .getMovieDetails(tmdbId)
+        .then((d) => {
+          setMovie(d)
+        })
+        .catch((err) => {
+          setFetchError(err instanceof Error ? err.message : 'Failed to load movie')
+        })
+        .finally(() => {
+          setLoading(false)
+        })
+    } else {
+      setMovie(null)
+      setLoading(false)
+      setFetchError(null)
+    }
+  }, [initialMovie, tmdbId])
+
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    if (isOpen) {
+      document.addEventListener('keydown', handleEscape)
+      document.body.style.overflow = 'hidden'
+    }
+    return () => {
+      document.removeEventListener('keydown', handleEscape)
+      document.body.style.overflow = ''
+    }
+  }, [isOpen, onClose])
+
+  useEffect(() => {
+    if (!showCast || !scope) return
+    apiClient
+      .listCastDevices()
+      .then((list) => {
+        setCastDevices(list.map((d) => ({ id: d.id, name: d.name })))
+        setSelectedCastDeviceId(list[0]?.id ?? '')
+      })
+      .catch(() => setCastDevices([]))
+  }, [showCast, scope])
+
+  const handleCast = () => {
+    if (!scope || !movie || !selectedCastDeviceId) return
+    setCastError(null)
+    setCasting(true)
+    apiClient
+      .castMovie(selectedCastDeviceId, scope.serviceType, scope.serverId, movie.tmdbId, movie.title ?? null)
+      .then(() => onClose())
+      .catch((err) => setCastError(err instanceof Error ? err.message : 'Cast failed'))
+      .finally(() => setCasting(false))
+  }
+
+  if (!isOpen) return null
+
+  if (loading) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Movie details"
+      >
+        <div
+          className="flex flex-col items-center gap-4 rounded-2xl bg-slate-800 px-8 py-10 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-pink-500 border-t-transparent" />
+          <p className="text-gray-300">Loading movie details…</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (fetchError) {
+    return (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        onClick={onClose}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Movie details"
+      >
+        <div
+          className="max-w-md rounded-2xl bg-slate-800 p-6 shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-red-400">{fetchError}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-4 rounded-lg bg-slate-600 px-4 py-2 text-white hover:bg-slate-500"
+          >
             Close
           </button>
         </div>
+      </div>
+    )
+  }
 
-        <div className="modal__body">
-          {loading ? <div className="deck__state">Loading details…</div> : null}
-          {!loading && error ? <div className="deck__state deck__state--error">{error}</div> : null}
+  if (movie == null) return null
 
-          {!loading && !error && details ? (
-            <div className="details">
-              <div className="details__grid">
-                {posterUrl ? (
-                  <div className="details__poster">
-                    <img src={posterUrl} alt={details.title} />
-                  </div>
-                ) : null}
+  const posterUrl = movie.posterUrl ?? null
 
-                <div className="details__content">
-                  {details.overview ? <p className="details__overview">{details.overview}</p> : <p className="details__overview">No overview.</p>}
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="movie-details-title"
+      aria-label="Movie details"
+    >
+      <div
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-slate-800 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top 50%: poster as background with detail pills overlay */}
+        <div
+          className="relative flex-[0_0_50%] min-h-[200px] shrink-0 rounded-t-2xl bg-slate-700 bg-cover bg-center"
+          style={posterUrl ? { backgroundImage: `url(${posterUrl})` } : undefined}
+        >
+          <div className="absolute inset-0 rounded-t-2xl bg-gradient-to-t from-slate-800 via-slate-800/30 to-transparent" />
+          <div className="relative flex items-start justify-between gap-4 p-4">
+            <h2 id="movie-details-title" className="text-xl font-bold text-white drop-shadow-lg sm:text-2xl">
+              {movie.title}
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-full bg-black/40 p-1.5 text-xl text-white transition-colors hover:bg-black/60 hover:text-white"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
 
-                  <div className="details__meta">
-                    <span>TMDB #{details.tmdbId}</span>
-                    {details.rating ? <span>{details.rating.toFixed(1)} ★</span> : null}
-                    {details.voteCount ? <span>{details.voteCount.toLocaleString()} votes</span> : null}
-                  </div>
-
-                  {details.genres?.length ? (
-                    <div className="pickerRow" style={{ marginTop: "0.75rem" }}>
-                      {details.genres.map((g) => (
-                        <span key={g} className="pill pill--neutral is-on" style={{ cursor: "default" }}>
-                          <span className="pill__label">{g}</span>
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {isMediaServerScope ? (
-                    <div style={{ marginTop: "1rem" }}>
-                      <div className="field__label">Cast</div>
-                      <div style={{ marginTop: "0.25rem", display: "flex", gap: "0.75rem", flexWrap: "wrap", alignItems: "center" }}>
-                        {castUiMode === "sdk" ? (
-                          <button type="button" className="button" onClick={onCastMovie} disabled={casting}>
-                            {casting ? "Casting…" : "Cast"}
-                          </button>
-                        ) : (
-                          <>
-                            <button type="button" className="button button--ghost" onClick={onLoadCastDevices} disabled={castLoading || casting}>
-                              {castLoading ? "Finding devices…" : "Find devices"}
-                            </button>
-                            <select
-                              className="field__input"
-                              style={{ minWidth: 220 }}
-                              value={castDeviceId}
-                              onChange={(e) => setCastDeviceId(e.target.value)}
-                              disabled={castLoading || casting || castDevices.length === 0}
-                            >
-                              {castDevices.length === 0 ? <option value="">No devices</option> : null}
-                              {castDevices.map((d) => (
-                                <option key={d.id} value={d.id}>
-                                  {d.name}
-                                </option>
-                              ))}
-                            </select>
-                            <button type="button" className="button" onClick={onCastMovie} disabled={casting || castLoading || !castDeviceId}>
-                              {casting ? "Casting…" : "Cast"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      {castMessage ? <div style={{ marginTop: "0.5rem" }}>{castMessage}</div> : null}
-                    </div>
-                  ) : null}
-                </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">
+          <div className="space-y-4">
+              <div className="flex flex-wrap justify-center gap-2">
+                <Pill
+                  label="Release year"
+                  value={movie.releaseYear != null ? String(movie.releaseYear) : '—'}
+                />
+                {movie.mpaaRating && (
+                  <Pill
+                    label="Rating"
+                    value={movie.mpaaRating}
+                    className={mpaaPillBgClass(movie.mpaaRating)}
+                  />
+                )}
+                <Pill
+                  label="Rating (TMDB)"
+                  value={movie.rating != null ? `${Number(movie.rating).toFixed(1)} / 10` : '—'}
+                />
+                {movie.genres.length > 0 && (
+                  <Pill label="Genres" value={movie.genres.join(', ')} />
+                )}
+                <Pill label="Original language" value={languageDisplayName(movie.originalLanguage)} />
+                <Pill label="Runtime" value={formatRuntime(movie.runtimeMinutes)} />
+                <Pill label="TMDB ID" value={String(movie.tmdbId)} />
               </div>
+
+              {/* Synopsis */}
+              {movie.overview && (
+                <div>
+                  <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Synopsis
+                  </span>
+                  <p className="text-gray-300 leading-relaxed">{movie.overview}</p>
+                </div>
+              )}
+
+              {/* Cast (media-server scope only) */}
+              {showCast && scope && (
+                <div>
+                  <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
+                    Cast to device
+                  </span>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={selectedCastDeviceId}
+                      onChange={(e) => setSelectedCastDeviceId(e.target.value)}
+                      className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-gray-200 focus:border-pink-500 focus:outline-none focus:ring-1 focus:ring-pink-500"
+                      aria-label="Select cast device"
+                    >
+                      {castDevices.length === 0 ? (
+                        <option value="">No devices found</option>
+                      ) : (
+                        castDevices.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleCast}
+                      disabled={casting || castDevices.length === 0}
+                      className="rounded-lg bg-pink-600 px-4 py-2 text-white hover:bg-pink-500 disabled:opacity-50 disabled:hover:bg-pink-600"
+                    >
+                      {casting ? 'Casting…' : 'Cast'}
+                    </button>
+                  </div>
+                  {castError && (
+                    <p className="mt-2 text-sm text-red-400">{castError}</p>
+                  )}
+                </div>
+              )}
             </div>
-          ) : null}
+          </div>
         </div>
       </div>
-    </div>
-  );
+  )
 }
-

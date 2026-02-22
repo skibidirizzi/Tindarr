@@ -1,364 +1,219 @@
-import { useEffect, useMemo, useState } from "react";
-import { Navigate, NavLink, Outlet, Route, Routes, useLocation, type Location } from "react-router-dom";
-import SwipeDeckPage from "./pages/SwipeDeckPage";
-import LoginPage from "./pages/LoginPage";
-import PreferencesPage from "./pages/PreferencesPage";
-import MyLikedMoviesPage from "./pages/MyLikedMoviesPage";
-import MatchListPage from "./pages/MatchListPage";
-import AdminConsolePage from "./pages/AdminConsolePage";
-import ServiceSelectPage from "./pages/ServiceSelectPage";
-import RoomPage from "./pages/RoomPage";
-import NotFoundPage from "./pages/NotFoundPage";
-import { useAuth } from "./auth/AuthContext";
-import TmdbBulkJobToast from "./components/TmdbBulkJobToast";
-import PlexBulkJobToast from "./components/PlexBulkJobToast";
-import { adminFetchUpdateCheck, fetchConfiguredScopes, fetchInfo } from "./api/client";
-import type { AdminUpdateCheckResponse, InfoResponse, ServiceScopeOptionDto } from "./api/contracts";
-import { getServiceScope, SERVICE_SCOPE_UPDATED_EVENT, setServiceScopeAndNotify, DEFAULT_SERVICE_SCOPE, type ServiceScope } from "./serviceScope";
-import { CONFIGURED_SCOPES_UPDATED_EVENT } from "./configuredScopes";
+import { useEffect, useRef, useState } from 'react'
+import { Routes, Route, useNavigate, Link, Outlet } from 'react-router-dom'
+import SwipeDeck from './components/SwipeDeck'
+import Login from './components/Login'
+import LoginSplashOverlay from './components/LoginSplashOverlay'
+import MatchesModal from './components/MatchesModal'
+import PreferencesModal from './components/PreferencesModal'
+import AdminConsole from './pages/AdminConsole'
+import MyLikes from './pages/MyLikes'
+import Rooms from './pages/Rooms'
+import Room from './pages/Room'
+import { useAuth } from './contexts/AuthContext'
+import { apiClient, InfoResponse } from './lib/api'
 
-const HEADER_COLLAPSED_KEY = "tindarr:headerCollapsed:v1";
+function AppLayout() {
+  const { user, loading: authLoading, logout } = useAuth()
+  const navigate = useNavigate()
+  const [appInfo, setAppInfo] = useState<InfoResponse | null>(null)
+  const [showPreferences, setShowPreferences] = useState(false)
+  const [showMatches, setShowMatches] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [deckRefreshKey, setDeckRefreshKey] = useState(0)
+  const menuRef = useRef<HTMLDivElement>(null)
 
-export default function App() {
-  const location = useLocation();
-  const state = location.state as { backgroundLocation?: Location } | null;
-  const backgroundLocation = state?.backgroundLocation;
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const info = await apiClient.getInfo()
+        setAppInfo(info)
+      } catch (error) {
+        console.error('Failed to fetch API data:', error)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [menuOpen])
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <div className="text-center">
+          <div className="mb-4 inline-block h-12 w-12 animate-spin rounded-full border-4 border-pink-500 border-t-transparent"></div>
+          <p className="text-xl text-gray-300">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Login />
+  }
+
+  const menuItems = [
+    { id: 'swipe', label: 'Swipe to add', icon: '👆', href: '/', action: () => { navigate('/'); setMenuOpen(false) } },
+    { id: 'rooms', label: 'Rooms', icon: '📺', href: '/rooms', action: () => { setMenuOpen(false) } },
+    { id: 'matches', label: 'Matches', icon: '💕', action: () => { setShowMatches(true); setMenuOpen(false) } },
+    { id: 'likes', label: 'My Likes', icon: '❤️', href: '/likes', action: () => { navigate('/likes'); setMenuOpen(false) } },
+    { id: 'preferences', label: 'Preferences', icon: '⚙️', action: () => { setShowPreferences(true); setMenuOpen(false) } },
+    ...(user.isAdmin ? [{ id: 'admin', label: 'Admin', icon: '🔧', href: '/admin', action: () => { navigate('/admin'); setMenuOpen(false) } }] : []),
+    { id: 'logout', label: 'Logout', icon: '👋', action: () => { logout(); setMenuOpen(false) } },
+  ]
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+      <div className="container mx-auto px-4 py-8">
+        <header className="mb-8 flex items-center justify-center">
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              className="flex items-center gap-2 rounded-2xl border border-pink-500/40 bg-slate-800/90 px-5 py-3 shadow-lg shadow-purple-900/30 ring-2 ring-pink-400/20 transition-all hover:border-pink-400/60 hover:bg-slate-700/90 hover:shadow-pink-500/20 focus:outline-none focus:ring-2 focus:ring-pink-400"
+              aria-expanded={menuOpen}
+              aria-haspopup="true"
+            >
+              <span className="bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-xl font-bold text-transparent">
+                {appInfo?.name || 'Tindarr'}
+              </span>
+              <span className="text-gray-400">
+                v{appInfo?.version || '...'}
+              </span>
+              <span
+                className={`inline-block text-pink-400 transition-transform ${menuOpen ? 'rotate-180' : ''}`}
+                aria-hidden
+              >
+                ▼
+              </span>
+            </button>
+
+            {menuOpen && (
+              <div
+                className="absolute left-1/2 top-full z-50 mt-2 w-56 -translate-x-1/2 overflow-hidden rounded-2xl border border-pink-500/30 bg-slate-800/95 shadow-xl shadow-black/40 backdrop-blur-sm"
+                role="menu"
+              >
+                <ul className="max-h-[70vh] overflow-y-auto py-2">
+                  {menuItems.map((item) => (
+                    <li key={item.id} role="none">
+                      {'href' in item && item.href ? (
+                        <Link
+                          to={item.href}
+                          role="menuitem"
+                          onClick={item.action}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-gray-200 transition-colors hover:bg-pink-500/20 hover:text-white"
+                        >
+                          <span className="text-lg opacity-80">{item.icon}</span>
+                          <span className="font-medium">{item.label}</span>
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={item.action ?? (() => setMenuOpen(false))}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-gray-200 transition-colors hover:bg-pink-500/20 hover:text-white"
+                        >
+                          <span className="text-lg opacity-80">{item.icon}</span>
+                          <span className="font-medium">{item.label}</span>
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <main className="pb-8">
+          <SwipeDeck key={deckRefreshKey} />
+        </main>
+
+        <footer className="text-center">
+          <p className="text-sm text-gray-400">
+            👈 Swipe left to pass • Swipe right to like 👉
+          </p>
+          <p className="mt-2 text-xs text-gray-500">or use the buttons below</p>
+        </footer>
+      </div>
+
+      <MatchesModal
+        isOpen={showMatches}
+        onClose={() => setShowMatches(false)}
+      />
+      <PreferencesModal
+        isOpen={showPreferences}
+        onClose={() => setShowPreferences(false)}
+        onAfterSave={() => setDeckRefreshKey((k) => k + 1)}
+      />
+    </div>
+  )
+}
+
+function App() {
+  const { user, loading: authLoading } = useAuth()
+  const prevUserRef = useRef<typeof user>(null)
+  const splashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [showPostLoginSplash, setShowPostLoginSplash] = useState(false)
+
+  useEffect(() => {
+    if (user && prevUserRef.current === null) {
+      setShowPostLoginSplash(true)
+      prevUserRef.current = user
+      splashTimeoutRef.current = setTimeout(() => {
+        setShowPostLoginSplash(false)
+        splashTimeoutRef.current = null
+      }, 2000)
+    }
+    if (!user) {
+      prevUserRef.current = null
+      if (splashTimeoutRef.current) {
+        clearTimeout(splashTimeoutRef.current)
+        splashTimeoutRef.current = null
+      }
+      setShowPostLoginSplash(false)
+    }
+  }, [user])
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <div className="text-center">
+          <div className="mb-4 inline-block h-12 w-12 animate-spin rounded-full border-4 border-pink-500 border-t-transparent"></div>
+          <p className="text-xl text-gray-300">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return <Login />
+  }
 
   return (
     <>
-      <Routes location={backgroundLocation ?? location}>
-        <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-          <Route index element={<ServiceSelectPage />} />
-          <Route path="/swipe" element={<SwipeDeckPage />} />
-          <Route path="/rooms" element={<RoomPage />} />
-          <Route path="/preferences" element={<PreferencesPage />} />
-          <Route path="/liked" element={<MyLikedMoviesPage />} />
-          <Route path="/matches" element={<MatchListPage />} />
-          <Route
-            path="/admin"
-            element={
-              <RequireRole role="Admin">
-                <AdminConsolePage />
-              </RequireRole>
-            }
-          />
+      <Routes>
+        <Route path="/rooms/:roomId" element={<Room />} />
+        <Route path="/rooms" element={<Rooms />} />
+        <Route path="/likes" element={<MyLikes />} />
+        <Route path="/admin" element={<AdminConsole />} />
+        <Route path="/" element={<Outlet />}>
+          <Route index element={<AppLayout />} />
         </Route>
-
-        {/* Invite link join route (supports guest join) */}
-        <Route path="/rooms/:roomId" element={<RoomPage />} />
-
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<NotFoundPage />} />
       </Routes>
-
-      {backgroundLocation ? (
-        <Routes>
-          <Route path="/preferences" element={<PreferencesPage />} />
-          <Route path="/liked" element={<MyLikedMoviesPage />} />
-          <Route path="/matches" element={<MatchListPage />} />
-        </Routes>
-      ) : null}
+      {showPostLoginSplash && <LoginSplashOverlay />}
     </>
-  );
+  )
 }
 
-function AppLayout() {
-  const { user, logout } = useAuth();
-  const location = useLocation();
-  const isAdmin = user?.roles?.includes("Admin") ?? false;
-
-  const [info, setInfo] = useState<InfoResponse | null>(null);
-  const [adminUpdate, setAdminUpdate] = useState<AdminUpdateCheckResponse | null>(null);
-  const [adminUpdateRefreshing, setAdminUpdateRefreshing] = useState(false);
-
-  const [currentScope, setCurrentScope] = useState<ServiceScope>(() => getServiceScope());
-  const [availableScopes, setAvailableScopes] = useState<ServiceScopeOptionDto[]>([]);
-
-  const [headerCollapsed, setHeaderCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(HEADER_COLLAPSED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
-
-  const reloadConfiguredScopes = async () => {
-    try {
-      const scopes = await fetchConfiguredScopes();
-      setAvailableScopes(scopes);
-    } catch (err) {
-      console.error("Failed to fetch configured scopes:", err);
-    }
-  };
-
-  useEffect(() => {
-    void reloadConfiguredScopes();
-  }, []);
-
-  useEffect(() => {
-    function handleScopesUpdated() {
-      void reloadConfiguredScopes();
-    }
-
-    window.addEventListener(CONFIGURED_SCOPES_UPDATED_EVENT, handleScopesUpdated);
-    return () => window.removeEventListener(CONFIGURED_SCOPES_UPDATED_EVENT, handleScopesUpdated);
-  }, []);
-
-  useEffect(() => {
-    // If the current scope is no longer configured (e.g. server deleted), reset to TMDB.
-    // This avoids showing a stale/empty scope option in the header picker.
-    if (availableScopes.length === 0) return;
-
-    const exists = availableScopes.some(
-      (s) =>
-        s.serviceType.toLowerCase() === currentScope.serviceType.toLowerCase() &&
-        s.serverId.toLowerCase() === currentScope.serverId.toLowerCase()
-    );
-
-    if (!exists) {
-      setServiceScopeAndNotify(DEFAULT_SERVICE_SCOPE);
-    }
-  }, [availableScopes, currentScope.serviceType, currentScope.serverId]);
-
-  useEffect(() => {
-    fetchInfo()
-      .then(setInfo)
-      .catch((err) => console.warn("Failed to fetch build info:", err));
-  }, []);
-
-  useEffect(() => {
-    if (!isAdmin) {
-      setAdminUpdate(null);
-      return;
-    }
-
-    adminFetchUpdateCheck()
-      .then(setAdminUpdate)
-      .catch((err) => console.warn("Failed to fetch admin update check:", err));
-  }, [isAdmin]);
-
-  const refreshAdminUpdateCheck = async () => {
-    if (!isAdmin) return;
-    setAdminUpdateRefreshing(true);
-    try {
-      const fresh = await adminFetchUpdateCheck({ force: true });
-      setAdminUpdate(fresh);
-    } catch (err) {
-      console.warn("Failed to refresh admin update check:", err);
-    } finally {
-      setAdminUpdateRefreshing(false);
-    }
-  };
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(HEADER_COLLAPSED_KEY, headerCollapsed ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  }, [headerCollapsed]);
-
-  useEffect(() => {
-    function handleScopeUpdated() {
-      setCurrentScope(getServiceScope());
-    }
-
-    window.addEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
-    return () => window.removeEventListener(SERVICE_SCOPE_UPDATED_EVENT, handleScopeUpdated);
-  }, []);
-
-  const headerToggleLabel = useMemo(() => (headerCollapsed ? "Expand" : "Collapse"), [headerCollapsed]);
-
-  const scopeOptions = useMemo(() => {
-    // Map API scope options to dropdown format
-    const mapped = availableScopes.map((o) => ({
-      value: `${o.serviceType}/${o.serverId}`,
-      label: o.displayName,
-      scope: { serviceType: o.serviceType as any, serverId: o.serverId }
-    }));
-
-    // Ensure current scope is included even if not in the API list (fallback for edge cases)
-    const currentValue = `${currentScope.serviceType}/${currentScope.serverId}`;
-    if (!mapped.some((o) => o.value === currentValue)) {
-      mapped.push({
-        value: currentValue,
-        label: `${currentScope.serviceType}`,
-        scope: currentScope
-      });
-    }
-
-    return mapped;
-  }, [availableScopes, currentScope]);
-
-  const selectedScopeValue = useMemo(() => `${currentScope.serviceType}/${currentScope.serverId}`, [currentScope]);
-
-  return (
-    <div className={`app ${headerCollapsed ? "app--headerCollapsed" : ""}`}>
-      <header className="app__header">
-        <div className="app__headerInner">
-          <div className="app__brand">
-            <h1>Tindarr</h1>
-            {info ? (
-              <p>
-                {info.version ? `v${info.version}` : null}
-                {isAdmin ? (
-                  <>
-                    {adminUpdate?.updateAvailable ? (
-                      <>
-                        {info.version ? " — " : null}
-                        Update available
-                        {adminUpdate.latestVersion ? ` (v${adminUpdate.latestVersion})` : ""}
-                        {adminUpdate.latestReleaseUrl ? (
-                          <>
-                            {" "}
-                            <a
-                              href={adminUpdate.latestReleaseUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{ color: "inherit", textDecoration: "underline" }}
-                            >
-                              GitHub release
-                            </a>
-                          </>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        {" "}
-                        <button
-                          type="button"
-                          className="pill"
-                          onClick={refreshAdminUpdateCheck}
-                          disabled={adminUpdateRefreshing}
-                          style={{ padding: "0.25rem 0.55rem", fontSize: "0.85rem" }}
-                          title="Check for updates"
-                        >
-                          {adminUpdateRefreshing ? "Checking…" : "Check for updates"}
-                        </button>
-                      </>
-                    )}
-                  </>
-                ) : null}
-              </p>
-            ) : null}
-          </div>
-          <nav className="app__nav" aria-label="Primary">
-            <button
-              type="button"
-              className="app__navLink"
-              onClick={() => setHeaderCollapsed((prev) => !prev)}
-              aria-pressed={headerCollapsed}
-              title={headerCollapsed ? "Expand header" : "Collapse header"}
-            >
-              {headerToggleLabel}
-            </button>
-
-      <select
-        className="app__navLink"
-        value={selectedScopeValue}
-        onChange={(e) => {
-          const value = e.target.value;
-          const option = scopeOptions.find((o) => o.value === value);
-          if (option) {
-            setServiceScopeAndNotify(option.scope);
-          }
-        }}
-        aria-label="Service scope"
-        title="Service scope"
-      >
-        {scopeOptions.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-
-            {!headerCollapsed ? (
-              <>
-                <NavLink to="/swipe" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
-                  Swipe
-                </NavLink>
-                <NavLink to="/rooms" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
-                  Rooms
-                </NavLink>
-                <NavLink
-                  to="/liked"
-                  state={{ backgroundLocation: location }}
-                  className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}
-                >
-                  My Likes
-                </NavLink>
-                <NavLink
-                  to="/matches"
-                  state={{ backgroundLocation: location }}
-                  className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}
-                >
-                  Matches
-                </NavLink>
-                <NavLink
-                  to="/preferences"
-                  state={{ backgroundLocation: location }}
-                  className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}
-                >
-                  Preferences
-                </NavLink>
-                {isAdmin ? (
-                  <NavLink to="/admin" className={({ isActive }) => `app__navLink ${isActive ? "is-active" : ""}`}>
-                    Admin
-                  </NavLink>
-                ) : null}
-                <span className="app__navUser">{user?.displayName ?? user?.userId}</span>
-                <button type="button" className="app__navLink" onClick={logout}>
-                  Logout
-                </button>
-              </>
-            ) : null}
-          </nav>
-        </div>
-      </header>
-      <main className="app__content">
-        <Outlet />
-      </main>
-
-      <TmdbBulkJobToast />
-      <PlexBulkJobToast />
-    </div>
-  );
-}
-
-function RequireRole({ role, children }: { role: string; children: React.ReactNode }) {
-  const { user } = useAuth();
-
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
-
-  if (!user.roles.includes(role)) {
-    return <Navigate to="/" replace />;
-  }
-
-  return <>{children}</>;
-}
-
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  const location = useLocation();
-
-  if (loading) {
-    return (
-      <div className="app">
-        <main className="app__content">
-          <section className="deck">
-            <div className="deck__state">Loading…</div>
-          </section>
-        </main>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  }
-
-  return <>{children}</>;
-}
+export default App

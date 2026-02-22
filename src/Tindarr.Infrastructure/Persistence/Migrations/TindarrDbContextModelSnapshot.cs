@@ -85,6 +85,9 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("TmdbApiKey")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("TmdbReadAccessToken")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TimeZoneId")
                         .HasColumnType("TEXT");
 

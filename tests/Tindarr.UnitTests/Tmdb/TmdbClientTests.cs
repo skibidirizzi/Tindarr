@@ -517,6 +517,8 @@ public sealed class TmdbClientTests
 
 		public string GetEffectiveTmdbApiKey() => options.ApiKey ?? string.Empty;
 
+		public string GetEffectiveTmdbReadAccessToken() => options.ReadAccessToken ?? string.Empty;
+
 		public bool HasEffectiveTmdbCredentials() => options.HasCredentials;
 
 		public string GetDateTimeDisplayMode() => "locale";
