@@ -3,11 +3,11 @@
   Builds the Tindarr MSI installer (WiX). Publishes the API, harvests files with Heat, then compiles and links.
 .DESCRIPTION
   Requires WiX Toolset (candle, heat, light) and .NET SDK. Run from repo root.
-  Output: dist\Tindarr-1.0.2.msi (or -OutPath).
+	Output: dist\Tindarr-1.2.2.msi (or -OutPath).
 .PARAMETER PublishDir
   Directory containing published API output. Default: dist\api (publish is run if missing).
 .PARAMETER OutPath
-  Path for the output MSI. Default: dist\Tindarr-1.0.2.msi.
+	Path for the output MSI. Default: dist\Tindarr-1.2.2.msi.
 #>
 Param(
 	[string]$PublishDir = "",
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $WixDir = Join-Path $RepoRoot "installer\windows\wix"
 $DistApi = Join-Path $RepoRoot "dist\api"
-$DefaultMsi = Join-Path $RepoRoot "dist\Tindarr-1.0.2.msi"
+$DefaultMsi = Join-Path $RepoRoot "dist\Tindarr-1.2.2.msi"
 
 if (-not $PublishDir) { $PublishDir = $DistApi }
 if (-not $OutPath) { $OutPath = $DefaultMsi }

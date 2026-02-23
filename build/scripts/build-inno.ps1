@@ -4,7 +4,7 @@
 .DESCRIPTION
   Requires Inno Setup (iscc), .NET SDK, and Node/npm. Run from repo root.
   Builds the UI (npm run build in ui), publishes the API (so wwwroot is current), then runs iscc.
-  Run "npm install" in ui once if needed. Output: dist\Tindarr-1.0.2-setup.exe
+	Run "npm install" in ui once if needed. Output: dist\Tindarr-1.2.2-setup.exe
 .PARAMETER PublishDir
   Directory containing published API output. Default: dist\api (publish is run if missing).
 #>
@@ -52,5 +52,5 @@ if (-not $iscc) {
 
 if (-not $?) { throw "iscc failed." }
 
-$outExe = Join-Path $RepoRoot "dist\Tindarr-1.0.2-setup.exe"
+$outExe = Join-Path $RepoRoot "dist\Tindarr-1.2.2-setup.exe"
 Write-Host "Done: $outExe"

@@ -8,15 +8,15 @@
 
 [Setup]
 AppName=Tindarr
-AppVersion=1.0.2
-AppVerName=Tindarr 1.0.2
+AppVersion=1.2.2
+AppVerName=Tindarr 1.2.2
 AppPublisher=SkibidiRizzi
 DefaultDirName={autopf}\Tindarr
 DefaultGroupName=Tindarr
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 OutputDir=..\..\dist
-OutputBaseFilename=Tindarr-1.0.2-setup
+OutputBaseFilename=Tindarr-1.2.2-setup
 SetupIconFile=..\..\artifacts\tindarr.ico
 WizardImageFile=..\..\artifacts\tindarrsidebanner.png
 WizardSmallImageFile=..\..\artifacts\tindarrcropped.png
