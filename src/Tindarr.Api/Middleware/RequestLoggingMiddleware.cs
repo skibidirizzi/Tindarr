@@ -11,9 +11,13 @@ public sealed class RequestLoggingMiddleware(
 {
 	private readonly LoggingOptions loggingOptions = loggingOptionsAccessor.Value;
 
+	/// <summary>Path we do not log (avoids polluting the admin console output view with its own polling requests).</summary>
+	private static readonly PathString ConsoleEndpoint = new("/api/v1/admin/console");
+
 	public async Task InvokeAsync(HttpContext context)
 	{
 		var sw = Stopwatch.StartNew();
+		var skipLog = context.Request.Path.StartsWithSegments(ConsoleEndpoint, StringComparison.OrdinalIgnoreCase);
 
 		var correlationId =
 			context.Items.TryGetValue(CorrelationIdMiddleware.ItemKey, out var cidObj) ? cidObj?.ToString() :
@@ -22,40 +26,46 @@ public sealed class RequestLoggingMiddleware(
 
 		var pathAndQuery = SensitiveRedaction.RedactPathAndQuery(context.Request.Path, context.Request.QueryString);
 
-		// Only collect and log headers when enabled to reduce overhead/log volume.
-		var headers = loggingOptions.LogRequestHeaders
-			? context.Request.Headers.ToDictionary(
-				kvp => kvp.Key,
-				kvp => SensitiveRedaction.RedactHeader(kvp.Key, kvp.Value.ToString()))
-			: null;
+		if (!skipLog)
+		{
+			// Only collect and log headers when enabled to reduce overhead/log volume.
+			var headers = loggingOptions.LogRequestHeaders
+				? context.Request.Headers.ToDictionary(
+					kvp => kvp.Key,
+					kvp => SensitiveRedaction.RedactHeader(kvp.Key, kvp.Value.ToString()))
+				: null;
 
-		logger.LogInformation(
-			"HTTP {Method} {Path} CorrelationId={CorrelationId} Headers={Headers}",
-			context.Request.Method,
-			pathAndQuery,
-			correlationId,
-			headers);
+			logger.LogInformation(
+				"HTTP {Method} {Path} CorrelationId={CorrelationId} Headers={Headers}",
+				context.Request.Method,
+				pathAndQuery,
+				correlationId,
+				headers);
+		}
 
 		await next(context);
 
 		sw.Stop();
 
-		Dictionary<string, string?>? responseHeaders = null;
-		if (loggingOptions.LogResponseHeaders)
+		if (!skipLog)
 		{
-			responseHeaders = context.Response.Headers.ToDictionary(
-				kvp => kvp.Key,
-				kvp => (string?)SensitiveRedaction.RedactHeader(kvp.Key, kvp.Value.ToString()));
-		}
+			Dictionary<string, string?>? responseHeaders = null;
+			if (loggingOptions.LogResponseHeaders)
+			{
+				responseHeaders = context.Response.Headers.ToDictionary(
+					kvp => kvp.Key,
+					kvp => (string?)SensitiveRedaction.RedactHeader(kvp.Key, kvp.Value.ToString()));
+			}
 
-		logger.LogInformation(
-			"HTTP {Method} {Path} -> {StatusCode} ({ElapsedMs} ms) CorrelationId={CorrelationId} ContentType={ContentType} ResponseHeaders={ResponseHeaders}",
-			context.Request.Method,
-			pathAndQuery,
-			context.Response.StatusCode,
-			sw.ElapsedMilliseconds,
-			correlationId,
-			context.Response.ContentType,
-			responseHeaders);
+			logger.LogInformation(
+				"HTTP {Method} {Path} -> {StatusCode} ({ElapsedMs} ms) CorrelationId={CorrelationId} ContentType={ContentType} ResponseHeaders={ResponseHeaders}",
+				context.Request.Method,
+				pathAndQuery,
+				context.Response.StatusCode,
+				sw.ElapsedMilliseconds,
+				correlationId,
+				context.Response.ContentType,
+				responseHeaders);
+		}
 	}
 }

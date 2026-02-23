@@ -10,7 +10,13 @@ public sealed class RegistrationOptions
 	public bool AllowOpenRegistration { get; init; } = true;
 
 	/// <summary>
-	/// Default role assigned to newly registered users.
+	/// When true, new users created via the create-account flow get the PendingApproval role only
+	/// and cannot log in until an admin approves them (e.g. sets their role to Contributor).
+	/// </summary>
+	public bool RequireAdminApprovalForNewUsers { get; init; }
+
+	/// <summary>
+	/// Default role assigned to newly registered users (and to users when an admin approves them).
 	/// </summary>
 	public string DefaultRole { get; init; } = "Contributor";
 

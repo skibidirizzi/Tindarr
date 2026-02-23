@@ -31,7 +31,10 @@ public sealed class AdminController(
 	IEffectiveAdvancedSettings effectiveAdvancedSettings,
 	IPasswordHasher passwordHasher,
 	IOptions<RegistrationOptions> registrationOptions,
-	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore) : ControllerBase
+	IEffectiveRegistrationOptions effectiveRegistration,
+	IRegistrationSettingsRepository registrationSettings,
+	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore,
+	IConsoleOutputCapture consoleOutputCapture) : ControllerBase
 {
 	private static readonly AdvancedSettingsApiRateLimitDto ApiRateLimitDefaults = new(
 		Enabled: true,
@@ -49,12 +52,56 @@ public sealed class AdminController(
 		TimeZoneId: "Local",
 		DateOrder: "locale");
 
+	[HttpGet("console")]
+	public ActionResult<ConsoleOutputDto> GetConsoleOutput([FromQuery] int maxLines = 500)
+	{
+		maxLines = Math.Clamp(maxLines, 1, 2000);
+		var lines = consoleOutputCapture.GetRecentLines(maxLines);
+		return Ok(new ConsoleOutputDto(lines));
+	}
+
+	[HttpGet("registration")]
+	public ActionResult<RegistrationSettingsDto> GetRegistrationSettings()
+	{
+		return Ok(new RegistrationSettingsDto(
+			effectiveRegistration.AllowOpenRegistration,
+			effectiveRegistration.RequireAdminApprovalForNewUsers,
+			effectiveRegistration.DefaultRole));
+	}
+
+	[HttpPut("registration")]
+	public async Task<ActionResult<RegistrationSettingsDto>> UpdateRegistrationSettings(
+		[FromBody] UpdateRegistrationSettingsRequest request,
+		CancellationToken cancellationToken)
+	{
+		var defaultRole = string.IsNullOrWhiteSpace(request.DefaultRole) ? null : request.DefaultRole.Trim();
+		if (defaultRole is not null && defaultRole.Length > 64)
+		{
+			return BadRequest("DefaultRole must be at most 64 characters.");
+		}
+
+		// Require admin approval only applies when open registration is on; disallow unsupported combination.
+		var requireApproval = request.AllowOpenRegistration && request.RequireAdminApprovalForNewUsers;
+
+		var record = await registrationSettings.UpsertAsync(new RegistrationSettingsUpsert(
+			request.AllowOpenRegistration,
+			requireApproval,
+			defaultRole), cancellationToken);
+		effectiveRegistration.Invalidate();
+
+		return Ok(new RegistrationSettingsDto(
+			record.AllowOpenRegistration ?? registrationOptions.Value.AllowOpenRegistration,
+			record.RequireAdminApprovalForNewUsers ?? registrationOptions.Value.RequireAdminApprovalForNewUsers,
+			!string.IsNullOrWhiteSpace(record.DefaultRole) ? record.DefaultRole! : registrationOptions.Value.DefaultRole));
+	}
+
 	[HttpGet("advanced-settings")]
 	public Task<ActionResult<AdvancedSettingsDto>> GetAdvancedSettings(CancellationToken cancellationToken)
 	{
 		var api = effectiveAdvancedSettings.GetApiRateLimitOptions();
 		var cleanup = effectiveAdvancedSettings.GetCleanupOptions();
 		var hasTmdbApiKey = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbApiKey());
+		var hasTmdbReadAccessToken = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbReadAccessToken());
 		var dateTimeDisplayMode = effectiveAdvancedSettings.GetDateTimeDisplayMode();
 		var timeZoneId = effectiveAdvancedSettings.GetTimeZoneId();
 		var dateOrder = effectiveAdvancedSettings.GetDateOrder();
@@ -68,7 +115,7 @@ public sealed class AdminController(
 				cleanup.PurgeGuestUsers,
 				(int)cleanup.GuestUserMaxAge.TotalHours),
 			CleanupDefaults,
-			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey),
+			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey, hasTmdbReadAccessToken),
 			Display: new AdvancedSettingsDisplayDto(dateTimeDisplayMode, timeZoneId, dateOrder),
 			DisplayDefaults);
 		return Task.FromResult<ActionResult<AdvancedSettingsDto>>(Ok(dto));
@@ -131,13 +178,21 @@ public sealed class AdminController(
 		string? tmdbApiKeyForUpsert = request.TmdbApiKeySet == true
 			? (string.IsNullOrWhiteSpace(request.TmdbApiKey) ? null : request.TmdbApiKey!.Trim())
 			: null;
+		// Only update TmdbReadAccessToken when client explicitly sets it (TmdbReadAccessTokenSet == true); otherwise keep existing.
+		string? tmdbReadAccessTokenForUpsert = request.TmdbReadAccessTokenSet == true
+			? (string.IsNullOrWhiteSpace(request.TmdbReadAccessToken) ? null : request.TmdbReadAccessToken!.Trim())
+			: null;
 		AdvancedSettingsRecord? existingRecord = null;
-		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
+		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
 		{
 			existingRecord = await advancedSettings.GetAsync(cancellationToken).ConfigureAwait(false);
 			if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true)
 			{
 				tmdbApiKeyForUpsert = existingRecord?.TmdbApiKey;
+			}
+			if (tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true)
+			{
+				tmdbReadAccessTokenForUpsert = existingRecord?.TmdbReadAccessToken;
 			}
 			if (dateTimeDisplayMode is null)
 			{
@@ -162,6 +217,7 @@ public sealed class AdminController(
 			request.CleanupPurgeGuestUsers,
 			request.CleanupGuestUserMaxAgeHours,
 			tmdbApiKeyForUpsert,
+			tmdbReadAccessTokenForUpsert,
 			dateTimeDisplayMode,
 			timeZoneId,
 			dateOrder);
@@ -564,7 +620,7 @@ public sealed class AdminController(
 		var hashed = passwordHasher.Hash(request.Password, registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(id, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [registrationOptions.Value.DefaultRole])
+		var roles = (request.Roles is { Count: > 0 } ? request.Roles : [effectiveRegistration.DefaultRole])
 			.Where(r => !string.IsNullOrWhiteSpace(r))
 			.Select(r => r.Trim())
 			.ToList();
@@ -758,6 +814,11 @@ public sealed class AdminController(
 		if (v.Any(char.IsWhiteSpace))
 		{
 			throw new ArgumentException("UserId must not contain whitespace.");
+		}
+
+		if (v.Any(c => !char.IsLetterOrDigit(c) && c != '-' && c != '_'))
+		{
+			throw new ArgumentException("UserId must contain only letters, digits, hyphens, and underscores.");
 		}
 
 		return v.ToLowerInvariant();

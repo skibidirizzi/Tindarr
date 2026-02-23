@@ -71,7 +71,8 @@ public sealed class PlexSwipeDeckSource(
 					PosterUrl: m.PosterUrl,
 					BackdropUrl: m.BackdropUrl,
 					ReleaseYear: m.ReleaseYear,
-					Rating: m.Rating))
+					Rating: m.Rating,
+					RuntimeMinutes: m.RuntimeMinutes))
 				.ToList();
 		}
 		catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)

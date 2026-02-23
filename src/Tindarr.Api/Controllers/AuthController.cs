@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Features.Auth;
@@ -26,6 +27,11 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 		}
 		catch (InvalidOperationException ex)
 		{
+			if (string.Equals(ex.Message, "Room is closed to new users.", StringComparison.Ordinal))
+			{
+				return new ObjectResult(new { message = "This room has already started. Join earlier next time or ask the host for a new room." }) { StatusCode = StatusCodes.Status403Forbidden };
+			}
+
 			return BadRequest(ex.Message);
 		}
 	}
@@ -62,10 +68,9 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 		{
 			return BadRequest(ex.Message);
 		}
-		catch (InvalidOperationException)
+		catch (InvalidOperationException ex)
 		{
-			// Avoid leaking whether the user exists.
-			return BadRequest("Invalid credentials.");
+			return BadRequest(new { message = ex.Message });
 		}
 	}
 
@@ -119,7 +124,7 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 
 	private static AuthResponse Map(AuthSession session)
 	{
-		return new AuthResponse(session.AccessToken, session.ExpiresAtUtc, session.UserId, session.DisplayName, session.Roles);
+		return new AuthResponse(session.AccessToken, session.ExpiresAtUtc, session.UserId, session.DisplayName, session.Roles, session.PendingApproval);
 	}
 }
 

@@ -249,7 +249,7 @@ public sealed class CastingControllerSessionLifecycleTests
 
 	private sealed class TestRoomService(string? roomId = null) : IRoomService
 	{
-		public Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, CancellationToken cancellationToken)
+		public Task<RoomState> CreateAsync(string ownerUserId, ServiceScope scope, string? roomName, CancellationToken cancellationToken)
 			=> throw new NotImplementedException();
 
 		public Task<RoomState> JoinAsync(string roomId, string userId, CancellationToken cancellationToken)

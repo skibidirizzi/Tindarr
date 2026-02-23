@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Contracts.Movies;
+using Tindarr.Contracts.Tmdb;
 
 namespace Tindarr.Infrastructure.Integrations.Tmdb;
 
@@ -713,6 +714,24 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 		return ids;
 	}
 
+	public async Task<int> CountMoviesNeedingDetailsAsync(CancellationToken cancellationToken)
+	{
+		await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+		await using var conn = CreateConnection();
+		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await ApplyConnectionPragmasAsync(conn, cancellationToken).ConfigureAwait(false);
+
+		var cmd = conn.CreateCommand();
+		cmd.CommandText = "SELECT COUNT(*) FROM tmdb_movies WHERE details_fetched_at_utc IS NULL;";
+		var raw = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+		return raw switch
+		{
+			long l => (int)Math.Max(0, l),
+			int i => Math.Max(0, i),
+			_ => 0
+		};
+	}
+
 	public async Task UpdateMovieDetailsAsync(MovieDetailsDto details, CancellationToken cancellationToken)
 	{
 		await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
@@ -868,7 +887,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 				release_date,
 				original_language,
 				rating,
-				genre_ids_json
+				genre_ids_json,
+				runtime_minutes
 			FROM tmdb_movies
 			ORDER BY updated_at_utc DESC
 			LIMIT $take;
@@ -889,6 +909,7 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 			var originalLanguage = reader.IsDBNull(7) ? null : reader.GetString(7);
 			double? rating = reader.IsDBNull(8) ? null : reader.GetDouble(8);
 			var genreIdsJson = reader.IsDBNull(9) ? null : reader.GetString(9);
+			int? runtimeMinutes = reader.IsDBNull(10) ? null : reader.GetInt32(10);
 			IReadOnlyList<int>? genreIds = null;
 			if (!string.IsNullOrWhiteSpace(genreIdsJson))
 			{
@@ -912,7 +933,8 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
 				ReleaseDate: releaseDate,
 				OriginalLanguage: originalLanguage,
 				VoteAverage: rating,
-				GenreIds: genreIds));
+				GenreIds: genreIds,
+				RuntimeMinutes: runtimeMinutes));
 		}
 
 		return results;
@@ -1193,4 +1215,88 @@ public sealed class TmdbMetadataStore(string sqliteDbPath) : ITmdbMetadataStore
  			_maintenanceLock.Release();
  		}
  	}
+
+	public async Task<TmdbImportResultDto> ImportFromFileAsync(string sourceDbPath, CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(sourceDbPath) || !File.Exists(sourceDbPath))
+		{
+			return new TmdbImportResultDto(0, 0, 0, ["File not found or path is empty."]);
+		}
+
+		await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+		var resolvedPath = Path.GetFullPath(sourceDbPath);
+		await using var conn = CreateConnection();
+		await conn.OpenAsync(cancellationToken).ConfigureAwait(false);
+		await ApplyConnectionPragmasAsync(conn, cancellationToken).ConfigureAwait(false);
+
+		var escapedPath = resolvedPath.Replace("'", "''");
+		var attachCmd = conn.CreateCommand();
+		attachCmd.CommandText = $"ATTACH DATABASE '{escapedPath}' AS import_db;";
+		await ExecuteNonQueryWithRetryAsync(attachCmd, cancellationToken).ConfigureAwait(false);
+
+		try
+		{
+			var tableCheck = conn.CreateCommand();
+			tableCheck.CommandText = "SELECT 1 FROM import_db.sqlite_master WHERE type='table' AND name='tmdb_movies' LIMIT 1;";
+			var hasTable = await tableCheck.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+			if (hasTable is null or DBNull)
+			{
+				return new TmdbImportResultDto(0, 0, 0, ["Source table tmdb_movies not found."]);
+			}
+
+			var countCmd = conn.CreateCommand();
+			countCmd.CommandText = "SELECT COUNT(*) FROM import_db.tmdb_movies;";
+			var rawCount = await countCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+			var sourceCount = rawCount switch { long l => (int)Math.Clamp(l, 0, int.MaxValue), int i => i, _ => 0 };
+
+			if (sourceCount == 0)
+			{
+				return new TmdbImportResultDto(0, 0, 0, ["Source has 0 rows."]);
+			}
+
+			var overlapCmd = conn.CreateCommand();
+			overlapCmd.CommandText = "SELECT COUNT(*) FROM main.tmdb_movies m WHERE EXISTS (SELECT 1 FROM import_db.tmdb_movies i WHERE i.tmdb_id = m.tmdb_id);";
+			var rawOverlap = await overlapCmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+			var updatedCount = rawOverlap switch { long l => (int)Math.Clamp(l, 0, int.MaxValue), int i => i, _ => 0 };
+			var insertedCount = sourceCount - updatedCount;
+
+			var insertCmd = conn.CreateCommand();
+			insertCmd.CommandText = """
+				INSERT OR REPLACE INTO main.tmdb_movies (
+					tmdb_id, title, original_title, overview, poster_path, backdrop_path,
+					release_date, release_year, mpaa_rating, original_language, rating, vote_count, runtime_minutes,
+					genre_ids_json, genres_json, regions_json, details_fetched_at_utc, updated_at_utc
+				)
+				SELECT
+					tmdb_id, title, original_title, overview, poster_path, backdrop_path,
+					release_date, release_year, mpaa_rating, original_language, rating, vote_count, runtime_minutes,
+					genre_ids_json, genres_json, regions_json, details_fetched_at_utc, updated_at_utc
+				FROM import_db.tmdb_movies;
+				""";
+			try
+			{
+				await ExecuteNonQueryWithRetryAsync(insertCmd, cancellationToken).ConfigureAwait(false);
+			}
+			catch (SqliteException ex)
+			{
+				return new TmdbImportResultDto(0, 0, sourceCount, [$"Import failed: {ex.Message}"]);
+			}
+
+			return new TmdbImportResultDto(insertedCount, updatedCount, 0, []);
+		}
+		finally
+		{
+			var detachCmd = conn.CreateCommand();
+			detachCmd.CommandText = "DETACH DATABASE import_db;";
+			try
+			{
+				await detachCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+			}
+			catch
+			{
+				// best-effort
+			}
+		}
+	}
 }

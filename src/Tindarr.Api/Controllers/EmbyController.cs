@@ -11,20 +11,40 @@ namespace Tindarr.Api.Controllers;
 [ApiController]
 [Authorize(Policy = Policies.AdminOnly)]
 [Route("api/v1/emby")]
-public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRepository settingsRepo)
-	: MediaServerControllerBase(settingsRepo)
+public sealed class EmbyController : MediaServerControllerBase
 {
+	private readonly IEmbyService _embyService;
+	private readonly ILibraryCacheRepository _libraryCache;
+
+	public EmbyController(
+		IEmbyService embyService,
+		IServiceSettingsRepository settingsRepo,
+		ILibraryCacheRepository libraryCache)
+		: base(settingsRepo)
+	{
+		_embyService = embyService;
+		_libraryCache = libraryCache;
+	}
+
 	[HttpGet("servers")]
 	public async Task<ActionResult<IReadOnlyList<EmbyServerDto>>> ListServers(CancellationToken cancellationToken)
 	{
-		var servers = await embyService.ListServersAsync(cancellationToken);
-		return Ok(servers.Select(s => new EmbyServerDto(
-			s.ServerId,
-			s.Name,
-			s.BaseUrl,
-			s.Version,
-			s.LastLibrarySyncUtc,
-			s.UpdatedAtUtc)).ToList());
+		var servers = await _embyService.ListServersAsync(cancellationToken);
+		var result = new List<EmbyServerDto>(servers.Count);
+		foreach (var s in servers)
+		{
+			var scope = new ServiceScope(ServiceType.Emby, s.ServerId);
+			var count = await _libraryCache.CountTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+			result.Add(new EmbyServerDto(
+				s.ServerId,
+				s.Name,
+				s.BaseUrl,
+				s.Version,
+				s.LastLibrarySyncUtc,
+				s.UpdatedAtUtc,
+				count));
+		}
+		return Ok(result);
 	}
 
 	[HttpGet("settings")]
@@ -38,7 +58,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 			return errorResult!;
 		}
 
-		var settings = await embyService.GetSettingsAsync(scope!, cancellationToken);
+		var settings = await _embyService.GetSettingsAsync(scope!, cancellationToken);
 		return Ok(MapSettings(scope!, settings));
 	}
 
@@ -50,7 +70,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 	{
 		try
 		{
-			var updated = await embyService.UpsertSettingsAsync(
+			var updated = await _embyService.UpsertSettingsAsync(
 				new EmbySettingsUpsert(request.BaseUrl, request.ApiKey),
 				confirmNewInstance,
 				cancellationToken);
@@ -83,7 +103,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 			return errorResult!;
 		}
 
-		var result = await embyService.TestConnectionAsync(scope!, cancellationToken);
+		var result = await _embyService.TestConnectionAsync(scope!, cancellationToken);
 		return Ok(new EmbyConnectionTestResponse(result.Ok, result.Message));
 	}
 
@@ -100,7 +120,7 @@ public sealed class EmbyController(IEmbyService embyService, IServiceSettingsRep
 
 		try
 		{
-			var result = await embyService.SyncLibraryAsync(scope!, cancellationToken);
+			var result = await _embyService.SyncLibraryAsync(scope!, cancellationToken);
 			return Ok(new EmbyLibrarySyncResponse(
 				scope!.ServiceType.ToString().ToLowerInvariant(),
 				scope.ServerId,

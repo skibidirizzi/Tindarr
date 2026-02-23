@@ -240,7 +240,8 @@ public sealed class PlexDeckIndexRepository(PlexCacheDbContext db) : IPlexDeckIn
 				x.PosterUrl,
 				x.BackdropUrl,
 				x.ReleaseYear,
-				x.Rating))
+				x.Rating,
+				x.RuntimeMinutes))
 			.ToListAsync(cancellationToken)
 			.ConfigureAwait(false);
 

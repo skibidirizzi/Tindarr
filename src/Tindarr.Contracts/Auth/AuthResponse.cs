@@ -5,5 +5,6 @@ public sealed record AuthResponse(
 	DateTimeOffset ExpiresAtUtc,
 	string UserId,
 	string DisplayName,
-	IReadOnlyList<string> Roles);
+	IReadOnlyList<string> Roles,
+	bool PendingApproval = false);
 

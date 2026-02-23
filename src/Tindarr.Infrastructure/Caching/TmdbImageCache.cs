@@ -21,6 +21,10 @@ public sealed class TmdbImageCache(
 	private readonly SemaphoreSlim _initLock = new(1, 1);
 	private bool _initialized;
 
+	/// <summary>
+	/// Directory for cached image files. Placed next to the TMDB metadata DB:
+	/// e.g. if DB is in bin\Debug\net8.0\tmdbmetadata.db then images are in bin\Debug\net8.0\tmdb-images.
+	/// </summary>
 	private string ImageDir
 	{
 		get

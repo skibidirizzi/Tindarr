@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Preferences;
 using Tindarr.Application.Options;
@@ -73,13 +74,14 @@ public sealed class TmdbBuildJob(
 		try
 		{
 			using var scope = scopeFactory.CreateScope();
-			var tmdb = scope.ServiceProvider.GetRequiredService<IOptions<TmdbOptions>>().Value;
-			if (!tmdb.HasCredentials)
+			var effectiveSettings = scope.ServiceProvider.GetRequiredService<IEffectiveAdvancedSettings>();
+			if (!effectiveSettings.HasEffectiveTmdbCredentials())
 			{
 				Update(s => s.Fail("TMDB is not configured (missing credentials)."));
 				return;
 			}
 
+			var tmdb = scope.ServiceProvider.GetRequiredService<IOptions<TmdbOptions>>().Value;
 			var usersBatchSize = Math.Clamp(request.UsersBatchSize, 1, 200);
 			var discoverLimit = Math.Clamp(request.DiscoverLimitPerUser, 1, 1000);
 

@@ -33,6 +33,8 @@ public interface IPlexLibrarySyncJobService
 	event EventHandler<PlexLibrarySyncJobStatus>? StatusChanged;
 	PlexLibrarySyncJobStatus GetStatus(ServiceScope scope);
 	Task<PlexLibrarySyncJobStatus> StartAsync(ServiceScope scope, CancellationToken cancellationToken);
+	/// <summary>Returns a task that completes when the current or last run for the scope has finished (or completes immediately if idle).</summary>
+	Task WhenFinishedAsync(ServiceScope scope, CancellationToken cancellationToken);
 }
 
 public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory) : IPlexLibrarySyncJobService
@@ -43,6 +45,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 	{
 		public readonly SemaphoreSlim Gate = new(1, 1);
 		public long LastPublishAtUnixMs = 0;
+		public Task? RunTask;
 		public PlexLibrarySyncJobStatus Status = new(
 			ServiceType: "plex",
 			ServerId: "default",
@@ -121,7 +124,7 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 			};
 			Publish(entry, entry.Status, force: true);
 
-			_ = Task.Run(async () =>
+			entry.RunTask = Task.Run(async () =>
 			{
 				var progress = new Progress<PlexLibrarySyncProgress>(p =>
 				{
@@ -172,6 +175,16 @@ public sealed class PlexLibrarySyncJobService(IServiceScopeFactory scopeFactory)
 		finally
 		{
 			entry.Gate.Release();
+		}
+	}
+
+	public async Task WhenFinishedAsync(ServiceScope scope, CancellationToken cancellationToken)
+	{
+		var entry = _jobs.GetOrAdd(Key(scope), _ => new JobEntry());
+		var runTask = entry.RunTask;
+		if (runTask is not null)
+		{
+			await runTask.ConfigureAwait(false);
 		}
 	}
 }

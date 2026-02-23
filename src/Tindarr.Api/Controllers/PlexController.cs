@@ -202,7 +202,14 @@ public sealed class PlexController(
 	public async Task<ActionResult<IReadOnlyList<PlexServerDto>>> ListServers(CancellationToken cancellationToken)
 	{
 		var servers = await plexService.ListServersAsync(cancellationToken);
-		return Ok(servers.Select(MapServer).ToList());
+		var result = new List<PlexServerDto>(servers.Count);
+		foreach (var record in servers)
+		{
+			var scope = new ServiceScope(ServiceType.Plex, record.ServerId);
+			var count = await plexLibraryCache.CountTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+			result.Add(MapServer(record, count));
+		}
+		return Ok(result);
 	}
 
 	[Authorize(Policy = Policies.AdminOnly)]
@@ -212,7 +219,14 @@ public sealed class PlexController(
 		try
 		{
 			var servers = await plexService.RefreshServersAsync(cancellationToken);
-			return Ok(servers.Select(MapServer).ToList());
+			var result = new List<PlexServerDto>(servers.Count);
+			foreach (var record in servers)
+			{
+				var scope = new ServiceScope(ServiceType.Plex, record.ServerId);
+				var count = await plexLibraryCache.CountTmdbIdsAsync(scope, cancellationToken).ConfigureAwait(false);
+				result.Add(MapServer(record, count));
+			}
+			return Ok(result);
 		}
 		catch (InvalidOperationException ex)
 		{
@@ -516,7 +530,7 @@ public sealed class PlexController(
 			HasMore: hasMore));
 	}
 
-	private static PlexServerDto MapServer(PlexServerRecord record)
+	private static PlexServerDto MapServer(PlexServerRecord record, int movieCount)
 	{
 		return new PlexServerDto(
 			record.ServerId,
@@ -527,6 +541,7 @@ public sealed class PlexController(
 			record.Owned,
 			record.Online,
 			record.LastLibrarySyncUtc,
-			record.UpdatedAtUtc);
+			record.UpdatedAtUtc,
+			movieCount);
 	}
 }

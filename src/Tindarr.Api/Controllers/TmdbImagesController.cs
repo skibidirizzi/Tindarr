@@ -21,24 +21,30 @@ public sealed class TmdbImagesController(
 		var settings = await metadataStore.GetSettingsAsync(cancellationToken);
 		if (settings.PosterMode != TmdbPosterMode.LocalProxy || settings.ImageCacheMaxMb <= 0)
 		{
-			// Redirect to TMDB directly.
-			var normalizedBase = tmdbOptions.Value.ImageBaseUrl.TrimEnd('/');
-			var normalizedSize = (size ?? string.Empty).Trim().Trim('/');
-			var normalizedPath = (path ?? string.Empty).Trim();
-			if (!normalizedPath.StartsWith('/'))
-			{
-				normalizedPath = "/" + normalizedPath;
-			}
-			return Redirect($"{normalizedBase}/{normalizedSize}{normalizedPath}");
+			return Redirect(RedirectToTmdbUrl(size, path));
 		}
 
 		var result = await imageCache.GetOrFetchAsync(size, path, cancellationToken);
 		if (result is null)
 		{
-			return NotFound();
+			// Cache miss and on-demand fetch failed (e.g. no credentials, TMDB error).
+			// Redirect to TMDB so the client still gets the image; avoids blank/fallback in UI.
+			return Redirect(RedirectToTmdbUrl(size, path));
 		}
 
 		// NOTE: physical path is in a private cache dir, not user-provided.
 		return PhysicalFile(result.FilePath, result.ContentType);
+	}
+
+	private string RedirectToTmdbUrl(string size, string path)
+	{
+		var normalizedBase = tmdbOptions.Value.ImageBaseUrl.TrimEnd('/');
+		var normalizedSize = (size ?? string.Empty).Trim().Trim('/');
+		var normalizedPath = (path ?? string.Empty).Trim();
+		if (!normalizedPath.StartsWith('/'))
+		{
+			normalizedPath = "/" + normalizedPath;
+		}
+		return $"{normalizedBase}/{normalizedSize}{normalizedPath}";
 	}
 }

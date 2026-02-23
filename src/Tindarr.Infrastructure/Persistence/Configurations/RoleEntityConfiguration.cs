@@ -27,7 +27,8 @@ public sealed class RoleEntityConfiguration : IEntityTypeConfiguration<RoleEntit
 		builder.HasData(
 			new RoleEntity { Name = "Admin", CreatedAtUtc = seedAt },
 			new RoleEntity { Name = "Curator", CreatedAtUtc = seedAt },
-			new RoleEntity { Name = "Contributor", CreatedAtUtc = seedAt }
+			new RoleEntity { Name = "Contributor", CreatedAtUtc = seedAt },
+			new RoleEntity { Name = "PendingApproval", CreatedAtUtc = seedAt }
 		);
 	}
 }

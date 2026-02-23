@@ -35,9 +35,10 @@ public sealed class EmbyService(
 			throw new ArgumentException("BaseUrl is required.", nameof(upsert.BaseUrl));
 		}
 
-		if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out _))
+		baseUrl = EnsureHttpOrHttps(baseUrl);
+		if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
 		{
-			throw new ArgumentException("BaseUrl must be an absolute URL.", nameof(upsert.BaseUrl));
+			throw new ArgumentException("BaseUrl must use http:// or https://.", nameof(upsert.BaseUrl));
 		}
 
 		var apiKey = (upsert.ApiKey ?? string.Empty).Trim();
@@ -221,5 +222,14 @@ public sealed class EmbyService(
 			record.EmbyServerVersion,
 			record.EmbyLastLibrarySyncUtc,
 			record.UpdatedAtUtc);
+	}
+
+	/// <summary>Prepend http:// if no scheme so Uri parsing does not treat host as scheme (e.g. localhost:8096).</summary>
+	private static string EnsureHttpOrHttps(string baseUrl)
+	{
+		var t = (baseUrl ?? string.Empty).Trim();
+		if (t.Length >= 8 && (t.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || t.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
+			return t;
+		return "http://" + t;
 	}
 }

@@ -25,7 +25,8 @@ public sealed class ExceptionHandlingMiddleware(
 
 			if (!context.Response.HasStarted)
 			{
-				context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
+				var isInvalidOperation = ex is InvalidOperationException;
+				context.Response.StatusCode = isInvalidOperation ? (int)HttpStatusCode.Conflict : (int)HttpStatusCode.InternalServerError;
 				context.Response.ContentType = "application/problem+json";
 
 				IHostEnvironment? hostEnvironment =
@@ -33,16 +34,17 @@ public sealed class ExceptionHandlingMiddleware(
 					context.RequestServices.GetService<IWebHostEnvironment>();
 
 				var includeExceptionDetails = hostEnvironment is not null && hostEnvironment.IsDevelopment();
-				if (includeExceptionDetails)
+				var includeDetail = includeExceptionDetails || isInvalidOperation;
+				if (includeDetail)
 				{
 					await context.Response.WriteAsJsonAsync(new
 					{
-						title = "Unexpected error",
+						title = isInvalidOperation ? "Cannot complete restore" : "Unexpected error",
 						status = context.Response.StatusCode,
 						correlationId,
-						exceptionType = ex.GetType().FullName,
+						exceptionType = includeExceptionDetails ? ex.GetType().FullName : null,
 						detail = ex.Message,
-						stackTrace = ex.StackTrace
+						stackTrace = includeExceptionDetails ? ex.StackTrace : null
 					});
 				}
 				else

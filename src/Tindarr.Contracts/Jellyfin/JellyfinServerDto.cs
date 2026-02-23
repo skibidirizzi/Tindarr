@@ -6,4 +6,5 @@ public sealed record JellyfinServerDto(
 	string? BaseUrl,
 	string? Version,
 	DateTimeOffset? LastLibrarySyncUtc,
-	DateTimeOffset UpdatedAtUtc);
+	DateTimeOffset UpdatedAtUtc,
+	int MovieCount);

@@ -18,7 +18,7 @@ public sealed class EffectiveAdvancedSettings(
 	private readonly CleanupOptions _cleanupConfig = cleanupOptions.Value;
 	private readonly TmdbOptions _tmdbConfig = tmdbOptions.Value;
 
-	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string DateTimeDisplayMode, string TimeZoneId, string DateOrder)? _cache;
+	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string? TmdbReadAccessToken, string DateTimeDisplayMode, string TimeZoneId, string DateOrder)? _cache;
 	private readonly object _lock = new();
 	private const string DefaultDateTimeDisplayMode = "locale";
 	private const string DefaultTimeZoneId = "Local";
@@ -47,13 +47,24 @@ public sealed class EffectiveAdvancedSettings(
 		return _tmdbConfig.ApiKey ?? string.Empty;
 	}
 
+	public string GetEffectiveTmdbReadAccessToken()
+	{
+		EnsureLoaded();
+		var fromDb = _cache!.Value.TmdbReadAccessToken;
+		if (!string.IsNullOrWhiteSpace(fromDb))
+		{
+			return fromDb.Trim();
+		}
+		return _tmdbConfig.ReadAccessToken ?? string.Empty;
+	}
+
 	public bool HasEffectiveTmdbCredentials()
 	{
 		if (!string.IsNullOrWhiteSpace(GetEffectiveTmdbApiKey()))
 		{
 			return true;
 		}
-		return !string.IsNullOrWhiteSpace(_tmdbConfig.ReadAccessToken);
+		return !string.IsNullOrWhiteSpace(GetEffectiveTmdbReadAccessToken());
 	}
 
 	public string GetDateTimeDisplayMode()
@@ -74,24 +85,53 @@ public sealed class EffectiveAdvancedSettings(
 		return _cache!.Value.DateOrder;
 	}
 
+	/// <summary>Cache TTL so Workers (separate process) picks up credentials saved via API within a minute.</summary>
+	private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(60);
+
+	/// <summary>Reload delay after SignalSettingsUpdated so next use sees the put.</summary>
+	private static readonly TimeSpan ReloadDelayAfterSignal = TimeSpan.FromSeconds(1);
+
+	private DateTimeOffset _cacheExpiresAt = DateTimeOffset.MinValue;
+	private DateTimeOffset _cacheLoadedAt = DateTimeOffset.MinValue;
+
 	public void Invalidate()
 	{
 		lock (_lock)
 		{
 			_cache = null;
+			_cacheExpiresAt = DateTimeOffset.MinValue;
+			_cacheLoadedAt = DateTimeOffset.MinValue;
+		}
+	}
+
+	public void SignalSettingsUpdated(DateTimeOffset dbUpdatedAtUtc)
+	{
+		lock (_lock)
+		{
+			if (_cache is null)
+			{
+				return;
+			}
+			if (dbUpdatedAtUtc > _cacheLoadedAt)
+			{
+				_cache = null;
+				_cacheExpiresAt = DateTimeOffset.UtcNow + ReloadDelayAfterSignal;
+			}
 		}
 	}
 
 	private void EnsureLoaded()
 	{
-		if (_cache is not null)
+		var now = DateTimeOffset.UtcNow;
+		if (_cache is not null && now < _cacheExpiresAt)
 		{
 			return;
 		}
 
 		lock (_lock)
 		{
-			if (_cache is not null)
+			now = DateTimeOffset.UtcNow;
+			if (_cache is not null && now < _cacheExpiresAt)
 			{
 				return;
 			}
@@ -111,10 +151,13 @@ public sealed class EffectiveAdvancedSettings(
 			var api = MergeApiRateLimit(record);
 			var cleanup = MergeCleanup(record);
 			var tmdbKey = record?.TmdbApiKey;
+			var tmdbToken = record?.TmdbReadAccessToken;
 			var displayMode = NormalizeDateTimeDisplayMode(record?.DateTimeDisplayMode);
 			var timeZoneId = NormalizeTimeZoneId(record?.TimeZoneId);
 			var dateOrder = NormalizeDateOrder(record?.DateOrder);
-			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), displayMode, timeZoneId, dateOrder);
+			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), string.IsNullOrWhiteSpace(tmdbToken) ? null : tmdbToken!.Trim(), displayMode, timeZoneId, dateOrder);
+			_cacheExpiresAt = now + CacheTtl;
+			_cacheLoadedAt = record?.UpdatedAtUtc ?? DateTimeOffset.MinValue;
 		}
 	}
 

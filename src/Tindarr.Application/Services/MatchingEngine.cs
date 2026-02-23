@@ -31,19 +31,19 @@ public sealed class MatchingEngine : IMatchingEngine
 		}
 
 		var users = scoped.Select(x => x.UserId).Distinct().ToArray();
-		if (users.Length < 2)
-		{
-			return Array.Empty<int>();
-		}
-
 		var normalizedMinUsers = minUsers;
 		if (normalizedMinUsers > 0)
 		{
-			normalizedMinUsers = Math.Clamp(normalizedMinUsers, 2, 50);
+			normalizedMinUsers = Math.Clamp(normalizedMinUsers, 1, 50);
 		}
 		else if (minUserPercent is null)
 		{
 			normalizedMinUsers = 2;
+		}
+
+		if (users.Length < normalizedMinUsers)
+		{
+			return Array.Empty<int>();
 		}
 
 		int? requiredByCount = null;

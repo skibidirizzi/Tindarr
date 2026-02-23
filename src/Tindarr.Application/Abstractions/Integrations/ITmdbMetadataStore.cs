@@ -1,4 +1,5 @@
 using Tindarr.Contracts.Movies;
+using Tindarr.Contracts.Tmdb;
 
 namespace Tindarr.Application.Abstractions.Integrations;
 
@@ -54,6 +55,9 @@ public interface ITmdbMetadataStore
 
 	Task<IReadOnlyList<int>> ListMoviesNeedingDetailsAsync(int limit, CancellationToken cancellationToken);
 
+	/// <summary>Count of movies that still need details (for populate progress).</summary>
+	Task<int> CountMoviesNeedingDetailsAsync(CancellationToken cancellationToken);
+
 	Task UpdateMovieDetailsAsync(MovieDetailsDto details, CancellationToken cancellationToken);
 
 	Task<TmdbStoredMovie?> GetMovieAsync(int tmdbId, CancellationToken cancellationToken);
@@ -61,4 +65,7 @@ public interface ITmdbMetadataStore
 	Task<IReadOnlyList<TmdbDiscoverMovieRecord>> ListDeckCandidatesAsync(int take, CancellationToken cancellationToken);
 
 	Task<IReadOnlyList<TmdbStoredMovie>> ListMoviesAsync(int skip, int take, bool missingDetailsOnly, string? titleQuery, CancellationToken cancellationToken);
+
+	/// <summary>Merge tmdb_movies from an external SQLite file into the store. Deduplication by tmdb_id. Returns inserted, updated, skipped counts and any not-imported reasons.</summary>
+	Task<TmdbImportResultDto> ImportFromFileAsync(string sourceDbPath, CancellationToken cancellationToken);
 }

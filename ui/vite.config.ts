@@ -1,22 +1,29 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+const uiPort = process.env.VITE_UI_PORT
+  ? parseInt(process.env.VITE_UI_PORT, 10)
+  : 5173
 
 export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
-    port: 5173,
+    port: uiPort,
+    hmr: {
+      host: 'localhost',
+      clientPort: uiPort,
+      protocol: 'ws',
+    },
     proxy: {
-      // Dev convenience: let the UI call /api/v1/* on the Vite origin.
-      // The dev script sets VITE_PROXY_TARGET; default is local API.
-      "/api": {
-        target: process.env.VITE_PROXY_TARGET ?? "http://localhost:6565",
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET ?? 'http://localhost:5080',
         changeOrigin: true,
-        secure: false
-      }
-    }
+        secure: false,
+      },
+    },
   },
   preview: {
-    host: true
-  }
-});
+    host: true,
+  },
+})

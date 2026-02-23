@@ -1,12 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Tindarr.Application.Abstractions.Security;
 
 namespace Tindarr.Api.Auth;
 
 public sealed class RoomAccessRequirement : IAuthorizationRequirement;
 
-public sealed class RoomAccessAuthorizationHandler : AuthorizationHandler<RoomAccessRequirement>
+/// <summary>
+/// Allows authenticated users. Guests must have a RoomId claim; binding to the requested room
+/// is enforced in RoomsController so route values are always available there.
+/// </summary>
+public sealed class RoomAccessAuthorizationHandler(ILogger<RoomAccessAuthorizationHandler> logger) : AuthorizationHandler<RoomAccessRequirement>
 {
 	protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, RoomAccessRequirement requirement)
 	{
@@ -15,39 +19,25 @@ public sealed class RoomAccessAuthorizationHandler : AuthorizationHandler<RoomAc
 			return Task.CompletedTask;
 		}
 
-		// Non-guest users are allowed.
+		// Non-guest users are allowed for any room endpoint.
 		if (!context.User.IsInRole(Policies.GuestRole))
 		{
 			context.Succeed(requirement);
 			return Task.CompletedTask;
 		}
 
-		// Guest users must be tied to a specific room.
-		var claimRoomId = context.User.FindFirst(TindarrClaimTypes.RoomId)?.Value;
-		if (string.IsNullOrWhiteSpace(claimRoomId))
-		{
-			return Task.CompletedTask;
-		}
-
-		if (context.Resource is not HttpContext http)
-		{
-			return Task.CompletedTask;
-		}
-
-		if (!http.Request.RouteValues.TryGetValue(Policies.RoomIdRouteKey, out var routeRoomObj))
-		{
-			return Task.CompletedTask;
-		}
-
-		var routeRoomId = Convert.ToString(routeRoomObj);
-		if (string.IsNullOrWhiteSpace(routeRoomId))
-		{
-			return Task.CompletedTask;
-		}
-
-		if (string.Equals(routeRoomId, claimRoomId, StringComparison.Ordinal))
+		// Guest users must have a RoomId claim. Match against the requested room is enforced in RoomsController.
+		// Fallback if JWT middleware mapped the claim type (e.g. before MapInboundClaims = false).
+		var claimRoomId = context.User.FindFirst(TindarrClaimTypes.RoomId)?.Value
+			?? context.User.Claims.FirstOrDefault(c => string.Equals(c.Type, "roomId", StringComparison.OrdinalIgnoreCase) || c.Type.EndsWith("roomId", StringComparison.OrdinalIgnoreCase))?.Value;
+		if (!string.IsNullOrWhiteSpace(claimRoomId))
 		{
 			context.Succeed(requirement);
+		}
+		else
+		{
+			logger.LogWarning("RoomAccess denied for guest: no RoomId claim. ClaimTypes present: {Types}",
+				string.Join(", ", context.User.Claims.Select(c => c.Type)));
 		}
 
 		return Task.CompletedTask;

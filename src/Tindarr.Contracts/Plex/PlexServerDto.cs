@@ -9,4 +9,5 @@ public sealed record PlexServerDto(
 	bool? Owned,
 	bool? Online,
 	DateTimeOffset? LastLibrarySyncUtc,
-	DateTimeOffset UpdatedAtUtc);
+	DateTimeOffset UpdatedAtUtc,
+	int MovieCount);

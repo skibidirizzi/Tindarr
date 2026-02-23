@@ -23,6 +23,8 @@ public sealed class ConfigureJwtBearerOptions(
 
 		options.RequireHttpsMetadata = false;
 		options.SaveToken = true;
+		// Preserve custom claim types (e.g. tindarr:roomId for guests); default mapping can rename them and break room access.
+		options.MapInboundClaims = false;
 		options.TokenValidationParameters = new TokenValidationParameters
 		{
 			ValidateIssuer = true,

@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Integrations;
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Options;
 using Tindarr.Contracts.Admin;
@@ -21,8 +22,15 @@ public sealed class AdminDbController(
 	ITmdbImageCache imageCache,
 	IOptions<TmdbOptions> tmdbOptions,
 	IPlexLibraryCacheRepository plexLibraryCache,
-	ILibraryCacheRepository libraryCache) : ControllerBase
+	ILibraryCacheRepository libraryCache,
+	IPopulateProgressReport populateProgressReport) : ControllerBase
 {
+	[HttpGet("populate-status")]
+	public ActionResult<PopulateStatusDto> GetPopulateStatus()
+	{
+		return Ok(populateProgressReport.GetStatus());
+	}
+
 	[HttpGet("movies")]
 	public async Task<ActionResult<AdminDbMovieListResponse>> ListMovies(
 		[FromQuery] string serviceType,
