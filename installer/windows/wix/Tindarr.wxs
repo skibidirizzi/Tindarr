@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="Tindarr" Language="1033" Version="1.0.2" Manufacturer="Tindarr" UpgradeCode="B7E9E7E5-9A2C-4E8B-9F1D-3C5E7E9A2B4D">
+  <Product Id="*" Name="Tindarr" Language="1033" Version="1.2.2" Manufacturer="Tindarr" UpgradeCode="B7E9E7E5-9A2C-4E8B-9F1D-3C5E7E9A2B4D">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" Description="Tindarr Web API and UI" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Tindarr is already installed." />
