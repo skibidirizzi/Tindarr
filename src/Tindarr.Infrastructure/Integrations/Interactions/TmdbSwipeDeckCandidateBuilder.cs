@@ -49,7 +49,8 @@ public sealed class TmdbSwipeDeckCandidateBuilder(
 					PosterUrl: BuildImageUrl(settings, tmdb.ImageBaseUrl, stored.PosterPath, tmdb.PosterSize),
 					BackdropUrl: BuildImageUrl(settings, tmdb.ImageBaseUrl, stored.BackdropPath, tmdb.BackdropSize),
 					ReleaseYear: stored.ReleaseYear,
-					Rating: stored.Rating));
+					Rating: stored.Rating,
+					RuntimeMinutes: stored.RuntimeMinutes));
 				continue;
 			}
 
@@ -66,7 +67,8 @@ public sealed class TmdbSwipeDeckCandidateBuilder(
 				PosterUrl: null,
 				BackdropUrl: null,
 				ReleaseYear: null,
-				Rating: null));
+				Rating: null,
+				RuntimeMinutes: null));
 		}
 
 		if (lookupIds.Count > 0)
@@ -88,7 +90,8 @@ public sealed class TmdbSwipeDeckCandidateBuilder(
 						PosterUrl: null,
 						BackdropUrl: null,
 						ReleaseYear: null,
-						Rating: null);
+						Rating: null,
+						RuntimeMinutes: null);
 				}
 
 				if (details is null)
@@ -100,7 +103,8 @@ public sealed class TmdbSwipeDeckCandidateBuilder(
 						PosterUrl: null,
 						BackdropUrl: null,
 						ReleaseYear: null,
-						Rating: null);
+						Rating: null,
+						RuntimeMinutes: null);
 				}
 
 				try
@@ -119,7 +123,8 @@ public sealed class TmdbSwipeDeckCandidateBuilder(
 					PosterUrl: details.PosterUrl,
 					BackdropUrl: details.BackdropUrl,
 					ReleaseYear: details.ReleaseYear,
-					Rating: details.Rating);
+					Rating: details.Rating,
+					RuntimeMinutes: details.RuntimeMinutes);
 			}).ToArray();
 
 			var lookedUp = await Task.WhenAll(lookupTasks).ConfigureAwait(false);

@@ -1,133 +1,63 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!--
-  WiX Toolset v4 MSI for Tindarr.
-  Features: port configuration, optional Windows Firewall rule, optional Windows Service.
-  Build: see build/scripts/build-installer.ps1
-  UI: Welcome -> Install Dir -> Server Options (port, firewall, service) -> Verify -> Install
-  Command line: msiexec /i Tindarr.msi APIPORT=5000 CONFIGUREFIREWALL=1 INSTALLSERVICE=1
--->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Tindarr" Language="1033" Version="1.0.2" Manufacturer="Tindarr" UpgradeCode="B7E9E7E5-9A2C-4E8B-9F1D-3C5E7E9A2B4D">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" Description="Tindarr Web API and UI" />
 
-  <Package
-    Name="Tindarr"
-    Manufacturer="Tindarr"
-    Version="1.0.0"
-    UpgradeCode="{B4D70D8A-6D1B-4A2F-A91D-7A3B8A3F3F1B}"
-    InstallerVersion="500"
-    Compressed="yes"
-    Scope="perMachine"
-    ShortNames="no">
-
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
-
-    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
-
-    <Property Id="INSTALLSERVICE" Value="0" Secure="yes" />
-    <Property Id="APIPORT" Value="5000" Secure="yes" />
-    <Property Id="CONFIGUREFIREWALL" Value="0" Secure="yes" />
-
-    <!-- Pass UI choices to execute sequence (required for per-machine elevated install). -->
-    <SetProperty Id="SecureCustomProperties" Value="[SecureCustomProperties];INSTALLSERVICE;APIPORT;CONFIGUREFIREWALL" Before="ExecuteAction" Sequence="ui" />
-    <!-- Copy UI property at start of execute so component conditions see it; default to 0 when not passed. -->
-    <SetProperty Id="INSTALL_SERVICE" Value="[INSTALLSERVICE]" Action="SetInstallServiceFromUI" Before="CostInitialize" Sequence="execute" />
-    <SetProperty Id="INSTALL_SERVICE" Value="0" Action="SetInstallServiceDefault" After="SetInstallServiceFromUI" Sequence="execute" Condition="INSTALLSERVICE = &quot;&quot;" />
-
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Tindarr is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- Use WixUI_InstallDir for Welcome, InstallDir, VerifyReady, Progress. WixUILicenseRtf is set for compliance; use WixUI_Mondo to show license step. -->
-    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    <Icon Id="ProductIcon" SourceFile="..\..\..\artifacts\tindarr.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
 
-    <!-- Our custom dialogs: insert Server Options after Install Dir. -->
-    <UIRef Id="TindarrServerUI" />
+    <!-- Port for merged UI/API (saved to port.txt). API reads from ProgramData\Tindarr\port.txt. -->
+    <Property Id="PORT_PROPERTY" Value="6565" />
+    <!-- Checkboxes: 1 = checked. Run batch files elevated when checked. -->
+    <Property Id="INSTALL_SERVICE" Value="0" />
+    <Property Id="OPEN_PORTS" Value="0" />
 
-    <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Tindarr" />
-    </StandardDirectory>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLDIR" Name="Tindarr" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder" />
+    </Directory>
 
-    <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="AppProgramsFolder" Name="Tindarr" />
-    </StandardDirectory>
-
-    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.PublishDir)\**\*">
-        <Exclude Files="$(var.PublishDir)\Tindarr.Api.exe" />
-        <Exclude Files="$(var.PublishDir)\**\*.pdb" />
-        <Exclude Files="$(var.PublishDir)\**\*.xml" />
-      </Files>
-    </ComponentGroup>
-
-    <Component Id="ApiExe_AsApp" Directory="INSTALLFOLDER" Guid="{C6B1E2A0-7F6A-4C10-9D5C-6C2F1B7A0A11}" Condition="INSTALL_SERVICE &lt;&gt; &quot;1&quot;">
-      <File Id="TindarrApiExe_App" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
-      <Shortcut Id="StartMenu_Tindarr" Directory="AppProgramsFolder" Name="Tindarr" Description="Start Tindarr"
-                WorkingDirectory="INSTALLFOLDER" Advertise="no" Target="[INSTALLFOLDER]Tindarr.Api.exe" />
-      <RemoveFolder Id="Remove_AppProgramsFolder" Directory="AppProgramsFolder" On="uninstall" />
-      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
-    </Component>
-
-    <Component Id="ApiExe_AsService" Directory="INSTALLFOLDER" Guid="{7F9E6B9B-EDB2-4A37-9F2C-9ED6E0C27B34}" Condition="INSTALL_SERVICE = &quot;1&quot;">
-      <File Id="TindarrApiExe_Service" Source="$(var.PublishDir)\Tindarr.Api.exe" ShortName="TINDARRA.EXE" KeyPath="yes" />
-      <ServiceInstall Id="TindarrApiServiceInstall" Name="Tindarr.Api" DisplayName="Tindarr API" Description="Tindarr API host"
-                     Type="ownProcess" Start="auto" ErrorControl="normal" Vital="yes" Account="LocalSystem" Interactive="no" />
-      <ServiceControl Id="TindarrApiServiceControl" Name="Tindarr.Api" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-      <Shortcut Id="StartMenu_Tindarr_ServiceConsole" Directory="AppProgramsFolder" Name="Tindarr (Console)"
-                Description="Run Tindarr in console mode" WorkingDirectory="INSTALLFOLDER" Advertise="no"
-                Target="[INSTALLFOLDER]Tindarr.Api.exe" />
-      <RemoveFolder Id="Remove_AppProgramsFolder_Service" Directory="AppProgramsFolder" On="uninstall" />
-      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Installed" Type="integer" Value="1" KeyPath="no" />
-    </Component>
-
-    <Component Id="TindarrPortConfig" Directory="INSTALLFOLDER" Guid="{B3B6E3B1-8E7B-5D21-A6E1-6F7C46C5E7F2}">
-      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="Port" Type="string" Value="[APIPORT]" KeyPath="yes" />
-    </Component>
-
-    <Component Id="TindarrFirewallFlag" Directory="INSTALLFOLDER" Guid="{D5D8E4D2-9F9D-7F43-C8F3-819E68E7F904}" Condition="CONFIGUREFIREWALL = &quot;1&quot;">
-      <RegistryValue Root="HKLM" Key="Software\Tindarr" Name="ConfigureFirewall" Type="integer" Value="1" KeyPath="yes" />
-    </Component>
-
-    <Component Id="ServiceEnv" Directory="INSTALLFOLDER" Guid="{A2A5E8E5-4A45-4C6A-A5E0-5F6B35B4D6F1}" Condition="INSTALL_SERVICE = &quot;1&quot;">
-      <RegistryValue Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\Tindarr.Api" Name="Environment" Type="multiString" KeyPath="yes">
-        <MultiStringValue Value="ASPNETCORE_URLS=http://0.0.0.0:[APIPORT]" />
-      </RegistryValue>
-    </Component>
-
-    <Feature Id="MainFeature" Title="Tindarr" Level="1">
-      <ComponentGroupRef Id="AppFiles" />
-      <ComponentRef Id="ApiExe_AsApp" />
-      <ComponentRef Id="ApiExe_AsService" />
-      <ComponentRef Id="TindarrPortConfig" />
-      <ComponentRef Id="TindarrFirewallFlag" />
-      <ComponentRef Id="ServiceEnv" />
+    <Feature Id="ProductFeature" Title="Tindarr" Level="1" ConfigurableDirectory="INSTALLDIR">
+      <ComponentGroupRef Id="ApiFiles" />
+      <ComponentRef Id="BatchFiles" />
     </Feature>
 
-  </Package>
+    <!-- Batch files (installer/*.bat) installed to INSTALLDIR -->
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="BatchFiles" Guid="A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D">
+        <File Id="AddFirewallRulesBat" Source="..\..\add-firewall-rules.bat" KeyPath="yes" />
+        <File Id="InstallServiceBat" Source="..\..\install-service.bat" />
+        <File Id="RemoveFirewallRulesBat" Source="..\..\remove-firewall-rules.bat" />
+        <File Id="UninstallServiceBat" Source="..\..\uninstall-service.bat" />
+      </Component>
+    </DirectoryRef>
 
-  <!-- Custom UI: Server Options (port, firewall, service). Inserted after InstallDirDlg. -->
-  <Fragment>
-    <UI Id="TindarrServerUI">
-      <Dialog Id="ServerOptionsDlg" Width="370" Height="270" Title="[ProductName] Setup">
-        <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="Server options" />
-        <Control Id="Description" Type="Text" X="15" Y="24" Width="340" Height="30" Transparent="yes" NoPrefix="yes"
-                 Text="Configure the HTTP port and how Tindarr will run. You can change these later in the app or via registry." />
-        <Control Id="PortLabel" Type="Text" X="15" Y="62" Width="340" Height="12" Text="HTTP port (1-65535):" />
-        <Control Id="PortEdit" Type="Edit" X="15" Y="76" Width="80" Height="18" Property="APIPORT" />
-        <Control Id="FirewallCheckbox" Type="CheckBox" X="15" Y="102" Width="340" Height="17" Property="CONFIGUREFIREWALL" CheckBoxValue="1"
-                 Text="Add Windows Firewall rule to allow inbound connections on this port" />
-        <Control Id="ServiceCheckbox" Type="CheckBox" X="15" Y="122" Width="340" Height="17" Property="INSTALLSERVICE" CheckBoxValue="1"
-                 Text="Install and run as a Windows Service (starts automatically)" />
-        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back">
-          <Publish Event="NewDialog" Value="InstallDirDlg" />
-        </Control>
-        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">
-          <Publish Event="NewDialog" Value="VerifyReadyDlg" />
-        </Control>
-        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
-          <Publish Event="SpawnDialog" Value="CancelDlg" />
-        </Control>
-      </Dialog>
+    <!-- ApiFiles ComponentGroup is supplied by Heat harvest of publish output (see build script). -->
 
-      <!-- After InstallDirDlg Next: go to Server Options (Order 5 so we run after SetTargetPath Order 3 and default VerifyReady Order 4). -->
-      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ServerOptionsDlg" Order="5" />
-    </UI>
-  </Fragment>
+    <!-- Post-install: write port to port.txt (install dir + ProgramData\Tindarr), optionally run batch files elevated. -->
+    <Binary Id="PostInstallVbs" SourceFile="TindarrPostInstall.vbs" />
+    <CustomAction Id="SetPostInstallData" Property="PostInstall" Value="[INSTALLDIR]|[PORT_PROPERTY]|[INSTALL_SERVICE]|[OPEN_PORTS]|[CommonAppDataFolder]" />
+    <CustomAction Id="PostInstall" BinaryKey="PostInstallVbs" VBScriptCall="PostInstall" Execute="deferred" Impersonate="no" Return="check" />
+
+    <!-- Uninstall: stop service, remove service, remove firewall rules (runs before RemoveFiles). -->
+    <CustomAction Id="SetUninstallData" Property="PostUninstall" Value="[INSTALLDIR]" />
+    <CustomAction Id="PostUninstall" BinaryKey="PostInstallVbs" VBScriptCall="PostUninstall" Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <!-- SetPostInstallData must run before deferred phase so PostInstall receives CustomActionData. -->
+    <InstallExecuteSequence>
+      <Custom Action="SetPostInstallData" After="CostFinalize">NOT Installed</Custom>
+      <Custom Action="PostInstall" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="SetUninstallData" Before="RemoveFiles">REMOVE~="ALL"</Custom>
+      <Custom Action="PostUninstall" After="SetUninstallData">REMOVE~="ALL"</Custom>
+    </InstallExecuteSequence>
+
+    <UIRef Id="WixUI_Tindarr" />
+  </Product>
 </Wix>

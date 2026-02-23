@@ -10,6 +10,9 @@ public interface IRadarrClient
 
 	Task<IReadOnlyList<RadarrLibraryMovie>> GetLibraryAsync(RadarrConnection connection, CancellationToken cancellationToken);
 
+	/// <summary>Search movies by term (title). Uses Radarr API movie/lookup?term=.</summary>
+	Task<IReadOnlyList<RadarrLookupMovie>> LookupByTermAsync(RadarrConnection connection, string term, CancellationToken cancellationToken);
+
 	Task<RadarrLookupMovie?> LookupMovieAsync(RadarrConnection connection, int tmdbId, CancellationToken cancellationToken);
 
 	Task<int?> EnsureTagAsync(RadarrConnection connection, string tagLabel, CancellationToken cancellationToken);

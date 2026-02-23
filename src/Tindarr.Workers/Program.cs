@@ -205,7 +205,10 @@ builder.Services.AddHttpClient<ITmdbClient, TmdbClient>((sp, client) =>
 .AddHttpMessageHandler<TmdbRateLimitingHandler>()
 .AddHttpMessageHandler(() => new TmdbRetryHandler(maxRetries: 3));
 
+builder.Services.AddScoped<Tindarr.Application.Abstractions.Ops.ITmdbDiscoverPrewarmRunner, TmdbDiscoverPrewarmRunner>();
+
 // Core-only worker stubs (periodic background services).
+builder.Services.AddHostedService<AdvancedSettingsRefreshWorker>();
 builder.Services.AddHostedService<OutboxWorker>();
 builder.Services.AddHostedService<TmdbMetadataWorker>();
 builder.Services.AddHostedService<TmdbDiscoverPrewarmWorker>();

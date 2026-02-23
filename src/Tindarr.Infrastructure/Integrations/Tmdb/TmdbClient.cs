@@ -357,6 +357,86 @@ public sealed class TmdbClient(
 		}
 	}
 
+	public async Task<IReadOnlyList<TmdbDiscoverMovieRecord>> SearchMoviesAsync(string query, int page, CancellationToken cancellationToken)
+	{
+		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
+		{
+			return [];
+		}
+
+		var q = (query ?? string.Empty).Trim();
+		if (q.Length == 0)
+		{
+			return [];
+		}
+
+		page = Math.Clamp(page, 1, 500);
+		var uri = AppendCredentials("search/movie", new Dictionary<string, string?>(StringComparer.Ordinal)
+		{
+			["query"] = q,
+			["page"] = page.ToString(System.Globalization.CultureInfo.InvariantCulture),
+			["include_adult"] = "false"
+		});
+
+		using var opCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		opCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_tmdb.OperationTimeoutSeconds, 1, 120)));
+		var opToken = opCts.Token;
+
+		HttpResponseMessage response;
+		try
+		{
+			response = await httpClient.GetAsync(uri, opToken).ConfigureAwait(false);
+		}
+		catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			logger.LogWarning("TMDB search movies timed out. Query={Query}", q);
+			return [];
+		}
+
+		using (response)
+		{
+			if (!response.IsSuccessStatusCode)
+			{
+				var errorBody = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+				if (errorBody.Length > 400) { errorBody = errorBody[..400]; }
+				logger.LogWarning("TMDB search movies failed. Status={Status} Query={Query} Body={Body}", (int)response.StatusCode, q, errorBody);
+				return [];
+			}
+
+			var body = await response.Content.ReadAsStringAsync(opToken).ConfigureAwait(false);
+			TmdbDiscoverResponse? parsed;
+			try
+			{
+				parsed = JsonSerializer.Deserialize<TmdbDiscoverResponse>(body, Json);
+			}
+			catch (JsonException ex)
+			{
+				logger.LogWarning(ex, "TMDB search movies returned invalid JSON. Query={Query}", q);
+				return [];
+			}
+
+			if (parsed?.Results is null || parsed.Results.Count == 0)
+			{
+				return [];
+			}
+
+			return parsed.Results
+				.Where(m => m.Id > 0)
+				.Select(m => new TmdbDiscoverMovieRecord(
+					Id: m.Id,
+					Title: m.Title,
+					OriginalTitle: m.OriginalTitle,
+					Overview: m.Overview,
+					PosterPath: m.PosterPath,
+					BackdropPath: m.BackdropPath,
+					ReleaseDate: m.ReleaseDate,
+					OriginalLanguage: m.OriginalLanguage,
+					VoteAverage: m.VoteAverage,
+					GenreIds: m.GenreIds))
+				.ToList();
+		}
+	}
+
 	private static string? ExtractUsCertification(TmdbReleaseDatesContainer? releaseDates)
 	{
 		var us = releaseDates?.Results?
@@ -535,7 +615,8 @@ public sealed class TmdbClient(
 			PosterUrl: BuildImageUrl(movie.PosterPath, _tmdb.PosterSize),
 			BackdropUrl: BuildImageUrl(movie.BackdropPath, _tmdb.BackdropSize),
 			ReleaseYear: TryParseYear(movie.ReleaseDate),
-			Rating: movie.VoteAverage);
+			Rating: movie.VoteAverage,
+			RuntimeMinutes: null);
 	}
 
 	private string? BuildImageUrl(string? path, string size)

@@ -10,6 +10,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 	{
 		var entity = await db.AdvancedSettings
 			.AsNoTracking()
+			.OrderBy(e => e.Id)
 			.FirstOrDefaultAsync(cancellationToken);
 
 		return entity is null ? null : Map(entity);
@@ -18,6 +19,7 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 	public async Task<AdvancedSettingsRecord> UpsertAsync(AdvancedSettingsUpsert upsert, CancellationToken cancellationToken)
 	{
 		var entity = await db.AdvancedSettings
+			.OrderBy(e => e.Id)
 			.FirstOrDefaultAsync(cancellationToken);
 
 		var now = DateTimeOffset.UtcNow;

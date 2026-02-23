@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, type PanInfo, useMotionValue, useTransform } from 'framer-motion'
 import { useAuth } from '../contexts/AuthContext'
 import { apiClient, type SwipeCardDto } from '../lib/api'
@@ -40,12 +40,21 @@ interface RoomSwipeDeckProps {
   serverId: string
   /** When set, Cast in movie details is only shown for these tmdbIds (matched movies). */
   matchedTmdbIds?: number[] | null
+  /** When false, Cast is hidden in the movie details modal (e.g. for guests). Default true. */
+  canCast?: boolean
+  /** When set (e.g. from Room), cast devices are shared and only fetched once per room session. */
+  castDevices?: { id: string; name: string }[]
+  castDevicesLoading?: boolean
+  ensureCastDevices?: () => void | Promise<void>
 }
 
 // INV-0013: room mode disables superlikes (not compatible with shared selection rules).
 const ROOM_SUPERLIKE_ENABLED = false
 
-export default function RoomSwipeDeck({ roomId, serviceType, serverId, matchedTmdbIds }: RoomSwipeDeckProps) {
+/** Max pointer movement (px) to still count as a tap to open details; beyond this we treat as drag. */
+const TAP_MOVEMENT_LIMIT_PX = 12
+
+export default function RoomSwipeDeck({ roomId, serviceType, serverId, matchedTmdbIds, canCast = true, castDevices, castDevicesLoading, ensureCastDevices }: RoomSwipeDeckProps) {
   const { user } = useAuth()
   const [cards, setCards] = useState<Card[]>([])
   const [exitX, setExitX] = useState(0)
@@ -70,8 +79,11 @@ export default function RoomSwipeDeck({ roomId, serviceType, serverId, matchedTm
         })
         setError(null)
       } catch (err) {
+        const raw = err instanceof Error ? err.message : 'Failed to fetch movies'
         setError(
-          err instanceof Error ? err.message : 'Failed to fetch movies'
+          /429|502|503|504|too many|rate limit|timeout/i.test(raw)
+            ? "We're a bit busy — give it a moment and try again."
+            : raw
         )
       } finally {
         setLoading(false)
@@ -164,10 +176,13 @@ export default function RoomSwipeDeck({ roomId, serviceType, serverId, matchedTm
   }
 
   if (error && cards.length === 0) {
+    const isRateLimit = error === "We're a bit busy — give it a moment and try again."
     return (
       <div className="flex h-[600px] items-center justify-center">
         <div className="text-center">
-          <p className="text-xl text-red-400">Error: {error}</p>
+          <p className={`text-xl ${isRateLimit ? 'text-amber-400' : 'text-red-400'}`}>
+            {isRateLimit ? error : `Error: ${error}`}
+          </p>
           <button
             onClick={() => { setError(null); fetchMoreCards(false) }}
             className="mt-4 rounded-full bg-gradient-to-r from-pink-500 to-rose-500 px-6 py-3 font-semibold text-white shadow-lg transition-transform hover:scale-105"
@@ -218,6 +233,10 @@ export default function RoomSwipeDeck({ roomId, serviceType, serverId, matchedTm
         tmdbId={detailsModalTmdbId}
         scope={{ serviceType, serverId }}
         matchedTmdbIds={matchedTmdbIds}
+        canCast={canCast}
+        castDevicesFromParent={castDevices}
+        castDevicesLoadingFromParent={castDevicesLoading}
+        ensureCastDevicesLoaded={ensureCastDevices}
         onClose={() => setDetailsModalTmdbId(null)}
       />
       <div className="mt-8 flex justify-center items-center gap-1">
@@ -284,6 +303,24 @@ function RoomCard({
   const superlikeOpacity = useTransform(y, [0, -150], [0, 1])
   const fallbackClass =
     FALLBACK_GRADIENTS[index % FALLBACK_GRADIENTS.length] ?? 'from-slate-500 to-slate-700'
+  const exceededTapMovement = useRef(false)
+
+  const handleDragStart = useCallback(() => {
+    exceededTapMovement.current = false
+  }, [])
+
+  const handleDrag = useCallback((_e: MouseEvent | TouchEvent | PointerEvent, info: PanInfo) => {
+    if (
+      Math.abs(info.offset.x) > TAP_MOVEMENT_LIMIT_PX ||
+      Math.abs(info.offset.y) > TAP_MOVEMENT_LIMIT_PX
+    ) {
+      exceededTapMovement.current = true
+    }
+  }, [])
+
+  const handleTap = useCallback(() => {
+    if (active && !exceededTapMovement.current) onOpenDetails?.()
+  }, [active, onOpenDetails])
 
   return (
     <motion.div
@@ -308,8 +345,10 @@ function RoomCard({
       }
       drag={active}
       dragConstraints={{ left: 0, right: 0, top: -400, bottom: 0 }}
+      onDragStart={active ? handleDragStart : undefined}
+      onDrag={active ? handleDrag : undefined}
       onDragEnd={active ? onDragEnd : undefined}
-      onTap={() => active && onOpenDetails?.()}
+      onTap={handleTap}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
     >
       {!card.backdropUrl && <div className={`absolute inset-0 bg-gradient-to-br ${fallbackClass}`} />}

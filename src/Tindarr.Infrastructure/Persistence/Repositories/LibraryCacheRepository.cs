@@ -8,6 +8,17 @@ namespace Tindarr.Infrastructure.Persistence.Repositories;
 
 public sealed class LibraryCacheRepository(TindarrDbContext db) : ILibraryCacheRepository
 {
+	public async Task<IReadOnlyCollection<int>> GetTmdbIdsForServiceTypeAsync(ServiceType serviceType, CancellationToken cancellationToken)
+	{
+		var ids = await db.LibraryCache
+			.AsNoTracking()
+			.Where(x => x.ServiceType == serviceType)
+			.Select(x => x.TmdbId)
+			.Distinct()
+			.ToListAsync(cancellationToken);
+		return ids;
+	}
+
 	public async Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
 	{
 		var ids = await db.LibraryCache

@@ -7,4 +7,5 @@ public sealed record SwipeCard(
     string? PosterUrl,
     string? BackdropUrl,
     int? ReleaseYear,
-    double? Rating);
+    double? Rating,
+    int? RuntimeMinutes);

@@ -24,7 +24,7 @@
     <PackageReference Include="QRCoder" Version="1.6.0" />
   </ItemGroup>
 
-	<Target Name="CopySpaDistToWwwroot" AfterTargets="Build">
+	<Target Name="CopySpaDistToWwwroot" BeforeTargets="Build">
 		<ItemGroup Condition="Exists('$(SpaDistDir)')">
 			<SpaDistFiles Include="$(SpaDistDir)**\*.*" />
 		</ItemGroup>

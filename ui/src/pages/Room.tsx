@@ -11,6 +11,8 @@ import {
   type MovieDetailsDto,
 } from '../lib/api'
 import RoomSwipeDeck from '../components/RoomSwipeDeck'
+import MovieDetailsModal from '../components/MovieDetailsModal'
+import TmdbAttribution from '../components/TmdbAttribution'
 
 const ROOM_POLL_MS = 3000
 const MATCHES_POLL_MS = 5000
@@ -31,11 +33,14 @@ export default function Room() {
   const [closing, setClosing] = useState(false)
   const [castModalOpen, setCastModalOpen] = useState(false)
   const [castDevices, setCastDevices] = useState<{ id: string; name: string }[]>([])
+  const [castDevicesLoading, setCastDevicesLoading] = useState(false)
   const [castVariant, setCastVariant] = useState<'lan' | 'wan'>('lan')
   const [castingTo, setCastingTo] = useState<string | null>(null)
   const [lastCastDeviceId, setLastCastDeviceId] = useState<string | null>(null)
   const [updatingCast, setUpdatingCast] = useState(false)
+  const [matchModalTmdbId, setMatchModalTmdbId] = useState<number | null>(null)
   const joinedOnce = useRef(false)
+  const castDevicesFetchedRef = useRef(false)
 
   const effectiveRoomId = roomId ?? ''
 
@@ -145,16 +150,25 @@ export default function Room() {
     }
   }
 
-  const openCastModal = async () => {
-    setCastModalOpen(true)
-    setCastingTo(null)
-    setUpdatingCast(false)
+  const ensureCastDevices = useCallback(async () => {
+    if (castDevicesFetchedRef.current) return
+    castDevicesFetchedRef.current = true
+    setCastDevicesLoading(true)
     try {
       const list = await apiClient.listCastDevices()
       setCastDevices(list.map((d) => ({ id: d.id, name: d.name })))
     } catch {
       setCastDevices([])
+    } finally {
+      setCastDevicesLoading(false)
     }
+  }, [])
+
+  const openCastModal = () => {
+    setCastModalOpen(true)
+    setCastingTo(null)
+    setUpdatingCast(false)
+    ensureCastDevices()
   }
 
   const handleCastToDevice = async (deviceId: string) => {
@@ -365,6 +379,10 @@ export default function Room() {
               serviceType={room.serviceType}
               serverId={room.serverId}
               matchedTmdbIds={getMatchIds(matches ?? null)}
+              canCast={!user?.isGuest}
+              castDevices={castDevices}
+              castDevicesLoading={castDevicesLoading}
+              ensureCastDevices={ensureCastDevices}
             />
             <div className="mt-8">
               <h2 className="mb-4 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-xl font-bold text-transparent">
@@ -377,7 +395,11 @@ export default function Room() {
                     return (
                       <li
                         key={tmdbId}
-                        className="flex items-center gap-3 rounded-xl border border-pink-500/20 bg-slate-800/80 p-3"
+                        role="button"
+                        tabIndex={0}
+                        className="flex cursor-pointer items-center gap-3 rounded-xl border border-pink-500/20 bg-slate-800/80 p-3 transition hover:border-pink-500/40 hover:bg-slate-800"
+                        onClick={() => setMatchModalTmdbId(tmdbId)}
+                        onKeyDown={(e) => e.key === 'Enter' && setMatchModalTmdbId(tmdbId)}
                       >
                         {details?.posterUrl ? (
                           <img
@@ -404,8 +426,23 @@ export default function Room() {
                 <p className="text-gray-400">No matches yet. Keep swiping!</p>
               )}
             </div>
+            <MovieDetailsModal
+              movie={null}
+              tmdbId={matchModalTmdbId}
+              scope={room ? { serviceType: room.serviceType, serverId: room.serverId } : null}
+              matchedTmdbIds={getMatchIds(matches ?? null)}
+              canCast={!user?.isGuest}
+              castDevicesFromParent={castDevices}
+              castDevicesLoadingFromParent={castDevicesLoading}
+              ensureCastDevicesLoaded={ensureCastDevices}
+              onClose={() => setMatchModalTmdbId(null)}
+            />
           </>
         )}
+
+        <footer className="mt-8 flex justify-center">
+          <TmdbAttribution compact />
+        </footer>
       </div>
 
       {castModalOpen && (
@@ -445,7 +482,9 @@ export default function Room() {
               </p>
             )}
             <ul className="mb-4 max-h-48 space-y-2 overflow-y-auto">
-              {castDevices.length === 0 ? (
+              {castDevicesLoading ? (
+                <li className="text-gray-400 text-sm">Searching for devices…</li>
+              ) : castDevices.length === 0 ? (
                 <li className="text-gray-400 text-sm">No devices found.</li>
               ) : (
                 castDevices.map((d) => (

@@ -12,4 +12,5 @@ public sealed record TmdbDiscoverMovieRecord(
 	[property: JsonPropertyName("release_date")] string? ReleaseDate,
 	[property: JsonPropertyName("original_language")] string? OriginalLanguage,
 	[property: JsonPropertyName("vote_average")] double? VoteAverage,
-	[property: JsonPropertyName("genre_ids")] IReadOnlyList<int>? GenreIds);
+	[property: JsonPropertyName("genre_ids")] IReadOnlyList<int>? GenreIds,
+	int? RuntimeMinutes = null);

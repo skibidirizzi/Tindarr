@@ -238,6 +238,8 @@ try {
 	if ($apiProc) { Write-Host "API PID: $($apiProc.Id)  (listen: $listenUrl, workers in-process)" }
 	if ($lanBaseUrl) { Write-Host "LAN Base: $lanBaseUrl" }
 	if ($uiProc)  { Write-Host "UI  PID: $($uiProc.Id)  (http://localhost:$UiPort)" }
+	# Remote dev: QR/join URL uses Join Address (Admin Console). To open on the UI dev server from a remote device,
+	# set Join Address (LAN) to your-machine-ip:$UiPort (e.g. 192.168.x.x:6565), or manually change the URL port to $UiPort after scanning.
 	Write-Host "Press Ctrl+C to stop."
 
 	# Wait until either process exits (or Ctrl+C stops the script)

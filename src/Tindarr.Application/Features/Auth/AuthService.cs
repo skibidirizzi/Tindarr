@@ -1,3 +1,4 @@
+using Tindarr.Application.Abstractions.Ops;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Interfaces.Auth;
@@ -13,6 +14,7 @@ public sealed class AuthService(
 	ITokenService tokenService,
 	IRoomService roomService,
 	IRoomLifetimeProvider roomLifetimeProvider,
+	IEffectiveRegistrationOptions effectiveRegistration,
 	Microsoft.Extensions.Options.IOptions<RegistrationOptions> registrationOptions) : IAuthService
 {
 	private readonly RegistrationOptions registration = registrationOptions.Value;
@@ -56,7 +58,7 @@ public sealed class AuthService(
 
 	public async Task<AuthSession> RegisterAsync(string userId, string displayName, string password, CancellationToken cancellationToken)
 	{
-		if (!registration.AllowOpenRegistration)
+		if (!effectiveRegistration.AllowOpenRegistration)
 		{
 			throw new InvalidOperationException("Registration is disabled.");
 		}
@@ -78,14 +80,28 @@ public sealed class AuthService(
 		var hashed = passwordHasher.Hash(password, registration.PasswordHashIterations);
 		await users.SetPasswordAsync(normalizedUserId, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		var rolesToSet = new List<string> { registration.DefaultRole };
+		var rolesToSet = new List<string>();
 		if (isFirstUser || string.Equals(normalizedUserId, "admin", StringComparison.OrdinalIgnoreCase))
 		{
+			rolesToSet.Add(effectiveRegistration.DefaultRole);
 			rolesToSet.Add("Admin");
+		}
+		else if (effectiveRegistration.RequireAdminApprovalForNewUsers)
+		{
+			rolesToSet.Add("PendingApproval");
+		}
+		else
+		{
+			rolesToSet.Add(effectiveRegistration.DefaultRole);
 		}
 
 		await users.SetRolesAsync(normalizedUserId, rolesToSet, cancellationToken);
 		var roles = await users.GetRolesAsync(normalizedUserId, cancellationToken);
+
+		if (effectiveRegistration.RequireAdminApprovalForNewUsers && rolesToSet.Contains("PendingApproval", StringComparer.OrdinalIgnoreCase))
+		{
+			return new AuthSession(string.Empty, DateTimeOffset.MinValue, normalizedUserId, normalizedDisplayName, roles.ToList(), PendingApproval: true);
+		}
 
 		var token = tokenService.IssueAccessToken(normalizedUserId, roles.ToList());
 		return new AuthSession(token.AccessToken, token.ExpiresAtUtc, normalizedUserId, normalizedDisplayName, roles.ToList());
@@ -98,23 +114,28 @@ public sealed class AuthService(
 		var user = await users.FindByIdAsync(normalizedUserId, cancellationToken);
 		if (user is null)
 		{
-			throw new InvalidOperationException("Invalid credentials.");
+			throw new InvalidOperationException("Account doesn't exist");
 		}
 
 		var creds = await users.GetPasswordCredentialAsync(normalizedUserId, cancellationToken);
-		if (creds is null)
+		var passwordValid = creds is not null && passwordHasher.Verify(password, creds.PasswordHash, creds.PasswordSalt, creds.PasswordIterations);
+		if (!passwordValid)
 		{
-			throw new InvalidOperationException("Invalid credentials.");
-		}
-
-		if (!passwordHasher.Verify(password, creds.PasswordHash, creds.PasswordSalt, creds.PasswordIterations))
-		{
-			throw new InvalidOperationException("Invalid credentials.");
+			var rolesForMessage = await users.GetRolesAsync(normalizedUserId, cancellationToken);
+			var isAdmin = rolesForMessage.Contains("Admin", StringComparer.OrdinalIgnoreCase);
+			throw new InvalidOperationException(isAdmin
+				? "Incorrect password"
+				: "Incorrect password, ask an admin to reset");
 		}
 
 		var roles = await users.GetRolesAsync(normalizedUserId, cancellationToken);
-		var token = tokenService.IssueAccessToken(normalizedUserId, roles.ToList());
+		var onlyPending = roles.Count == 1 && roles.Contains("PendingApproval", StringComparer.OrdinalIgnoreCase);
+		if (onlyPending)
+		{
+			throw new InvalidOperationException("Account pending admin approval");
+		}
 
+		var token = tokenService.IssueAccessToken(normalizedUserId, roles.ToList());
 		return new AuthSession(token.AccessToken, token.ExpiresAtUtc, user.Id, user.DisplayName, roles.ToList());
 	}
 
@@ -165,6 +186,11 @@ public sealed class AuthService(
 			throw new ArgumentException("UserId must not contain whitespace.");
 		}
 
+		if (v.Any(c => !char.IsLetterOrDigit(c) && c != '-' && c != '_'))
+		{
+			throw new ArgumentException("UserId must contain only letters, digits, hyphens, and underscores.");
+		}
+
 		return v.ToLowerInvariant();
 	}
 
@@ -185,7 +211,8 @@ public sealed record AuthSession(
 	DateTimeOffset ExpiresAtUtc,
 	string UserId,
 	string DisplayName,
-	IReadOnlyList<string> Roles);
+	IReadOnlyList<string> Roles,
+	bool PendingApproval = false);
 
 public sealed record AuthUserInfo(string UserId, string DisplayName, IReadOnlyList<string> Roles);
 

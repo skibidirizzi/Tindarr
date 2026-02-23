@@ -46,4 +46,10 @@ public interface IEffectiveAdvancedSettings
 	/// Call after updating advanced settings so next get uses fresh values.
 	/// </summary>
 	void Invalidate();
+
+	/// <summary>
+	/// Called by Workers when DB advanced settings have a newer UpdatedAtUtc than the current cache.
+	/// Expires cache so it reloads after a short delay (e.g. 1 second) to pick up the put.
+	/// </summary>
+	void SignalSettingsUpdated(DateTimeOffset dbUpdatedAtUtc);
 }

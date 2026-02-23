@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiClient, type MovieDetailsDto } from '../lib/api'
 
 export interface MovieDetailsModalScope {
@@ -15,6 +15,12 @@ export interface MovieDetailsModalProps {
   scope?: MovieDetailsModalScope | null
   /** When set (e.g. in Rooms), Cast is only shown if the movie's tmdbId is in this list. */
   matchedTmdbIds?: number[] | null
+  /** When false, Cast section is hidden (e.g. for room guests). Default true. */
+  canCast?: boolean
+  /** When set (e.g. from Room), use shared cast devices and do not fetch; fetch is triggered once via ensureCastDevicesLoaded. */
+  castDevicesFromParent?: { id: string; name: string }[]
+  castDevicesLoadingFromParent?: boolean
+  ensureCastDevicesLoaded?: () => void | Promise<void>
   onClose: () => void
 }
 
@@ -81,21 +87,31 @@ export default function MovieDetailsModal({
   tmdbId,
   scope,
   matchedTmdbIds,
+  canCast = true,
+  castDevicesFromParent,
+  castDevicesLoadingFromParent,
+  ensureCastDevicesLoaded,
   onClose,
 }: MovieDetailsModalProps) {
   const [movie, setMovie] = useState<MovieDetailsDto | null>(initialMovie ?? null)
   const [loading, setLoading] = useState(false)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [castDevices, setCastDevices] = useState<{ id: string; name: string }[]>([])
+  const [castDevicesLoading, setCastDevicesLoading] = useState(false)
   const [selectedCastDeviceId, setSelectedCastDeviceId] = useState<string>('')
   const [casting, setCasting] = useState(false)
   const [castError, setCastError] = useState<string | null>(null)
+  const castDevicesEnsuredRef = useRef(false)
 
   const isOpen = initialMovie != null || (tmdbId != null && tmdbId > 0)
   const isMatchedMovie =
     matchedTmdbIds == null || (movie != null && matchedTmdbIds.includes(movie.tmdbId))
   const showCast =
-    isMediaServerScope(scope) && movie != null && isMatchedMovie
+    canCast && isMediaServerScope(scope) && movie != null && isMatchedMovie
+
+  const useParentCastDevices = castDevicesFromParent != null && ensureCastDevicesLoaded != null
+  const effectiveCastDevices = useParentCastDevices ? (castDevicesFromParent ?? []) : castDevices
+  const effectiveCastDevicesLoading = useParentCastDevices ? (castDevicesLoadingFromParent ?? false) : castDevicesLoading
 
   useEffect(() => {
     if (initialMovie != null) {
@@ -140,7 +156,21 @@ export default function MovieDetailsModal({
   }, [isOpen, onClose])
 
   useEffect(() => {
-    if (!showCast || !scope) return
+    if (showCast && ensureCastDevicesLoaded && !castDevicesEnsuredRef.current) {
+      castDevicesEnsuredRef.current = true
+      ensureCastDevicesLoaded()
+    }
+  }, [showCast, ensureCastDevicesLoaded])
+
+  useEffect(() => {
+    if (useParentCastDevices && effectiveCastDevices.length > 0 && !effectiveCastDevices.some((d) => d.id === selectedCastDeviceId)) {
+      setSelectedCastDeviceId(effectiveCastDevices[0]?.id ?? '')
+    }
+  }, [useParentCastDevices, effectiveCastDevices, selectedCastDeviceId])
+
+  useEffect(() => {
+    if (useParentCastDevices || !showCast || !scope) return
+    setCastDevicesLoading(true)
     apiClient
       .listCastDevices()
       .then((list) => {
@@ -148,7 +178,8 @@ export default function MovieDetailsModal({
         setSelectedCastDeviceId(list[0]?.id ?? '')
       })
       .catch(() => setCastDevices([]))
-  }, [showCast, scope])
+      .finally(() => setCastDevicesLoading(false))
+  }, [showCast, scope, useParentCastDevices])
 
   const handleCast = () => {
     if (!scope || !movie || !selectedCastDeviceId) return
@@ -295,11 +326,14 @@ export default function MovieDetailsModal({
                       onChange={(e) => setSelectedCastDeviceId(e.target.value)}
                       className="rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-gray-200 focus:border-pink-500 focus:outline-none focus:ring-1 focus:ring-pink-500"
                       aria-label="Select cast device"
+                      disabled={effectiveCastDevicesLoading}
                     >
-                      {castDevices.length === 0 ? (
+                      {effectiveCastDevicesLoading ? (
+                        <option value="">Searching for devices…</option>
+                      ) : effectiveCastDevices.length === 0 ? (
                         <option value="">No devices found</option>
                       ) : (
-                        castDevices.map((d) => (
+                        effectiveCastDevices.map((d) => (
                           <option key={d.id} value={d.id}>
                             {d.name}
                           </option>
@@ -309,7 +343,7 @@ export default function MovieDetailsModal({
                     <button
                       type="button"
                       onClick={handleCast}
-                      disabled={casting || castDevices.length === 0}
+                      disabled={casting || effectiveCastDevicesLoading || effectiveCastDevices.length === 0}
                       className="rounded-lg bg-pink-600 px-4 py-2 text-white hover:bg-pink-500 disabled:opacity-50 disabled:hover:bg-pink-600"
                     >
                       {casting ? 'Casting…' : 'Cast'}

@@ -17,18 +17,15 @@ ui/dist/
 ui/.vite/
 ui/.turbo/
 
+# Distribution artifacts (local publish outputs, installers, packaged binaries)
+/dist/
+
 # Generated UI build output copied into API wwwroot
 src/Tindarr.Api/wwwroot/assets/
 src/Tindarr.Api/wwwroot/index.html
 
-# Build artifacts (local publish, MSI outputs, logs)
+# Build artifacts (local publish, logs)
 artifacts/
-
-# WiX build outputs
-**/*.wixobj
-**/*.wixpdb
-**/*.wixmst
-**/*.cab
 
 # Test outputs
 TestResults/
@@ -64,5 +61,13 @@ src/Tindarr.Api/tmdbmetadata.db*
 # TMDB cached images (test/runtime)
 src/Tindarr.Api/tmdb-images/
 
+# WiX installer (generated harvest + obj)
+installer/windows/wix/harvest.wxs
+*.wixobj
+*.wixpdb
+
 # Local tracking of GH issues needing implementation (do not commit)
 issues-needing-implementation.txt
+
+# Agent prompt for standalone TMDB DB builder (local use only)
+docs/tmdb-db-builder-agent-prompt.md

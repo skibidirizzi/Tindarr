@@ -115,6 +115,9 @@ api_host:
       - service: Tindarr.Application.Abstractions.Persistence.IAdvancedSettingsRepository
         impl: Tindarr.Infrastructure.Persistence.Repositories.AdvancedSettingsRepository
         lifetime: scoped
+      - service: Tindarr.Application.Abstractions.Persistence.IRegistrationSettingsRepository
+        impl: Tindarr.Infrastructure.Persistence.Repositories.RegistrationSettingsRepository
+        lifetime: scoped
 
   security:
     services:

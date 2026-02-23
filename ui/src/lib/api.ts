@@ -84,6 +84,8 @@ export interface User {
   isAdmin: boolean
   /** True if user can superlike (Admin or Curator). Mirrors backend InteractionsController. */
   canSuperlike: boolean
+  /** True when logged in as room guest (no account). Used to hide Cast in room for guests. */
+  isGuest: boolean
   preferences: UserPreferences
 }
 
@@ -111,10 +113,31 @@ export interface SetupStatusResponse {
   setupComplete: boolean
 }
 
+/** Request body for POST /api/v1/setup/admin (create initial admin). */
+export interface SetupAdminRequest {
+  password: string
+}
+
+/** Response from GET /api/v1/setup/suggested-urls (LAN/WAN auto-detection). */
+export interface SuggestedUrlsResponse {
+  port: number | null
+  suggestedLanHostPort: string | null
+  suggestedWanHostPort: string | null
+}
+
+export interface CheckReachabilityRequest {
+  baseUrl: string
+}
+export interface CheckReachabilityResponse {
+  reachable: boolean
+  message: string | null
+}
+
 export interface SetupCompleteRequest {
   runLibrarySync: boolean
   runTmdbBuild: boolean
-  runFetchAllDetails?: boolean
+  /** Required; true by default. Fetch-all-details runs on setup complete. */
+  runFetchAllDetails: boolean
   runFetchAllImages?: boolean
 }
 
@@ -128,6 +151,8 @@ export interface AuthResponse {
   userId: string
   displayName: string
   roles: string[]
+  /** True when registration succeeded but user must wait for admin approval before logging in. */
+  pendingApproval?: boolean
 }
 
 export interface MeResponse {
@@ -140,6 +165,12 @@ export interface MeResponse {
 export interface LoginRequest {
   userId: string
   password: string
+}
+
+/** Backend POST /api/v1/auth/guest (Contracts.Auth.GuestLoginRequest). */
+export interface GuestLoginRequest {
+  roomId: string
+  displayName?: string | null
 }
 
 export interface LoginResponse {
@@ -205,6 +236,15 @@ export interface MovieDetailsDto {
   runtimeMinutes: number | null
 }
 
+/** Backend GET /api/v1/search/movies (Contracts.Search.SearchMovieResultDto). */
+export interface SearchMovieResultDto {
+  tmdbId: number
+  title: string
+  releaseYear: number | null
+  posterUrl: string | null
+  backdropUrl: string | null
+}
+
 /** Backend POST /api/v1/interactions body. */
 export interface SwipeRequest {
   tmdbId: number
@@ -262,6 +302,16 @@ export interface CreateRoomResponse {
   serviceType: string
   serverId: string
   members: RoomMemberDto[]
+}
+export interface RoomListItemDto {
+  roomId: string
+  ownerUserId: string
+  serviceType: string
+  serverId: string
+  isClosed: boolean
+  createdAtUtc: string
+  lastActivityAtUtc: string
+  memberCount: number
 }
 export interface RoomStateResponse {
   roomId: string
@@ -326,6 +376,18 @@ class ApiClient {
     this.baseUrl = baseUrl
   }
 
+  private async errorMessageFromResponse(response: Response): Promise<string> {
+    const text = await response.text().catch(() => '')
+    if (!text) return response.statusText
+    try {
+      const j = JSON.parse(text) as { message?: string }
+      if (typeof j?.message === 'string' && j.message.trim()) return j.message
+    } catch {
+      // not JSON or no message field
+    }
+    return text.length > 200 ? `${text.slice(0, 200)}…` : text
+  }
+
   private async request<T>(endpoint: string): Promise<T> {
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       headers: getAuthHeaders(),
@@ -336,7 +398,8 @@ class ApiClient {
       throw new Error('Unauthorized')
     }
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.statusText}`)
+      const msg = await this.errorMessageFromResponse(response)
+      throw new Error(msg)
     }
 
     return response.json() as Promise<T>
@@ -357,7 +420,8 @@ class ApiClient {
       throw new Error('Unauthorized')
     }
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.statusText}`)
+      const msg = await this.errorMessageFromResponse(response)
+      throw new Error(msg)
     }
 
     if (response.status === 204 || response.headers.get('content-length') === '0') {
@@ -365,6 +429,22 @@ class ApiClient {
     }
 
     return response.json() as Promise<T>
+  }
+
+  private async delete(endpoint: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      method: 'DELETE',
+      headers: getAuthHeaders(),
+    })
+
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const msg = await this.errorMessageFromResponse(response)
+      throw new Error(msg)
+    }
   }
 
   private async put<T>(endpoint: string, data: unknown): Promise<T> {
@@ -405,6 +485,21 @@ class ApiClient {
     return this.request<SetupStatusResponse>('/api/v1/setup/status')
   }
 
+  /** Create initial admin user (no users must exist). Returns auth response. */
+  async createInitialAdmin(request: SetupAdminRequest): Promise<AuthResponse> {
+    return this.post<AuthResponse>('/api/v1/setup/admin', request)
+  }
+
+  /** Admin: get suggested LAN/WAN host:port (from NIC / ipify etc.). */
+  async getSuggestedUrls(): Promise<SuggestedUrlsResponse> {
+    return this.request<SuggestedUrlsResponse>('/api/v1/setup/suggested-urls')
+  }
+
+  /** Admin: check if a base URL is reachable (GET). Used by setup wizard "Try default". */
+  async checkReachability(request: CheckReachabilityRequest): Promise<CheckReachabilityResponse> {
+    return this.post<CheckReachabilityResponse>('/api/v1/setup/check-reachability', request)
+  }
+
   /** Admin: trigger DB populate (fetch all details and/or images for TMDB cache). */
   async setupComplete(request: SetupCompleteRequest): Promise<SetupCompleteResponse> {
     return this.post<SetupCompleteResponse>('/api/v1/setup/complete', request)
@@ -420,6 +515,10 @@ class ApiClient {
 
   async login(request: LoginRequest): Promise<AuthResponse> {
     return this.post<AuthResponse>('/api/v1/auth/login', request)
+  }
+
+  async guestLogin(request: GuestLoginRequest): Promise<AuthResponse> {
+    return this.post<AuthResponse>('/api/v1/auth/guest', request)
   }
 
   async getMe(): Promise<MeResponse> {
@@ -487,6 +586,14 @@ class ApiClient {
     return this.request<MovieDetailsDto>(`/api/v1/tmdb/movies/${tmdbId}`)
   }
 
+  /** Search movies by title. Uses Radarr passthrough if configured, else local cache + TMDB API. */
+  async searchMovies(query: string): Promise<SearchMovieResultDto[]> {
+    const q = (query ?? '').trim()
+    if (q === '') return []
+    const params = new URLSearchParams({ q })
+    return this.request<SearchMovieResultDto[]>(`/api/v1/search/movies?${params}`)
+  }
+
   /** Record a swipe (Like/Nope/Skip/Superlike). User from JWT. */
   async recordSwipe(
     serviceType: string,
@@ -533,6 +640,10 @@ class ApiClient {
   }
 
   // --- Rooms ---
+  /** Lists rooms: open rooms only for registered users, all alive rooms for admins. */
+  async listRooms(): Promise<RoomListItemDto[]> {
+    return this.request<RoomListItemDto[]>('/api/v1/rooms')
+  }
   async createRoom(request: CreateRoomRequest): Promise<CreateRoomResponse> {
     return this.post<CreateRoomResponse>('/api/v1/rooms', request)
   }
@@ -629,6 +740,12 @@ class ApiClient {
   async getAdminUpdateCheck(): Promise<AdminUpdateCheckResponse> {
     return this.request<AdminUpdateCheckResponse>('/api/v1/admin/update')
   }
+  async getRegistrationSettings(): Promise<RegistrationSettingsDto> {
+    return this.request<RegistrationSettingsDto>('/api/v1/admin/registration')
+  }
+  async updateRegistrationSettings(request: UpdateRegistrationSettingsRequest): Promise<RegistrationSettingsDto> {
+    return this.put<RegistrationSettingsDto>('/api/v1/admin/registration', request)
+  }
 
   // --- Admin (Tindarr) ---
   async listAdminUsers(skip = 0, take = 100): Promise<AdminUserDto[]> {
@@ -644,15 +761,7 @@ class ApiClient {
     return this.put<void>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, request)
   }
   async deleteAdminUser(userId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/api/v1/admin/users/${encodeURIComponent(userId)}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    })
-    if (response.status === 401) {
-      clearSessionStorage()
-      throw new Error('Unauthorized')
-    }
-    if (!response.ok) throw new Error(`API request failed: ${response.statusText}`)
+    return this.delete(`/api/v1/admin/users/${encodeURIComponent(userId)}`)
   }
   async setAdminUserRoles(userId: string, request: AdminSetUserRolesRequest): Promise<void> {
     return this.post<void>(`/api/v1/admin/users/${encodeURIComponent(userId)}/roles`, request)
@@ -680,6 +789,12 @@ class ApiClient {
   }
   async getCastingDiagnostics(): Promise<CastingDiagnosticsDto> {
     return this.request<CastingDiagnosticsDto>('/api/v1/admin/casting/diagnostics')
+  }
+  async getConsoleOutput(maxLines = 500): Promise<ConsoleOutputDto> {
+    return this.request<ConsoleOutputDto>(`/api/v1/admin/console?maxLines=${Math.max(1, Math.min(2000, maxLines))}`)
+  }
+  async getPopulateStatus(): Promise<PopulateStatusDto> {
+    return this.request<PopulateStatusDto>('/api/v1/admin/db/populate-status')
   }
   async getAdminDbMovies(serviceType: string, serverId: string, skip = 0, take = 50): Promise<AdminDbMovieListResponse> {
     return this.request<AdminDbMovieListResponse>(
@@ -799,6 +914,176 @@ class ApiClient {
   async postTmdbBuildCancel(reason?: string): Promise<TmdbBuildStatusDto> {
     const url = reason != null ? `/api/v1/tmdb/build/cancel?reason=${encodeURIComponent(reason)}` : '/api/v1/tmdb/build/cancel'
     return this.post<TmdbBuildStatusDto>(url, {})
+  }
+
+  async getTmdbBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/tmdb/backup/download`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+
+  async postTmdbRestore(file: File): Promise<TmdbRestoreResultDto> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${this.baseUrl}/api/v1/tmdb/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Restore failed: ${response.status}`)
+    }
+    return response.json()
+  }
+
+  // --- Admin backup & restore (master + per-service) ---
+  async getMasterBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/master`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+  async getMainBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/main`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (response.status === 404) throw new Error('Main database not found')
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+  async getPlexBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/plex`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (response.status === 404) throw new Error('Plex cache database not found')
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+  async postPlexRestore(file: File): Promise<{ message?: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/plex/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Restore failed: ${response.status}`)
+    }
+    return response.json()
+  }
+  async getJellyfinBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/jellyfin`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (response.status === 404) throw new Error('Jellyfin cache database not found')
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+  async postJellyfinRestore(file: File): Promise<{ message?: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/jellyfin/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Restore failed: ${response.status}`)
+    }
+    return response.json()
+  }
+  async getEmbyBackupDownload(): Promise<Blob> {
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/emby`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (response.status === 404) throw new Error('Emby cache database not found')
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Download failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+  async postEmbyRestore(file: File): Promise<{ message?: string }> {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await fetch(`${this.baseUrl}/api/v1/admin/backup/emby/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: formData,
+    })
+    if (response.status === 401) {
+      clearSessionStorage()
+      throw new Error('Unauthorized')
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => 'Unknown error')
+      throw new Error(text || `Restore failed: ${response.status}`)
+    }
+    return response.json()
   }
 
   // --- Plex (admin) ---
@@ -1053,6 +1338,16 @@ export interface AdminUpdateCheckResponse {
 }
 
 // --- Admin (Tindarr) DTOs ---
+export interface RegistrationSettingsDto {
+  allowOpenRegistration: boolean
+  requireAdminApprovalForNewUsers: boolean
+  defaultRole: string
+}
+export interface UpdateRegistrationSettingsRequest {
+  allowOpenRegistration: boolean
+  requireAdminApprovalForNewUsers: boolean
+  defaultRole: string | null
+}
 export interface AdminUserDto {
   userId: string
   displayName: string
@@ -1137,6 +1432,9 @@ export interface AdvancedSettingsDto {
   display: { dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string }
   displayDefaults: { dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string }
 }
+export interface ConsoleOutputDto {
+  lines: string[]
+}
 export interface UpdateAdvancedSettingsRequest {
   apiRateLimitEnabled?: boolean | null
   apiRateLimitPermitLimit?: number | null
@@ -1207,6 +1505,14 @@ export interface AdminDbMovieListResponse {
   nextSkip: number
   hasMore: boolean
   totalCount: number
+}
+export interface PopulateStatusDto {
+  state: string
+  detailsTotal: number
+  detailsDone: number
+  imagesTotal: number
+  imagesDone: number
+  lastMessage: string | null
 }
 
 // Radarr API (admin): DTOs match backend Contracts.Radarr
@@ -1311,6 +1617,19 @@ export interface StartTmdbBuildRequest {
   usersBatchSize?: number
   discoverLimitPerUser?: number
   prefetchImages?: boolean
+}
+export interface TmdbImportResultDto {
+  inserted: number
+  updated: number
+  skipped: number
+  notImportedReasons: string[]
+}
+export interface TmdbRestoreResultDto {
+  inserted: number
+  updated: number
+  skipped: number
+  imagesRestored: number
+  notImportedReasons: string[]
 }
 
 // --- Plex (admin) DTOs ---

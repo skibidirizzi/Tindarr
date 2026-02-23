@@ -10,6 +10,7 @@ import {
   clearSessionStorage,
   AUTH_TOKEN_KEY,
   USER_ID_KEY,
+  type AuthResponse,
   type User,
   type UserPreferences,
 } from '../lib/api'
@@ -21,7 +22,11 @@ interface AuthContextType {
     username: string,
     password: string
   ) => Promise<{ needPassword?: boolean }>
-  register: (userId: string, displayName: string, password: string) => Promise<void>
+  register: (userId: string, displayName: string, password: string) => Promise<{ pendingApproval?: boolean }>
+  /** Join a room as guest (no account). RoomId required. */
+  guestLogin: (roomId: string, displayName?: string | null) => Promise<void>
+  /** Set session from an auth response (e.g. after setup createInitialAdmin). */
+  setSessionFromAuthResponse: (response: AuthResponse) => Promise<void>
   logout: () => void
   updatePreferences: (preferences: UserPreferences) => Promise<void>
 }
@@ -56,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: '',
           isAdmin: me.roles.includes('Admin'),
           canSuperlike: me.roles.includes('Admin') || me.roles.includes('Curator'),
+          isGuest: me.roles.includes('Guest'),
           createdAt: new Date().toISOString(),
           preferences,
         })
@@ -68,32 +74,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (username: string, password: string) => {
     const userId = username.trim().toLowerCase()
-    try {
-      const loginResp = await apiClient.login({ userId, password })
-      setUserFromAuthResponse(loginResp)
-      localStorage.setItem(AUTH_TOKEN_KEY, loginResp.accessToken)
-      localStorage.setItem(USER_ID_KEY, loginResp.userId)
-      const preferences = await apiClient.getPreferences()
-      setUser((u) => (u ? { ...u, preferences } : null))
-      return { needPassword: false }
-    } catch (error) {
-      try {
-        const reg = await apiClient.register({
-          userId,
-          displayName: username.trim(),
-          password,
-        })
-        setUserFromAuthResponse(reg)
-        localStorage.setItem(AUTH_TOKEN_KEY, reg.accessToken)
-        localStorage.setItem(USER_ID_KEY, reg.userId)
-        const preferences = await apiClient.getPreferences()
-        setUser((u) => (u ? { ...u, preferences } : null))
-        return { needPassword: false }
-      } catch (inner) {
-        console.error('Login failed:', inner)
-        throw inner
-      }
-    }
+    const loginResp = await apiClient.login({ userId, password })
+    setUserFromAuthResponse(loginResp)
+    localStorage.setItem(AUTH_TOKEN_KEY, loginResp.accessToken)
+    localStorage.setItem(USER_ID_KEY, loginResp.userId)
+    const preferences = await apiClient.getPreferences()
+    setUser((u) => (u ? { ...u, preferences } : null))
+    return { needPassword: false }
   }
 
   const setUserFromAuthResponse = (resp: {
@@ -107,6 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: '',
       isAdmin: resp.roles.includes('Admin'),
       canSuperlike: resp.roles.includes('Admin') || resp.roles.includes('Curator'),
+      isGuest: resp.roles.includes('Guest'),
       createdAt: new Date().toISOString(),
       preferences: defaultPreferences,
     })
@@ -116,17 +104,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     userId: string,
     displayName: string,
     password: string
-  ) => {
+  ): Promise<{ pendingApproval?: boolean }> => {
     const resp = await apiClient.register({
       userId: userId.trim().toLowerCase(),
       displayName: displayName.trim() || userId.trim(),
       password,
     })
+    if (resp.pendingApproval) {
+      return { pendingApproval: true }
+    }
     setUserFromAuthResponse(resp)
     localStorage.setItem(AUTH_TOKEN_KEY, resp.accessToken)
     localStorage.setItem(USER_ID_KEY, resp.userId)
     const preferences = await apiClient.getPreferences()
     setUser((u) => (u ? { ...u, preferences } : null))
+    return {}
+  }
+
+  const setSessionFromAuthResponse = async (resp: AuthResponse) => {
+    localStorage.setItem(AUTH_TOKEN_KEY, resp.accessToken)
+    localStorage.setItem(USER_ID_KEY, resp.userId)
+    setUserFromAuthResponse(resp)
+    const preferences = await apiClient.getPreferences()
+    setUser((u) => (u ? { ...u, preferences } : null))
+  }
+
+  const guestLogin = async (roomId: string, displayName?: string | null) => {
+    const resp = await apiClient.guestLogin({ roomId, displayName })
+    localStorage.setItem(AUTH_TOKEN_KEY, resp.accessToken)
+    localStorage.setItem(USER_ID_KEY, resp.userId)
+    setUser({
+      id: resp.userId,
+      username: resp.displayName,
+      email: '',
+      isAdmin: resp.roles.includes('Admin'),
+      canSuperlike: false,
+      isGuest: true,
+      createdAt: new Date().toISOString(),
+      preferences: defaultPreferences,
+    })
   }
 
   const logout = () => {
@@ -143,7 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, register, logout, updatePreferences }}
+      value={{ user, loading, login, register, guestLogin, setSessionFromAuthResponse, logout, updatePreferences }}
     >
       {children}
     </AuthContext.Provider>

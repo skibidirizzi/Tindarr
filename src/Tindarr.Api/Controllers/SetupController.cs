@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -24,12 +25,16 @@ public sealed class SetupController(
 	IPasswordHasher passwordHasher,
 	ITokenService tokenService,
 	Microsoft.Extensions.Options.IOptions<RegistrationOptions> registrationOptions,
+	IEffectiveRegistrationOptions effectiveRegistration,
 	IServiceSettingsRepository serviceSettings,
 	IPlexLibrarySyncJobService plexLibrarySyncJob,
 	IServiceScopeFactory scopeFactory,
 	ITmdbBuildJob tmdbBuildJob,
+	ITmdbDiscoverPrewarmRunner prewarmRunner,
+	Tindarr.Application.Abstractions.Ops.IPopulateProgressReport populateProgressReport,
 	ILanAddressResolver lanAddressResolver,
-	IWanAddressResolver wanAddressResolver) : ControllerBase
+	IWanAddressResolver wanAddressResolver,
+	IHttpClientFactory httpClientFactory) : ControllerBase
 {
 	/// <summary>
 	/// Returns whether initial setup has been completed (at least one user exists).
@@ -72,7 +77,7 @@ public sealed class SetupController(
 		var hashed = passwordHasher.Hash(request.Password.Trim(), registrationOptions.Value.PasswordHashIterations);
 		await users.SetPasswordAsync(adminId, hashed.Hash, hashed.Salt, hashed.Iterations, cancellationToken);
 
-		var roles = new List<string> { registrationOptions.Value.DefaultRole, "Admin" };
+		var roles = new List<string> { effectiveRegistration.DefaultRole, "Admin" };
 		await users.SetRolesAsync(adminId, roles, cancellationToken);
 
 		var token = tokenService.IssueAccessToken(adminId, roles);
@@ -134,14 +139,23 @@ public sealed class SetupController(
 			suggestedLan = $"{host}:{port}";
 		}
 
-		// WAN: from config first (unless config is loopback), else best-effort public IP via external service.
+		// WAN: from config first (unless config is loopback or private IP), else best-effort public IP via external service.
 		string? suggestedWan = null;
 		var wan = baseUrlOptions.Value.Wan;
 		if (!string.IsNullOrWhiteSpace(wan) && Uri.TryCreate(wan, UriKind.Absolute, out var wanUri) && !string.IsNullOrWhiteSpace(wanUri.Host))
 		{
-			// Do not suggest localhost/127.0.0.1 for WAN; fall through to public IP detection.
-			if (!System.Net.IPAddress.TryParse(wanUri.Host, out var wanHostIp) || !System.Net.IPAddress.IsLoopback(wanHostIp))
+			// Do not suggest localhost, loopback, or private (RFC 1918) IPs for WAN; fall through to public IP detection.
+			if (System.Net.IPAddress.TryParse(wanUri.Host, out var wanHostIp))
 			{
+				var ip = wanHostIp.IsIPv4MappedToIPv6 ? wanHostIp.MapToIPv4() : wanHostIp;
+				if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(ip) && !IsPrivateIPv4(ip))
+				{
+					suggestedWan = wanUri.Host + (wanUri.Port is > 0 and var wp ? $":{wp}" : "");
+				}
+			}
+			else
+			{
+				// Host is a hostname (e.g. example.com), not an IP; allow it as WAN.
 				var hostLower = wanUri.Host.Trim().ToLowerInvariant();
 				if (hostLower != "localhost")
 				{
@@ -164,6 +178,55 @@ public sealed class SetupController(
 	}
 
 	/// <summary>
+	/// Checks whether a base URL is reachable (HTTP GET). Admin only; used by setup wizard "Try default".
+	/// </summary>
+	[HttpPost("check-reachability")]
+	[Authorize(Policy = Tindarr.Api.Auth.Policies.AdminOnly)]
+	public async Task<ActionResult<CheckReachabilityResponse>> CheckReachability(
+		[FromBody] CheckReachabilityRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(request?.BaseUrl))
+		{
+			return BadRequest("BaseUrl is required.");
+		}
+
+		var baseUrl = EnsureHttpOrHttps(request.BaseUrl.Trim());
+		if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
+		{
+			return Ok(new CheckReachabilityResponse(false, "BaseUrl must use http:// or https://."));
+		}
+
+		try
+		{
+			using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+			cts.CancelAfter(TimeSpan.FromSeconds(3));
+			var client = httpClientFactory.CreateClient();
+			client.Timeout = TimeSpan.FromSeconds(3);
+			using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+			// Any HTTP response (including 401/403) means the server is reachable
+			return Ok(new CheckReachabilityResponse(true, null));
+		}
+		catch (OperationCanceledException)
+		{
+			// Covers TaskCanceledException (timeout) as well
+			return Ok(new CheckReachabilityResponse(false, "Connection timed out."));
+		}
+		catch (HttpRequestException ex)
+		{
+			return Ok(new CheckReachabilityResponse(false, ex.Message ?? "Connection failed."));
+		}
+	}
+
+	private static string EnsureHttpOrHttps(string baseUrl)
+	{
+		var t = (baseUrl ?? string.Empty).Trim();
+		if (t.Length >= 8 && (t.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || t.StartsWith("http://", StringComparison.OrdinalIgnoreCase)))
+			return t;
+		return "http://" + t;
+	}
+
+	/// <summary>
 	/// Optionally run library sync for all media servers and start TMDB build with rate-limit bypass.
 	/// Admin only. Excluded from API rate limiting so setup can trigger population in one request.
 	/// </summary>
@@ -175,6 +238,28 @@ public sealed class SetupController(
 	{
 		var message = new List<string>();
 		var syncTasks = new List<Task>();
+
+		// Prewarm first: same process as TMDB admin tab. Run until 200 movies in DB so user sees a populated swipe deck on first run.
+		const int initialPrewarmTarget = 500;
+		const int maxPrewarmPasses = 200;
+		var offset = 0;
+		_ = await prewarmRunner.RunOnceAsync(0, cancellationToken).ConfigureAwait(false);
+		var passes = 1;
+		while (passes < maxPrewarmPasses)
+		{
+			using (var scope = scopeFactory.CreateScope())
+			{
+				var metadataStore = scope.ServiceProvider.GetRequiredService<ITmdbMetadataStore>();
+				var stats = await metadataStore.GetStatsAsync(cancellationToken).ConfigureAwait(false);
+				if (stats.MovieCount >= initialPrewarmTarget)
+				{
+					break;
+				}
+			}
+			offset = await prewarmRunner.RunOnceAsync(offset, cancellationToken).ConfigureAwait(false);
+			passes++;
+		}
+		message.Add(passes == 1 ? "Prewarm (first pass) completed." : $"Prewarm completed ({passes} passes, target {initialPrewarmTarget} movies).");
 
 		if (request.RunLibrarySync)
 		{
@@ -242,7 +327,12 @@ public sealed class SetupController(
 
 		if (request.RunTmdbBuild)
 		{
-			var started = tmdbBuildJob.TryStart(new StartTmdbBuildRequest(RateLimitOverride: true));
+			// Same defaults as TMDB admin tab: rate limit bypass, 50 discover per user, prefetch images.
+			var started = tmdbBuildJob.TryStart(new StartTmdbBuildRequest(
+				RateLimitOverride: true,
+				UsersBatchSize: 10,
+				DiscoverLimitPerUser: 50,
+				PrefetchImages: true));
 			message.Add(started ? "TMDB build started (rate limit bypassed)." : "TMDB build already running or not started.");
 		}
 
@@ -256,14 +346,31 @@ public sealed class SetupController(
 				message.Add("Library sync completed; starting fetch-all-details and fetch-all-images.");
 			}
 
+			int detailsTotal = 0;
+			int imagesTotal = 0;
+			using (var scope = scopeFactory.CreateScope())
+			{
+				var metadataStore = scope.ServiceProvider.GetRequiredService<ITmdbMetadataStore>();
+				if (request.RunFetchAllDetails)
+					detailsTotal = await metadataStore.CountMoviesNeedingDetailsAsync(cancellationToken).ConfigureAwait(false);
+				if (request.RunFetchAllImages)
+				{
+					var stats = await metadataStore.GetStatsAsync(cancellationToken).ConfigureAwait(false);
+					imagesTotal = Math.Max(0, stats.MovieCount);
+				}
+			}
+
+			populateProgressReport.SetRunning(detailsTotal, imagesTotal);
+
 			var factory = scopeFactory;
+			var progressReport = populateProgressReport;
 			var detailsTask = request.RunFetchAllDetails
 				? Task.Run(() => RunFetchAllDetailsBatchAsync(factory))
 				: Task.CompletedTask;
 			var imagesTask = request.RunFetchAllImages
 				? Task.Run(() => RunFetchAllImagesBatchAsync(factory))
 				: Task.CompletedTask;
-			_ = Task.WhenAll(detailsTask, imagesTask);
+			_ = Task.WhenAll(detailsTask, imagesTask).ContinueWith(_ => progressReport.SetIdle(), TaskContinuationOptions.None);
 			if (request.RunFetchAllDetails)
 				message.Add("Fetch all details started (rate limit bypassed).");
 			if (request.RunFetchAllImages)
@@ -280,11 +387,13 @@ public sealed class SetupController(
 		var metadataStore = sp.GetRequiredService<ITmdbMetadataStore>();
 		var tmdbClient = sp.GetRequiredService<ITmdbClient>();
 		var effectiveSettings = sp.GetRequiredService<IEffectiveAdvancedSettings>();
+		var progressReport = sp.GetRequiredService<Tindarr.Application.Abstractions.Ops.IPopulateProgressReport>();
 		if (!effectiveSettings.HasEffectiveTmdbCredentials())
 			return;
 		TmdbRateLimitingHandler.BypassRateLimit.Value = true;
 		try
 		{
+			var detailsDone = 0;
 			const int chunkSize = 1000;
 			while (true)
 			{
@@ -297,7 +406,11 @@ public sealed class SetupController(
 					{
 						var details = await tmdbClient.GetMovieDetailsAsync(tmdbId, CancellationToken.None).ConfigureAwait(false);
 						if (details is not null)
+						{
 							await metadataStore.UpdateMovieDetailsAsync(details, CancellationToken.None).ConfigureAwait(false);
+							detailsDone++;
+							progressReport.SetDetailsDone(detailsDone);
+						}
 					}
 					catch
 					{
@@ -320,6 +433,7 @@ public sealed class SetupController(
 		var imageCache = sp.GetRequiredService<ITmdbImageCache>();
 		var tmdbOptions = sp.GetRequiredService<IOptions<TmdbOptions>>();
 		var effectiveSettings = sp.GetRequiredService<IEffectiveAdvancedSettings>();
+		var progressReport = sp.GetRequiredService<Tindarr.Application.Abstractions.Ops.IPopulateProgressReport>();
 		if (!effectiveSettings.HasEffectiveTmdbCredentials())
 			return;
 		var settings = await metadataStore.GetSettingsAsync(CancellationToken.None).ConfigureAwait(false);
@@ -327,6 +441,7 @@ public sealed class SetupController(
 			return;
 		var take = 500;
 		var skip = 0;
+		var imagesDone = 0;
 		while (true)
 		{
 			var chunk = await metadataStore.ListMoviesAsync(skip, take, missingDetailsOnly: false, titleQuery: null, CancellationToken.None).ConfigureAwait(false);
@@ -340,6 +455,8 @@ public sealed class SetupController(
 						await imageCache.GetOrFetchAsync(tmdbOptions.Value.PosterSize, movie.PosterPath, CancellationToken.None).ConfigureAwait(false);
 					if (!string.IsNullOrWhiteSpace(movie.BackdropPath))
 						await imageCache.GetOrFetchAsync(tmdbOptions.Value.BackdropSize, movie.BackdropPath, CancellationToken.None).ConfigureAwait(false);
+					imagesDone++;
+					progressReport.SetImagesDone(imagesDone);
 				}
 				catch
 				{
@@ -352,5 +469,19 @@ public sealed class SetupController(
 			if (chunk.Count < take)
 				break;
 		}
+	}
+
+	/// <summary>RFC 1918 private IPv4 (10/8, 172.16/12, 192.168/16).</summary>
+	private static bool IsPrivateIPv4(System.Net.IPAddress ip)
+	{
+		var bytes = (ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip).GetAddressBytes();
+		if (bytes.Length != 4) return false;
+		// 10.0.0.0/8
+		if (bytes[0] == 10) return true;
+		// 172.16.0.0/12
+		if (bytes[0] == 172 && (bytes[1] & 0xF0) == 0x10) return true;
+		// 192.168.0.0/16
+		if (bytes[0] == 192 && bytes[1] == 168) return true;
+		return false;
 	}
 }

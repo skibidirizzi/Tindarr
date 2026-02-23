@@ -22,6 +22,7 @@ public sealed class TindarrDbContext : DbContext
 	public DbSet<JoinAddressSettingsEntity> JoinAddressSettings => Set<JoinAddressSettingsEntity>();
 	public DbSet<CastingSettingsEntity> CastingSettings => Set<CastingSettingsEntity>();
 	public DbSet<AdvancedSettingsEntity> AdvancedSettings => Set<AdvancedSettingsEntity>();
+	public DbSet<RegistrationSettingsEntity> RegistrationSettings => Set<RegistrationSettingsEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{

@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiClient, type ServiceScopeOptionDto } from '../lib/api'
+import { useAuth } from '../contexts/AuthContext'
+import { apiClient, type ServiceScopeOptionDto, type RoomListItemDto } from '../lib/api'
 
 export default function Rooms() {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [scopes, setScopes] = useState<ServiceScopeOptionDto[]>([])
   const [scopeIndex, setScopeIndex] = useState(0)
   const [customName, setCustomName] = useState('')
   const [useRandomName, setUseRandomName] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [rooms, setRooms] = useState<RoomListItemDto[]>([])
+  const [roomsLoading, setRoomsLoading] = useState(false)
 
   const loadScopes = useCallback(async () => {
     try {
@@ -21,9 +25,26 @@ export default function Rooms() {
     }
   }, [scopeIndex])
 
+  const loadRooms = useCallback(async () => {
+    if (!user?.id) return
+    setRoomsLoading(true)
+    try {
+      const list = await apiClient.listRooms()
+      setRooms(list)
+    } catch {
+      setRooms([])
+    } finally {
+      setRoomsLoading(false)
+    }
+  }, [user?.id])
+
   useEffect(() => {
     loadScopes()
   }, [loadScopes])
+
+  useEffect(() => {
+    loadRooms()
+  }, [loadRooms])
 
   const handleCreate = async () => {
     if (scopes.length === 0) return
@@ -44,13 +65,60 @@ export default function Rooms() {
     }
   }
 
+  const isAdmin = user?.isAdmin === true
+  const listHeading = isAdmin ? 'All rooms' : 'Open rooms'
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
       <div className="container mx-auto max-w-lg px-4 py-8">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="mb-4 flex items-center gap-2 text-gray-400 transition-colors hover:text-white"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+          <span>Back to App</span>
+        </button>
         <h1 className="mb-8 bg-gradient-to-r from-pink-400 to-purple-400 bg-clip-text text-center text-3xl font-bold text-transparent">
-          Create a room
+          Rooms
         </h1>
 
+        {user && (
+          <div className="mb-8 rounded-2xl border border-pink-500/30 bg-slate-800/90 p-6 shadow-xl">
+            <h2 className="mb-4 text-lg font-semibold text-white">{listHeading}</h2>
+            {roomsLoading ? (
+              <p className="text-gray-400">Loading…</p>
+            ) : rooms.length === 0 ? (
+              <p className="text-gray-400">No rooms yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {rooms.map((r) => (
+                  <li key={r.roomId}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/rooms/${encodeURIComponent(r.roomId)}`)}
+                      className="w-full rounded-xl border border-pink-500/20 bg-slate-700/80 px-4 py-3 text-left text-white transition hover:border-pink-500/40 hover:bg-slate-700"
+                    >
+                      <span className="font-medium">{r.roomId}</span>
+                      <span className="ml-2 text-sm text-gray-400">
+                        {r.serviceType} / {r.serverId} · {r.memberCount} member{r.memberCount !== 1 ? 's' : ''}
+                      </span>
+                      {r.isClosed && (
+                        <span className="ml-2 rounded bg-amber-600/80 px-2 py-0.5 text-xs text-white">
+                          Closed
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <h2 className="mb-4 text-lg font-semibold text-white">Create a room</h2>
         {error && (
           <div className="mb-6 rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-red-200">
             {error}

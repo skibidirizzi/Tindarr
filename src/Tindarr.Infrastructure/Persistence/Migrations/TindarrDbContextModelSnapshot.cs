@@ -99,6 +99,29 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.ToTable("AdvancedSettings", (string)null);
                 });
 
+            modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.RegistrationSettingsEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("AllowOpenRegistration")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("RequireAdminApprovalForNewUsers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DefaultRole")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("RegistrationSettings", (string)null);
+                });
+
             modelBuilder.Entity("Tindarr.Infrastructure.Persistence.Entities.CastingSettingsEntity", b =>
                 {
                     b.Property<long>("Id")
@@ -315,6 +338,11 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                         new
                         {
                             Name = "Contributor",
+                            CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
+                        },
+                        new
+                        {
+                            Name = "PendingApproval",
                             CreatedAtUtc = new DateTimeOffset(new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0))
                         });
                 });

@@ -11,5 +11,8 @@ public interface ITmdbClient
 	Task<IReadOnlyList<TmdbDiscoverMovieRecord>> DiscoverMoviesAsync(UserPreferencesRecord preferences, int page, int limit, CancellationToken cancellationToken);
 
 	Task<MovieDetailsDto?> GetMovieDetailsAsync(int tmdbId, CancellationToken cancellationToken);
+
+	/// <summary>Search movies by title (TMDB search/movie). Returns empty if no credentials.</summary>
+	Task<IReadOnlyList<TmdbDiscoverMovieRecord>> SearchMoviesAsync(string query, int page, CancellationToken cancellationToken);
 }
 

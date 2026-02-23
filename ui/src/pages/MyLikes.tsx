@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import TmdbAttribution from '../components/TmdbAttribution'
 import {
   apiClient,
   type InteractionDto,
@@ -307,6 +308,10 @@ export default function MyLikes() {
             </div>
           </div>
         )}
+
+        <footer className="mt-8 flex justify-center">
+          <TmdbAttribution compact />
+        </footer>
       </div>
     </div>
   )

@@ -3,14 +3,19 @@ import { Routes, Route, useNavigate, Link, Outlet } from 'react-router-dom'
 import SwipeDeck from './components/SwipeDeck'
 import Login from './components/Login'
 import LoginSplashOverlay from './components/LoginSplashOverlay'
+import SetupWizard from './components/SetupWizard'
 import MatchesModal from './components/MatchesModal'
 import PreferencesModal from './components/PreferencesModal'
 import AdminConsole from './pages/AdminConsole'
 import MyLikes from './pages/MyLikes'
 import Rooms from './pages/Rooms'
 import Room from './pages/Room'
+import Search from './pages/Search'
+import TmdbAttribution from './components/TmdbAttribution'
 import { useAuth } from './contexts/AuthContext'
 import { apiClient, InfoResponse } from './lib/api'
+
+const SETUP_WIZARD_KEY = 'tindarr_setup_wizard'
 
 function AppLayout() {
   const { user, loading: authLoading, logout } = useAuth()
@@ -64,6 +69,7 @@ function AppLayout() {
 
   const menuItems = [
     { id: 'swipe', label: 'Swipe to add', icon: '👆', href: '/', action: () => { navigate('/'); setMenuOpen(false) } },
+    { id: 'search', label: 'Search', icon: '🔍', href: '/search', action: () => { navigate('/search'); setMenuOpen(false) } },
     { id: 'rooms', label: 'Rooms', icon: '📺', href: '/rooms', action: () => { setMenuOpen(false) } },
     { id: 'matches', label: 'Matches', icon: '💕', action: () => { setShowMatches(true); setMenuOpen(false) } },
     { id: 'likes', label: 'My Likes', icon: '❤️', href: '/likes', action: () => { navigate('/likes'); setMenuOpen(false) } },
@@ -144,6 +150,9 @@ function AppLayout() {
             👈 Swipe left to pass • Swipe right to like 👉
           </p>
           <p className="mt-2 text-xs text-gray-500">or use the buttons below</p>
+          <div className="mt-6 flex justify-center">
+            <TmdbAttribution />
+          </div>
         </footer>
       </div>
 
@@ -162,9 +171,11 @@ function AppLayout() {
 
 function App() {
   const { user, loading: authLoading } = useAuth()
+  const navigate = useNavigate()
   const prevUserRef = useRef<typeof user>(null)
   const splashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showPostLoginSplash, setShowPostLoginSplash] = useState(false)
+  const [setupWizardDone, setSetupWizardDone] = useState(false)
 
   useEffect(() => {
     if (user && prevUserRef.current === null) {
@@ -200,11 +211,31 @@ function App() {
     return <Login />
   }
 
+  if (
+    !setupWizardDone &&
+    typeof sessionStorage !== 'undefined' &&
+    sessionStorage.getItem(SETUP_WIZARD_KEY) === 'active'
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+        <SetupWizard
+          onAdminCreated={async () => {}}
+          onFinish={() => {
+            sessionStorage.removeItem(SETUP_WIZARD_KEY)
+            setSetupWizardDone(true)
+            navigate('/')
+          }}
+        />
+      </div>
+    )
+  }
+
   return (
     <>
       <Routes>
         <Route path="/rooms/:roomId" element={<Room />} />
         <Route path="/rooms" element={<Rooms />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/likes" element={<MyLikes />} />
         <Route path="/admin" element={<AdminConsole />} />
         <Route path="/" element={<Outlet />}>

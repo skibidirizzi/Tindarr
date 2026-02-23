@@ -58,6 +58,57 @@ public sealed class RadarrClient(HttpClient httpClient, ILogger<RadarrClient> lo
 			.ToList();
 	}
 
+	public async Task<IReadOnlyList<RadarrLookupMovie>> LookupByTermAsync(RadarrConnection connection, string term, CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(term))
+		{
+			return [];
+		}
+
+		var encoded = Uri.EscapeDataString(term.Trim());
+		var body = await ReadResponseAsync(connection, $"movie/lookup?term={encoded}", cancellationToken).ConfigureAwait(false);
+		if (string.IsNullOrWhiteSpace(body))
+		{
+			return [];
+		}
+
+		List<RadarrLookupMovieDto>? list;
+		try
+		{
+			using var doc = JsonDocument.Parse(body);
+			list = doc.RootElement.ValueKind == JsonValueKind.Array
+				? doc.RootElement.Deserialize<List<RadarrLookupMovieDto>>(Json)
+				: [doc.RootElement.Deserialize<RadarrLookupMovieDto>(Json)!];
+		}
+		catch (JsonException ex)
+		{
+			logger.LogWarning(ex, "Radarr lookup by term parse failed. BaseUrl={BaseUrl} Term={Term}", connection.BaseUrl, term);
+			return [];
+		}
+
+		if (list is null || list.Count == 0)
+		{
+			return [];
+		}
+
+		var results = new List<RadarrLookupMovie>(list.Count);
+		foreach (var dto in list)
+		{
+			if (dto.TmdbId <= 0)
+				continue;
+			var images = dto.Images?
+				.Select(i => new RadarrLookupImage(i.CoverType ?? "poster", i.Url, i.RemoteUrl))
+				.ToList() ?? [];
+			results.Add(new RadarrLookupMovie(
+				dto.TmdbId,
+				dto.Title ?? $"TMDB:{dto.TmdbId}",
+				dto.TitleSlug,
+				dto.Year,
+				images));
+		}
+		return results;
+	}
+
 	public async Task<RadarrLookupMovie?> LookupMovieAsync(RadarrConnection connection, int tmdbId, CancellationToken cancellationToken)
 	{
 		if (tmdbId <= 0)

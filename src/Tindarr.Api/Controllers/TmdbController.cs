@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
+using Tindarr.Api.Services;
 using Tindarr.Application.Abstractions.Integrations;
 using Tindarr.Application.Abstractions.Caching;
 using Tindarr.Application.Abstractions.Ops;
@@ -18,18 +19,17 @@ using Tindarr.Infrastructure.Integrations.Tmdb.Http;
 namespace Tindarr.Api.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("api/v1/tmdb")]
 public sealed class TmdbController(
 	ITmdbClient tmdbClient,
-	IUserPreferencesService preferencesService,
-	IInteractionStore interactionStore,
+	ISwipeDeckService swipeDeckService,
 	IOptions<TmdbOptions> tmdbOptions,
 	IEffectiveAdvancedSettings effectiveAdvancedSettings,
 	ITmdbCacheAdmin cacheAdmin,
 	ITmdbMetadataStore metadataStore,
 	ITmdbImageCache imageCache,
-	ITmdbBuildJob buildJob) : ControllerBase
+	ITmdbBuildJob buildJob,
+	Tindarr.Api.Services.TmdbBackupRestoreService backupRestoreService) : ControllerBase
 {
 	[Authorize(Policy = Policies.AdminOnly)]
 	[HttpGet("cache/movies")]
@@ -333,6 +333,7 @@ public sealed class TmdbController(
 		return Ok(buildJob.GetStatus());
 	}
 
+	[Authorize]
 	[HttpGet("discover")]
 	public async Task<ActionResult<SwipeDeckResponse>> Discover(
 		[FromQuery] string serviceType,
@@ -347,32 +348,18 @@ public sealed class TmdbController(
 
 		limit = Math.Clamp(limit, 1, 50);
 
-		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
-		{
-			// TMDB not configured yet on this machine.
-			return StatusCode(StatusCodes.Status503ServiceUnavailable, "TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
-		}
-
+		// When TMDB is not configured, discover still works via Radarr (populates tmdb-metadata and serves cards from store).
 		var userId = User.GetUserId();
-		var prefs = await preferencesService.GetOrDefaultAsync(userId, cancellationToken);
-
-		// Pull a bigger pool than requested, then filter seen items.
-		var candidatePoolSize = Math.Clamp(limit * 5, 10, 200);
-		var candidates = await tmdbClient.DiscoverAsync(prefs, page: 1, candidatePoolSize, cancellationToken);
-
-		var interacted = await interactionStore.GetInteractedTmdbIdsAsync(userId, scope!, cancellationToken);
-
-		var filtered = candidates
-			.Where(card => !interacted.Contains(card.TmdbId))
-			.Take(limit)
-			.ToList();
+		var cards = await swipeDeckService.GetDeckAsync(userId, scope!, limit, cancellationToken);
 
 		return Ok(new SwipeDeckResponse(
-			scope!.ServiceType.ToString().ToLowerInvariant(),
+			scope.ServiceType.ToString().ToLowerInvariant(),
 			scope.ServerId,
-			filtered.Select(Map).ToList()));
+			cards.Select(Map).ToList()));
 	}
 
+	/// <summary>Movie details for display (e.g. room matches). Allow guests so they can see matched movie title, poster, etc.</summary>
+	[Authorize(Policy = Policies.AllowGuests)]
 	[HttpGet("movies/{tmdbId:int}")]
 	public async Task<ActionResult<MovieDetailsDto>> GetMovieDetails(
 		[FromRoute] int tmdbId,
@@ -390,6 +377,67 @@ public sealed class TmdbController(
 		}
 
 		return Ok(details);
+	}
+
+	[Authorize(Policy = Policies.AdminOnly)]
+	[HttpGet("backup/download")]
+	public async Task<IActionResult> DownloadBackup(CancellationToken cancellationToken = default)
+	{
+		var includeImages = await backupRestoreService.GetIncludeImagesAsync(cancellationToken).ConfigureAwait(false);
+		var stream = new MemoryStream();
+		await backupRestoreService.WriteBackupZipAsync(stream, includeImages, cancellationToken).ConfigureAwait(false);
+		stream.Position = 0;
+		return File(stream, "application/zip", "tindarr-tmdb-backup.zip");
+	}
+
+	[Authorize(Policy = Policies.AdminOnly)]
+	[HttpPost("restore")]
+	[RequestSizeLimit(500 * 1024 * 1024)]
+	public async Task<ActionResult<TmdbRestoreResultDto>> Restore(IFormFile? file, CancellationToken cancellationToken = default)
+	{
+		if (file is null || file.Length == 0)
+		{
+			return BadRequest("No file uploaded.");
+		}
+
+		var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+		if (ext == ".zip")
+		{
+			await using var zipStream = file.OpenReadStream();
+			var result = await backupRestoreService.RestoreFromZipAsync(zipStream, cancellationToken).ConfigureAwait(false);
+			return Ok(result);
+		}
+
+		if (ext is ".sqlite" or ".sqlite3" or ".db")
+		{
+			string tempPath;
+			try
+			{
+				tempPath = Path.Combine(Path.GetTempPath(), $"tindarr-tmdb-restore-{Guid.NewGuid():N}{ext}");
+				await using (var stream = file.OpenReadStream())
+				using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+				{
+					await stream.CopyToAsync(fs, cancellationToken).ConfigureAwait(false);
+				}
+			}
+			catch (IOException ex)
+			{
+				return StatusCode(StatusCodes.Status500InternalServerError, ex.Message);
+			}
+
+			try
+			{
+				var result = await metadataStore.ImportFromFileAsync(tempPath, cancellationToken).ConfigureAwait(false);
+				return Ok(new TmdbRestoreResultDto(result.Inserted, result.Updated, result.Skipped, 0, result.NotImportedReasons));
+			}
+			finally
+			{
+				try { System.IO.File.Delete(tempPath); } catch { /* best-effort */ }
+			}
+		}
+
+		return BadRequest("File must be a ZIP backup (.zip) or SQLite database (.sqlite, .sqlite3, or .db).");
 	}
 
 	private static SwipeCardDto Map(SwipeCard card)

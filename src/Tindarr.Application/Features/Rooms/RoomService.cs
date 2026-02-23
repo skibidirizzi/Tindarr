@@ -141,6 +141,11 @@ public sealed class RoomService(
 		return rooms.GetAsync(roomId, cancellationToken);
 	}
 
+	public Task<IReadOnlyList<RoomState>> ListAsync(bool openOnly, CancellationToken cancellationToken)
+	{
+		return rooms.ListAliveAsync(openOnly, cancellationToken);
+	}
+
 	public async Task<IReadOnlyList<SwipeCard>> GetSwipeDeckAsync(
 		string roomId,
 		string userId,
@@ -163,6 +168,8 @@ public sealed class RoomService(
 			throw new InvalidOperationException("Swipe deck is not available until the room is closed to new users.");
 		}
 
+		const int minimumRuntimeMinutes = 80;
+
 		var candidates = await source.GetCandidatesAsync(userId, room.Scope, cancellationToken);
 
 		var roomInteractions = await interactions.ListAsync(roomId, limit: 50_000, cancellationToken);
@@ -170,6 +177,17 @@ public sealed class RoomService(
 			.Where(x => string.Equals(x.UserId, userId, StringComparison.Ordinal))
 			.Select(x => x.TmdbId)
 			.ToHashSet();
+
+		// Exclude only movies we know have runtime < 80 minutes; null runtime = unknown = keep.
+		var now = DateTimeOffset.UtcNow;
+		foreach (var card in candidates)
+		{
+			if (card.RuntimeMinutes is { } rt && rt < minimumRuntimeMinutes && !interacted.Contains(card.TmdbId))
+			{
+				await interactions.AddAsync(roomId, new Interaction(userId, room.Scope, card.TmdbId, InteractionAction.Nope, now), cancellationToken).ConfigureAwait(false);
+				interacted.Add(card.TmdbId);
+			}
+		}
 
 		var libraryIds = room.Scope.ServiceType == ServiceType.Radarr
 			? await libraryCache.GetTmdbIdsAsync(room.Scope, cancellationToken)
@@ -183,6 +201,7 @@ public sealed class RoomService(
 		}
 
 		var filtered = candidates
+			.Where(card => !card.RuntimeMinutes.HasValue || card.RuntimeMinutes.Value >= minimumRuntimeMinutes)
 			.Where(card => !interacted.Contains(card.TmdbId))
 			.Where(card => !shouldFilterByLibrary || !libraryIdSet!.Contains(card.TmdbId))
 			.Take(Math.Max(1, Math.Clamp(limit, 1, 50)))
@@ -231,7 +250,7 @@ public sealed class RoomService(
 		}
 
 		var list = await interactions.ListAsync(roomId, limit: 50_000, cancellationToken);
-		var minUsers = Math.Clamp(room.Members.Count, 2, 50);
+		var minUsers = Math.Clamp(room.Members.Count, 1, 50);
 		return matchingEngine.ComputeLikedByAllMatches(room.Scope, list, minUsers, minUserPercent: null);
 	}
 }

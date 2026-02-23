@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
+import TmdbAttribution from '../components/TmdbAttribution'
 import {
   apiClient,
   type AdminUserDto,
@@ -9,11 +10,13 @@ import {
   type CastingSettingsDto,
   type AdvancedSettingsDto,
   type AdminDbMovieListResponse,
+  type PopulateStatusDto,
   type CastingDiagnosticsDto,
   type RadarrRootFolderDto,
   type ServiceScopeOptionDto,
   type TmdbCacheSettingsDto,
   type TmdbBuildStatusDto,
+  type TmdbRestoreResultDto,
   type PlexAuthStatusResponse,
   type PlexServerDto,
   type PlexPinCreateResponse,
@@ -22,6 +25,7 @@ import {
   type UpdateJellyfinSettingsRequest,
   type EmbyServerDto,
   type UpdateEmbySettingsRequest,
+  type RegistrationSettingsDto,
 } from '../lib/api'
 
 // TMDB languages (ISO 639-1): top 10 pinned, then rest
@@ -101,7 +105,7 @@ export default function AdminConsole() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [selectedService, setSelectedService] = useState<string | null>('tindarr')
-  const [tindarrTab, setTindarrTab] = useState<'users' | 'rooms' | 'db' | 'casting' | 'advanced'>('users')
+  const [tindarrTab, setTindarrTab] = useState<'users' | 'rooms' | 'db' | 'casting' | 'advanced' | 'console'>('users')
 
   const servicePills = [
     { id: 'tindarr', label: 'Tindarr' },
@@ -110,6 +114,7 @@ export default function AdminConsole() {
     { id: 'plex', label: 'Plex' },
     { id: 'jellyfin', label: 'JellyFin' },
     { id: 'emby', label: 'Emby' },
+    { id: 'backup', label: 'Backup & Restore' },
   ]
   const [selectedMovie, setSelectedMovie] = useState<MovieDetails | null>(null)
 
@@ -152,7 +157,28 @@ export default function AdminConsole() {
   const [tmdbMessage, setTmdbMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [tmdbBuildDiscoverLimit, setTmdbBuildDiscoverLimit] = useState(50)
   const [tmdbBuildBypassLimit, setTmdbBuildBypassLimit] = useState(false)
+  const [tmdbImportLoading, setTmdbImportLoading] = useState(false)
+  const [tmdbImportSelectedFile, setTmdbImportSelectedFile] = useState<File | null>(null)
+  const [tmdbRestoreResult, setTmdbRestoreResult] = useState<TmdbRestoreResultDto | null>(null)
   const tmdbBuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const tmdbImportFileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Backup & Restore tab
+  const [backupLoading, setBackupLoading] = useState<string | null>(null)
+  const [backupMessage, setBackupMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [plexRestoreFile, setPlexRestoreFile] = useState<File | null>(null)
+  const [jellyfinRestoreFile, setJellyfinRestoreFile] = useState<File | null>(null)
+  const [embyRestoreFile, setEmbyRestoreFile] = useState<File | null>(null)
+  const plexRestoreInputRef = useRef<HTMLInputElement | null>(null)
+  const jellyfinRestoreInputRef = useRef<HTMLInputElement | null>(null)
+  const embyRestoreInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Console tab (mirror stdout/stderr)
+  const [consoleLines, setConsoleLines] = useState<string[]>([])
+  const [consoleMaxLines, setConsoleMaxLines] = useState(500)
+  const [consoleRefreshPaused, setConsoleRefreshPaused] = useState(false)
+  const [consoleHighlightText, setConsoleHighlightText] = useState('')
+  const consolePreRef = useRef<HTMLPreElement | null>(null)
 
   // Tindarr tabs state
   const [adminUsers, setAdminUsers] = useState<AdminUserDto[]>([])
@@ -170,9 +196,11 @@ export default function AdminConsole() {
   const [dbMoviesLoading, setDbMoviesLoading] = useState(false)
   const [dbPopulateLoading, setDbPopulateLoading] = useState(false)
   const [dbPopulateMessage, setDbPopulateMessage] = useState<string | null>(null)
+  const [dbPopulateStatus, setDbPopulateStatus] = useState<PopulateStatusDto | null>(null)
   const [castingDiagnostics, setCastingDiagnostics] = useState<CastingDiagnosticsDto | null>(null)
   const [castingDiagLoading, setCastingDiagLoading] = useState(false)
   const [tindarrMessage, setTindarrMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [registrationSettings, setRegistrationSettings] = useState<RegistrationSettingsDto | null>(null)
   const [updateCheck, setUpdateCheck] = useState<AdminUpdateCheckResponse | null>(null)
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false)
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
@@ -218,7 +246,7 @@ export default function AdminConsole() {
 
   // Check if user is admin and ensure Tindarr is selected when entering admin console
   useEffect(() => {
-    if (!user || user.username !== 'admin') {
+    if (!user || !user.isAdmin) {
       navigate('/')
       return
     }
@@ -227,10 +255,12 @@ export default function AdminConsole() {
 
   // Load Tindarr tab data when tab or service changes
   useEffect(() => {
-    if (selectedService !== 'tindarr' || user?.username !== 'admin') return
+    if (selectedService !== 'tindarr' || !user?.isAdmin) return
     if (tindarrTab === 'users') {
       setAdminUsersLoading(true)
-      apiClient.listAdminUsers().then((list) => { setAdminUsers(list); setAdminUsersLoading(false) }).catch(() => setAdminUsersLoading(false))
+      Promise.all([apiClient.listAdminUsers(), apiClient.getRegistrationSettings()])
+        .then(([list, reg]) => { setAdminUsers(list); setRegistrationSettings(reg); setAdminUsersLoading(false) })
+        .catch(() => setAdminUsersLoading(false))
     }
     if (tindarrTab === 'rooms') {
       setJoinAddressLoading(true)
@@ -245,7 +275,9 @@ export default function AdminConsole() {
     }
     if (tindarrTab === 'advanced') {
       setAdvancedLoading(true)
-      apiClient.getAdvancedSettings().then((s) => { setAdvancedSettings(s); setAdvancedLoading(false) }).catch(() => setAdvancedLoading(false))
+      Promise.all([apiClient.getAdvancedSettings(), apiClient.getRegistrationSettings()])
+        .then(([s, reg]) => { setAdvancedSettings(s); setRegistrationSettings(reg); setAdvancedLoading(false) })
+        .catch(() => setAdvancedLoading(false))
     }
     if (tindarrTab === 'db') {
       apiClient.getScopes().then(setDbScopes)
@@ -254,7 +286,7 @@ export default function AdminConsole() {
         apiClient.getAdminDbMovies(dbScope.serviceType, dbScope.serverId, 0, 50).then((r) => { setDbMovies(r); setDbMoviesLoading(false) }).catch(() => setDbMoviesLoading(false))
       } else setDbMovies(null)
     }
-  }, [selectedService, tindarrTab, user?.username, dbScope?.serviceType, dbScope?.serverId])
+  }, [selectedService, tindarrTab, user?.isAdmin, dbScope?.serviceType, dbScope?.serverId])
 
   useEffect(() => {
     if (tindarrTab === 'db' && dbScopes.length > 0 && !dbScope) setDbScope({ serviceType: dbScopes[0].serviceType, serverId: dbScopes[0].serverId })
@@ -297,6 +329,46 @@ export default function AdminConsole() {
       tmdbBuildPollRef.current = null
     }
   }, [tmdbBuildStatus?.state])
+
+  // Fetch populate status when DB tab is selected
+  useEffect(() => {
+    if (selectedService !== 'tindarr' || tindarrTab !== 'db') return
+    apiClient.getPopulateStatus().then(setDbPopulateStatus).catch(() => setDbPopulateStatus(null))
+  }, [selectedService, tindarrTab])
+
+  // Poll populate status when populate is running
+  useEffect(() => {
+    if (!dbPopulateStatus || dbPopulateStatus.state !== 'running') return
+    const poll = () => {
+      apiClient.getPopulateStatus().then(setDbPopulateStatus).catch(() => {})
+    }
+    const id = setInterval(poll, 2000)
+    return () => clearInterval(id)
+  }, [dbPopulateStatus?.state])
+
+  // Fetch and poll console output when Console tab is selected (pausable)
+  useEffect(() => {
+    if (selectedService !== 'tindarr' || tindarrTab !== 'console') return
+    const maxLines = Math.min(2000, Math.max(1, consoleMaxLines))
+    const fetchConsole = async () => {
+      try {
+        const dto = await apiClient.getConsoleOutput(maxLines)
+        setConsoleLines(dto.lines ?? [])
+      } catch {
+        setConsoleLines([])
+      }
+    }
+    fetchConsole()
+    if (consoleRefreshPaused) return
+    const id = setInterval(fetchConsole, 2000)
+    return () => clearInterval(id)
+  }, [selectedService, tindarrTab, consoleRefreshPaused, consoleMaxLines])
+
+  // Auto-scroll Console pre to bottom when lines change
+  useEffect(() => {
+    if (tindarrTab !== 'console' || !consolePreRef.current) return
+    consolePreRef.current.scrollTop = consolePreRef.current.scrollHeight
+  }, [tindarrTab, consoleLines])
 
   // Load Media Servers data when Plex / Jellyfin / Emby pill is selected
   useEffect(() => {
@@ -808,15 +880,22 @@ export default function AdminConsole() {
     setTmdbCredentialSaving(true)
     setTmdbMessage(null)
     try {
-      await apiClient.updateAdvancedSettings({
-        tmdbApiKeySet: true,
-        tmdbApiKey: tmdbCredentialApiKey || null,
-        tmdbReadAccessTokenSet: true,
-        tmdbReadAccessToken: tmdbCredentialReadToken || null
-      })
+      // Only set tmdbApiKeySet/tmdbReadAccessTokenSet when user entered a value for that field.
+      // Blank means "keep current"; sending Set: true with null clears the credential in the DB.
+      const apiKeyTrimmed = tmdbCredentialApiKey?.trim() ?? ''
+      const tokenTrimmed = tmdbCredentialReadToken?.trim() ?? ''
+      const request: Parameters<typeof apiClient.updateAdvancedSettings>[0] = {}
+      if (apiKeyTrimmed !== '') {
+        request.tmdbApiKeySet = true
+        request.tmdbApiKey = apiKeyTrimmed
+      }
+      if (tokenTrimmed !== '') {
+        request.tmdbReadAccessTokenSet = true
+        request.tmdbReadAccessToken = tokenTrimmed
+      }
+      const updated = await apiClient.updateAdvancedSettings(request)
+      setAdvancedSettings(updated)
       setTmdbMessage({ type: 'success', text: 'TMDB credentials saved' })
-      setTmdbCredentialApiKey('')
-      setTmdbCredentialReadToken('')
     } catch (err) {
       setTmdbMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save credentials' })
     } finally {
@@ -871,7 +950,97 @@ export default function AdminConsole() {
     }
   }
 
-  if (user?.username !== 'admin') {
+  const handleTmdbDownloadBackup = async () => {
+    setTmdbImportLoading(true)
+    setTmdbMessage(null)
+    try {
+      const blob = await apiClient.getTmdbBackupDownload()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'tindarr-tmdb-backup.zip'
+      a.click()
+      URL.revokeObjectURL(url)
+      setTmdbMessage({ type: 'success', text: 'Backup downloaded.' })
+    } catch (err) {
+      setTmdbMessage({ type: 'error', text: err instanceof Error ? err.message : 'Download failed' })
+    } finally {
+      setTmdbImportLoading(false)
+    }
+  }
+
+  const handleTmdbRestore = async () => {
+    if (!tmdbImportSelectedFile) return
+    const file = tmdbImportSelectedFile
+    setTmdbImportLoading(true)
+    setTmdbMessage(null)
+    setTmdbRestoreResult(null)
+    try {
+      const result = await apiClient.postTmdbRestore(file)
+      setTmdbRestoreResult(result)
+      if (result.notImportedReasons?.length) {
+        setTmdbMessage({ type: 'error', text: result.notImportedReasons.join(' ') })
+      } else {
+        setTmdbMessage({ type: 'success', text: 'Restore complete.' })
+      }
+      const cache = await apiClient.getTmdbCacheSettings()
+      setTmdbCacheSettings(cache)
+      setTmdbImportSelectedFile(null)
+      if (tmdbImportFileInputRef.current) tmdbImportFileInputRef.current.value = ''
+    } catch (err) {
+      setTmdbMessage({ type: 'error', text: err instanceof Error ? err.message : 'Restore failed' })
+      setTmdbRestoreResult(null)
+    } finally {
+      setTmdbImportLoading(false)
+    }
+  }
+
+  const runBackupAction = async (
+    actionId: string,
+    download: () => Promise<Blob>,
+    filename: string
+  ) => {
+    setBackupLoading(actionId)
+    setBackupMessage(null)
+    try {
+      const blob = await download()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      setBackupMessage({ type: 'success', text: 'Download complete.' })
+    } catch (err) {
+      setBackupMessage({ type: 'error', text: err instanceof Error ? err.message : 'Download failed' })
+    } finally {
+      setBackupLoading(null)
+    }
+  }
+
+  const runBackupRestore = async (
+    actionId: string,
+    file: File | null,
+    restore: (f: File) => Promise<{ message?: string }>,
+    clearFile: () => void,
+    inputRef: React.RefObject<HTMLInputElement | null>
+  ) => {
+    if (!file) return
+    setBackupLoading(actionId)
+    setBackupMessage(null)
+    try {
+      const result = await restore(file)
+      setBackupMessage({ type: 'success', text: result.message ?? 'Restore complete.' })
+      clearFile()
+      if (inputRef.current) inputRef.current.value = ''
+    } catch (err) {
+      setBackupMessage({ type: 'error', text: err instanceof Error ? err.message : 'Restore failed' })
+    } finally {
+      setBackupLoading(null)
+    }
+  }
+
+  if (!user?.isAdmin) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="text-center">
@@ -985,7 +1154,7 @@ export default function AdminConsole() {
         {/* Tindarr sub-tabs (when Tindarr pill is selected) */}
         {selectedService === 'tindarr' && (
           <div className="mb-8 flex gap-4 border-b border-gray-700 overflow-x-auto">
-            {(['users', 'rooms', 'db', 'casting', 'advanced'] as const).map((tab) => (
+            {(['users', 'rooms', 'db', 'casting', 'advanced', 'console'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => { setTindarrTab(tab); setTindarrMessage(null) }}
@@ -993,7 +1162,7 @@ export default function AdminConsole() {
                   tindarrTab === tab ? 'border-b-2 border-pink-500 text-pink-500' : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
-                {tab === 'users' ? 'User Management' : tab === 'rooms' ? 'Rooms' : tab === 'db' ? 'DB' : tab === 'casting' ? 'Casting' : 'Advanced'}
+                {tab === 'users' ? 'User Management' : tab === 'rooms' ? 'Rooms' : tab === 'db' ? 'DB' : tab === 'casting' ? 'Casting' : tab === 'advanced' ? 'Advanced' : 'Console'}
               </button>
             ))}
           </div>
@@ -1054,10 +1223,15 @@ export default function AdminConsole() {
                 <button
                   type="button"
                   onClick={async () => {
+                    const uid = newUserForm.userId.trim()
+                    if (/[^a-zA-Z0-9_-]/.test(uid)) {
+                      setTindarrMessage({ type: 'error', text: 'User ID must contain only letters, digits, hyphens, and underscores' })
+                      return
+                    }
                     try {
                       await apiClient.createAdminUser({
-                        userId: newUserForm.userId.trim(),
-                        displayName: newUserForm.displayName.trim() || newUserForm.userId.trim(),
+                        userId: uid,
+                        displayName: newUserForm.displayName.trim() || uid,
                         password: newUserForm.password,
                         roles: [newUserForm.role],
                       })
@@ -1075,6 +1249,11 @@ export default function AdminConsole() {
                 </button>
               </div>
             </div>
+            {registrationSettings?.requireAdminApprovalForNewUsers && (
+              <p className="mb-4 text-sm text-amber-200">
+                New users require admin approval before they can log in. Approve pending users below.
+              </p>
+            )}
             <div className="rounded-lg bg-gray-800 overflow-hidden">
               <h3 className="text-lg font-bold text-white p-4 border-b border-gray-700">Current users</h3>
               {adminUsersLoading ? (
@@ -1134,21 +1313,23 @@ export default function AdminConsole() {
                           <button
                             type="button"
                             onClick={async () => {
-                              const current = u.roles[0] || 'Contributor'
-                              const next = nextRole(current)
+                              const isPending = u.roles.length === 1 && u.roles[0].toLowerCase() === 'pendingapproval'
+                              const next = isPending
+                                ? (registrationSettings?.defaultRole ?? 'Contributor')
+                                : nextRole(u.roles[0] || 'Contributor')
                               try {
                                 await apiClient.setAdminUserRoles(u.userId, { roles: [next] })
                                 setAdminUsers((prev) => prev.map((x) => (x.userId === u.userId ? { ...x, roles: [next] } : x)))
-                                setTindarrMessage({ type: 'success', text: 'Role updated' })
+                                setTindarrMessage({ type: 'success', text: isPending ? 'User approved' : 'Role updated' })
                               } catch (err) {
-                                setTindarrMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed' })
+                                setTindarrMessage({ type: 'error', text: err instanceof Error ? err.message : (isPending ? 'Approve failed' : 'Failed') })
                               }
                             }}
-                            className={`rounded-full px-3 py-1 text-xs font-semibold text-white ${rolePillClass(u.roles[0] || 'Contributor')}`}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold text-white cursor-pointer hover:opacity-90 ${u.roles.length === 1 && u.roles[0].toLowerCase() === 'pendingapproval' ? 'bg-amber-600/80' : rolePillClass(u.roles[0] || 'Contributor')}`}
                           >
-                            {u.roles[0] || '—'}
+                            {u.roles.length === 1 && u.roles[0].toLowerCase() === 'pendingapproval' ? 'Pending approval' : (u.roles[0] || '—')}
                           </button>
-                          <p className="text-xs text-gray-500 mt-0.5">Click: Contributor → Curator → Admin → Contributor</p>
+                          <p className="text-xs text-gray-500 mt-0.5">Click: {u.roles.length === 1 && u.roles[0].toLowerCase() === 'pendingapproval' ? 'Approve (set to default role)' : 'Contributor → Curator → Admin → Contributor'}</p>
                         </td>
                         <td className="px-4 py-3">
                           {u.hasPassword ? (
@@ -1296,7 +1477,7 @@ export default function AdminConsole() {
                 <div className="flex items-end gap-2">
                   <button
                     type="button"
-                    disabled={dbPopulateLoading}
+                    disabled={dbPopulateLoading || dbPopulateStatus?.state === 'running'}
                     onClick={async () => {
                       setDbPopulateMessage(null)
                       setDbPopulateLoading(true)
@@ -1308,6 +1489,7 @@ export default function AdminConsole() {
                           runFetchAllImages: true,
                         })
                         setDbPopulateMessage(res.message || 'Populate started.')
+                        apiClient.getPopulateStatus().then(setDbPopulateStatus).catch(() => {})
                         if (dbScope) {
                           const r = await apiClient.getAdminDbMovies(dbScope.serviceType, dbScope.serverId, 0, 50)
                           setDbMovies(r)
@@ -1320,12 +1502,43 @@ export default function AdminConsole() {
                     }}
                     className="rounded-full bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700 disabled:opacity-50"
                   >
-                    {dbPopulateLoading ? 'Populating…' : 'Populate'}
+                    {dbPopulateLoading || dbPopulateStatus?.state === 'running' ? 'Populating…' : 'Populate'}
                   </button>
                   {dbPopulateMessage && <span className="text-sm text-gray-400">{dbPopulateMessage}</span>}
                 </div>
               </div>
               <p className="text-xs text-gray-500 mb-2">Populate fetches Details and Images into DB / tmdb-images when not cached.</p>
+              {dbPopulateStatus && (() => {
+                const isRunning = dbPopulateStatus.state === 'running'
+                const total = dbPopulateStatus.detailsTotal + dbPopulateStatus.imagesTotal
+                const done = dbPopulateStatus.detailsDone + dbPopulateStatus.imagesDone
+                const progressPct = isRunning && total > 0 ? Math.min(1, done / total) : 0
+                const showProgressBar = isRunning && total > 0
+                return (
+                  <div className="mt-4 rounded-lg border border-gray-700 overflow-hidden relative">
+                    {showProgressBar && (
+                      <div className="absolute inset-0 bg-gray-800" aria-hidden>
+                        <div
+                          className="h-full bg-pink-600/40 transition-all duration-500 ease-out"
+                          style={{ width: `${progressPct * 100}%` }}
+                        />
+                      </div>
+                    )}
+                    <div className="relative z-10 p-4 bg-gray-900/50">
+                      <p className="text-white font-medium mb-1">Populate: {dbPopulateStatus.state}</p>
+                      {dbPopulateStatus.lastMessage && <p className="text-sm text-gray-400">{dbPopulateStatus.lastMessage}</p>}
+                      <p className="text-sm text-gray-400 mt-1">
+                        Details: {dbPopulateStatus.detailsDone} / {dbPopulateStatus.detailsTotal} · Images: {dbPopulateStatus.imagesDone} / {dbPopulateStatus.imagesTotal}
+                      </p>
+                      {showProgressBar && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          {Math.round(progressPct * 100)}%
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
               {dbMoviesLoading && <p className="text-gray-400">Loading...</p>}
               {dbMovies && !dbMoviesLoading && (
                 dbViewMode === 'table' ? (
@@ -1511,6 +1724,78 @@ export default function AdminConsole() {
             {tindarrMessage && (
               <div className={`rounded-lg px-4 py-3 ${tindarrMessage.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{tindarrMessage.text}</div>
             )}
+
+            {/* Registration (editable) */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-bold text-white mb-4">Registration</h3>
+              {advancedLoading && !registrationSettings ? (
+                <p className="text-gray-400">Loading...</p>
+              ) : registrationSettings ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <label className="flex items-center gap-2 text-white cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={registrationSettings.allowOpenRegistration}
+                        onChange={(e) => setRegistrationSettings((s) => s ? { ...s, allowOpenRegistration: e.target.checked, ...(e.target.checked ? {} : { requireAdminApprovalForNewUsers: false }) } : null)}
+                        className="rounded"
+                      />
+                      Allow open registration
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className={`flex items-center gap-2 cursor-pointer ${!registrationSettings.allowOpenRegistration ? 'text-gray-500' : 'text-white'}`}>
+                      <input
+                        type="checkbox"
+                        checked={registrationSettings.requireAdminApprovalForNewUsers}
+                        onChange={(e) => setRegistrationSettings((s) => s ? { ...s, requireAdminApprovalForNewUsers: e.target.checked } : null)}
+                        disabled={!registrationSettings.allowOpenRegistration}
+                        className="rounded disabled:opacity-50"
+                      />
+                      Require admin approval for new users
+                    </label>
+                    {!registrationSettings.allowOpenRegistration && (
+                      <span className="text-xs text-gray-500">Only when open registration is on</span>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Default role for new users</label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = ROLES_CYCLE.includes(registrationSettings.defaultRole as RoleLevel) ? registrationSettings.defaultRole : 'Contributor'
+                        setRegistrationSettings((s) => s ? { ...s, defaultRole: nextRole(current) } : null)
+                      }}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold text-white cursor-pointer hover:opacity-90 ${rolePillClass(ROLES_CYCLE.includes(registrationSettings.defaultRole as RoleLevel) ? registrationSettings.defaultRole : 'Contributor')}`}
+                    >
+                      {ROLES_CYCLE.includes(registrationSettings.defaultRole as RoleLevel) ? registrationSettings.defaultRole : 'Contributor'}
+                    </button>
+                    <p className="text-xs text-gray-500 mt-0.5">Click: Contributor → Curator → Admin → Contributor</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!registrationSettings) return
+                      try {
+                        const updated = await apiClient.updateRegistrationSettings({
+                          allowOpenRegistration: registrationSettings.allowOpenRegistration,
+                          requireAdminApprovalForNewUsers: registrationSettings.allowOpenRegistration ? registrationSettings.requireAdminApprovalForNewUsers : false,
+                          defaultRole: registrationSettings.defaultRole || null,
+                        })
+                        setRegistrationSettings(updated)
+                        setTindarrMessage({ type: 'success', text: 'Registration settings saved' })
+                      } catch (err) {
+                        setTindarrMessage({ type: 'error', text: err instanceof Error ? err.message : 'Save failed' })
+                      }
+                    }}
+                    className="rounded-full bg-pink-600 px-4 py-2 text-sm font-semibold text-white hover:bg-pink-700"
+                  >
+                    Save registration
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             <div className="rounded-lg bg-gray-800 p-6">
               <h3 className="text-lg font-bold text-white mb-4">TINDARR API Rate Limit</h3>
               <p className="text-gray-400 text-sm mb-2">Default 200 requests per 1 minute window.</p>
@@ -1555,6 +1840,63 @@ export default function AdminConsole() {
             >
               Save
             </button>
+          </div>
+        )}
+
+        {/* Tindarr: Console (mirror stdout/stderr) */}
+        {selectedService === 'tindarr' && tindarrTab === 'console' && (
+          <div className="rounded-lg bg-gray-800 p-6 text-left">
+            <div className="mb-4 flex flex-wrap items-center gap-4">
+              <h3 className="text-lg font-bold text-white">Console output</h3>
+              <label className="flex items-center gap-2 text-sm text-gray-300">
+                <span>Lines:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={2000}
+                  value={consoleMaxLines}
+                  onChange={(e) => setConsoleMaxLines(Math.min(2000, Math.max(1, parseInt(e.target.value, 10) || 500)))}
+                  className="w-20 rounded bg-gray-700 px-2 py-1 text-white focus:outline-none focus:ring-2 focus:ring-pink-500"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => setConsoleRefreshPaused((p) => !p)}
+                className="rounded bg-gray-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-500"
+              >
+                {consoleRefreshPaused ? 'Resume' : 'Pause'}
+              </button>
+            </div>
+            <div className="mb-4">
+              <label className="block text-sm text-gray-400 mb-1">Highlight lines containing (comma-separated)</label>
+              <input
+                type="text"
+                value={consoleHighlightText}
+                onChange={(e) => setConsoleHighlightText(e.target.value)}
+                placeholder="e.g. trace, mykey, /api/foo"
+                className="w-full max-w-md rounded bg-gray-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-pink-500"
+              />
+            </div>
+            <p className="text-sm text-gray-400 mb-4">
+              {consoleRefreshPaused
+                ? 'Paused. Click Resume to refresh again.'
+                : `Last ${Math.min(2000, Math.max(1, consoleMaxLines))} lines from the API process (refreshes every 2s).`}
+            </p>
+            <pre
+              ref={consolePreRef}
+              className="w-full max-h-[70vh] overflow-auto rounded bg-gray-900 p-4 text-left text-sm font-mono whitespace-pre-wrap break-words"
+            >
+              {consoleLines.length === 0
+                ? <span className="text-gray-400">(no output yet)</span>
+                : consoleLines.map((line, i) => {
+                    const isError = /\berror\b|exception|\bfail(ed)?\b|stack\s+trace|\s4\d{2}\s|\s5\d{2}\s|4\d{2}\]|5\d{2}\]/i.test(line)
+                    const isSuccess = /\s200\s|\s201\s|\s204\s|200\]|201\]|204\]|\s200$|\s201$|\s204$/i.test(line)
+                    const highlightTerms = consoleHighlightText.split(',').map((t) => t.trim()).filter(Boolean)
+                    const isHighlight = highlightTerms.length > 0 && highlightTerms.some((term) => line.toLowerCase().includes(term.toLowerCase()))
+                    const className = isError ? 'text-red-400' : isSuccess ? 'text-green-400' : isHighlight ? 'text-amber-300' : 'text-gray-300'
+                    return <span key={i} className={className} style={{ display: 'block' }}>{line}{i < consoleLines.length - 1 ? '\n' : ''}</span>
+                  })}
+            </pre>
           </div>
         )}
 
@@ -1792,6 +2134,7 @@ export default function AdminConsole() {
                 {tmdbMessage.text}
               </div>
             )}
+            <TmdbAttribution compact />
 
             {/* API / Read Access Token */}
             <div className="rounded-lg bg-gray-800 p-6">
@@ -1893,6 +2236,7 @@ export default function AdminConsole() {
               {tmdbCacheLoading || !tmdbCacheSettings ? (
                 <p className="text-gray-400">Load cache settings first.</p>
               ) : (
+                <>
                 <div className="space-y-4">
                   <p className="text-sm text-gray-400">Restrict prewarm to language/region (optional):</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2009,7 +2353,213 @@ export default function AdminConsole() {
                     )
                   })()}
                 </div>
+
+                <div className="mt-6 rounded-lg border border-gray-700 p-4">
+                  <h3 className="text-sm font-medium text-white mb-3">Backup and restore</h3>
+                  <p className="text-xs text-gray-400 mb-3">
+                    Download a ZIP of tmdbmetadata.db and cached images (if configured), or restore from a backup ZIP or SQLite file (restore runs while the app is running).
+                  </p>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <button
+                      type="button"
+                      onClick={handleTmdbDownloadBackup}
+                      disabled={tmdbImportLoading}
+                      className="rounded bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      Download backup (ZIP)
+                    </button>
+                    <input
+                      ref={tmdbImportFileInputRef}
+                      type="file"
+                      accept=".zip,.sqlite,.sqlite3,.db"
+                      className="hidden"
+                      onChange={(e) => setTmdbImportSelectedFile(e.target.files?.[0] ?? null)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => tmdbImportFileInputRef.current?.click()}
+                      disabled={tmdbImportLoading}
+                      className="rounded bg-gray-600 px-3 py-2 text-sm text-white hover:bg-gray-500 disabled:opacity-50"
+                    >
+                      Choose file
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTmdbRestore}
+                      disabled={tmdbImportLoading || !tmdbImportSelectedFile}
+                      className="rounded bg-gray-600 px-3 py-2 text-sm text-white hover:bg-gray-500 disabled:opacity-50"
+                    >
+                      Restore from file
+                    </button>
+                    {tmdbImportSelectedFile && (
+                      <span className="text-xs text-gray-400">{tmdbImportSelectedFile.name}</span>
+                    )}
+                  </div>
+                  {tmdbImportLoading && <p className="text-xs text-gray-500 mt-2">Please wait…</p>}
+                  {tmdbRestoreResult && !tmdbImportLoading && (
+                    <div className="mt-3 rounded border border-gray-600 bg-gray-800/60 p-3 text-sm">
+                      <p className="font-medium text-white mb-2">Restore result</p>
+                      <ul className="space-y-1 text-gray-300">
+                        <li><span className="text-green-400">New:</span> {tmdbRestoreResult.inserted}</li>
+                        <li><span className="text-amber-400">Already existed (updated):</span> {tmdbRestoreResult.updated}</li>
+                        {tmdbRestoreResult.skipped > 0 && (
+                          <li><span className="text-gray-400">Skipped:</span> {tmdbRestoreResult.skipped}</li>
+                        )}
+                        {tmdbRestoreResult.imagesRestored > 0 && (
+                          <li><span className="text-blue-400">Images restored:</span> {tmdbRestoreResult.imagesRestored}</li>
+                        )}
+                      </ul>
+                      {tmdbRestoreResult.notImportedReasons?.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-red-400 font-medium">Not imported (reasons):</p>
+                          <ul className="list-disc list-inside text-red-300/90 text-xs mt-1 space-y-0.5">
+                            {tmdbRestoreResult.notImportedReasons.map((r, i) => (
+                              <li key={i}>{r}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                </>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Backup & Restore pill content */}
+        {selectedService === 'backup' && (
+          <div className="space-y-6">
+            {backupMessage && (
+              <div className={`rounded-lg px-4 py-3 ${backupMessage.type === 'success' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                {backupMessage.text}
+              </div>
+            )}
+            <p className="text-gray-400 text-sm">
+              Download backups or restore from a file. Master backup includes all databases and tmdb-images.
+            </p>
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-amber-200 text-sm">
+              <strong>Master backup and main database (tindarr.db) are manual restore only:</strong> stop the application (and Tindarr.Workers service if running), replace the files in the data directory, then restart. Media server caches (Plex, Jellyfin, Emby) and TMDB can be restored from file using the buttons below.
+            </div>
+
+            {/* Master */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Master backup</h3>
+              <p className="text-sm text-gray-400 mb-3">All DBs (tindarr, Plex, Jellyfin, Emby, TMDB) and tmdb-images in one ZIP. To restore: stop the app/service, extract the ZIP and copy files to the data directory, then restart.</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  disabled={backupLoading !== null}
+                  onClick={() => runBackupAction('master-dl', () => apiClient.getMasterBackupDownload(), 'tindarr-master-backup.zip')}
+                  className="rounded bg-pink-600 px-4 py-2 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'master-dl' ? 'Downloading…' : 'Download master (ZIP)'}
+                </button>
+              </div>
+            </div>
+
+            {/* Main (tindarr.db) */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Main database (tindarr.db)</h3>
+              <p className="text-sm text-gray-400 mb-3">Manual restore only: stop the app/service, replace tindarr.db in the data directory, then restart.</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  disabled={backupLoading !== null}
+                  onClick={() => runBackupAction('main-dl', () => apiClient.getMainBackupDownload(), 'tindarr.db')}
+                  className="rounded bg-pink-600 px-4 py-2 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'main-dl' ? 'Downloading…' : 'Download'}
+                </button>
+              </div>
+            </div>
+
+            {/* Plex */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Plex cache (plexcache.db)</h3>
+              <p className="text-sm text-gray-400 mb-3">Download or restore from file (restore runs while the app is running).</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  disabled={backupLoading !== null}
+                  onClick={() => runBackupAction('plex-dl', () => apiClient.getPlexBackupDownload(), 'plexcache.db')}
+                  className="rounded bg-pink-600 px-4 py-2 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'plex-dl' ? 'Downloading…' : 'Download'}
+                </button>
+                <input type="file" accept=".db,.sqlite,.sqlite3" ref={plexRestoreInputRef} className="hidden" onChange={(e) => setPlexRestoreFile(e.target.files?.[0] ?? null)} />
+                <button type="button" onClick={() => plexRestoreInputRef.current?.click()} disabled={backupLoading !== null} className="rounded bg-gray-600 px-4 py-2 text-white font-medium hover:bg-gray-500 disabled:opacity-50">Choose file…</button>
+                <button
+                  type="button"
+                  disabled={backupLoading !== null || !plexRestoreFile}
+                  onClick={() => runBackupRestore('plex-restore', plexRestoreFile, (f) => apiClient.postPlexRestore(f), () => setPlexRestoreFile(null), plexRestoreInputRef)}
+                  className="rounded bg-amber-600 px-4 py-2 text-white font-medium hover:bg-amber-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'plex-restore' ? 'Restoring…' : 'Restore'}
+                </button>
+                {plexRestoreFile && <span className="text-sm text-gray-400">{plexRestoreFile.name}</span>}
+              </div>
+            </div>
+
+            {/* Jellyfin */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Jellyfin cache (jellyfincache.db)</h3>
+              <p className="text-sm text-gray-400 mb-3">Download or restore from file (restore runs while the app is running).</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  disabled={backupLoading !== null}
+                  onClick={() => runBackupAction('jellyfin-dl', () => apiClient.getJellyfinBackupDownload(), 'jellyfincache.db')}
+                  className="rounded bg-pink-600 px-4 py-2 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'jellyfin-dl' ? 'Downloading…' : 'Download'}
+                </button>
+                <input type="file" accept=".db,.sqlite,.sqlite3" ref={jellyfinRestoreInputRef} className="hidden" onChange={(e) => setJellyfinRestoreFile(e.target.files?.[0] ?? null)} />
+                <button type="button" onClick={() => jellyfinRestoreInputRef.current?.click()} disabled={backupLoading !== null} className="rounded bg-gray-600 px-4 py-2 text-white font-medium hover:bg-gray-500 disabled:opacity-50">Choose file…</button>
+                <button
+                  type="button"
+                  disabled={backupLoading !== null || !jellyfinRestoreFile}
+                  onClick={() => runBackupRestore('jellyfin-restore', jellyfinRestoreFile, (f) => apiClient.postJellyfinRestore(f), () => setJellyfinRestoreFile(null), jellyfinRestoreInputRef)}
+                  className="rounded bg-amber-600 px-4 py-2 text-white font-medium hover:bg-amber-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'jellyfin-restore' ? 'Restoring…' : 'Restore'}
+                </button>
+                {jellyfinRestoreFile && <span className="text-sm text-gray-400">{jellyfinRestoreFile.name}</span>}
+              </div>
+            </div>
+
+            {/* Emby */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">Emby cache (embycache.db)</h3>
+              <p className="text-sm text-gray-400 mb-3">Download or restore from file (restore runs while the app is running).</p>
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="button"
+                  disabled={backupLoading !== null}
+                  onClick={() => runBackupAction('emby-dl', () => apiClient.getEmbyBackupDownload(), 'embycache.db')}
+                  className="rounded bg-pink-600 px-4 py-2 text-white font-medium hover:bg-pink-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'emby-dl' ? 'Downloading…' : 'Download'}
+                </button>
+                <input type="file" accept=".db,.sqlite,.sqlite3" ref={embyRestoreInputRef} className="hidden" onChange={(e) => setEmbyRestoreFile(e.target.files?.[0] ?? null)} />
+                <button type="button" onClick={() => embyRestoreInputRef.current?.click()} disabled={backupLoading !== null} className="rounded bg-gray-600 px-4 py-2 text-white font-medium hover:bg-gray-500 disabled:opacity-50">Choose file…</button>
+                <button
+                  type="button"
+                  disabled={backupLoading !== null || !embyRestoreFile}
+                  onClick={() => runBackupRestore('emby-restore', embyRestoreFile, (f) => apiClient.postEmbyRestore(f), () => setEmbyRestoreFile(null), embyRestoreInputRef)}
+                  className="rounded bg-amber-600 px-4 py-2 text-white font-medium hover:bg-amber-500 disabled:opacity-50"
+                >
+                  {backupLoading === 'emby-restore' ? 'Restoring…' : 'Restore'}
+                </button>
+                {embyRestoreFile && <span className="text-sm text-gray-400">{embyRestoreFile.name}</span>}
+              </div>
+            </div>
+
+            {/* TMDB — link to TMDB tab */}
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-semibold text-white mb-3">TMDB (tmdbmetadata.db + tmdb-images)</h3>
+              <p className="text-sm text-gray-400 mb-3">Backup and restore TMDB metadata and image cache from the <button type="button" onClick={() => setSelectedService('tmdb')} className="text-pink-400 hover:underline">TMDB</button> tab.</p>
             </div>
           </div>
         )}

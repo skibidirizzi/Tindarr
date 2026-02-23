@@ -12,7 +12,7 @@
 #>
 
 Param(
-    # Include build\scripts and installer in the count
+    # Include build\scripts in the count
     [switch]$IncludeBuild
 )
 
@@ -106,7 +106,6 @@ $searchDirs = @(
 )
 if ($IncludeBuild) {
     $searchDirs += (Join-Path $root 'build')
-    $searchDirs += (Join-Path $root 'installer')
 }
 
 $byExt = @{}

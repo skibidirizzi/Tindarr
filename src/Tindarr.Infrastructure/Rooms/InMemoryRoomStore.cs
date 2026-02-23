@@ -35,6 +35,21 @@ public sealed class InMemoryRoomStore(IRoomLifetimeProvider lifetimes) : IRoomSt
 		return state;
 	}
 
+	public async Task<IReadOnlyList<RoomState>> ListAliveAsync(bool openOnly, CancellationToken cancellationToken)
+	{
+		var keys = _rooms.Keys.ToList();
+		var result = new List<RoomState>();
+		foreach (var id in keys)
+		{
+			var state = await GetAsync(id, cancellationToken).ConfigureAwait(false);
+			if (state != null && (!openOnly || !state.IsClosed))
+			{
+				result.Add(state);
+			}
+		}
+		return result;
+	}
+
 	public Task UpdateAsync(RoomState state, CancellationToken cancellationToken)
 	{
 		_rooms[state.RoomId] = state;
