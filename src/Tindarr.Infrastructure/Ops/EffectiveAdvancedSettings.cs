@@ -18,7 +18,7 @@ public sealed class EffectiveAdvancedSettings(
 	private readonly CleanupOptions _cleanupConfig = cleanupOptions.Value;
 	private readonly TmdbOptions _tmdbConfig = tmdbOptions.Value;
 
-	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string? TmdbReadAccessToken, string DateTimeDisplayMode, string TimeZoneId, string DateOrder)? _cache;
+	private (ApiRateLimitOptions Api, CleanupOptions Cleanup, string? TmdbApiKey, string? TmdbReadAccessToken, string DateTimeDisplayMode, string TimeZoneId, string DateOrder, OutgoingWebhookSettings Webhooks)? _cache;
 	private readonly object _lock = new();
 	private const string DefaultDateTimeDisplayMode = "locale";
 	private const string DefaultTimeZoneId = "Local";
@@ -83,6 +83,12 @@ public sealed class EffectiveAdvancedSettings(
 	{
 		EnsureLoaded();
 		return _cache!.Value.DateOrder;
+	}
+
+	public OutgoingWebhookSettings GetOutgoingWebhookSettings()
+	{
+		EnsureLoaded();
+		return _cache!.Value.Webhooks!;
 	}
 
 	/// <summary>Cache TTL so Workers (separate process) picks up credentials saved via API within a minute.</summary>
@@ -155,9 +161,55 @@ public sealed class EffectiveAdvancedSettings(
 			var displayMode = NormalizeDateTimeDisplayMode(record?.DateTimeDisplayMode);
 			var timeZoneId = NormalizeTimeZoneId(record?.TimeZoneId);
 			var dateOrder = NormalizeDateOrder(record?.DateOrder);
-			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), string.IsNullOrWhiteSpace(tmdbToken) ? null : tmdbToken!.Trim(), displayMode, timeZoneId, dateOrder);
+			var webhooks = MergeOutgoingWebhooks(record);
+			_cache = (api, cleanup, string.IsNullOrWhiteSpace(tmdbKey) ? null : tmdbKey!.Trim(), string.IsNullOrWhiteSpace(tmdbToken) ? null : tmdbToken!.Trim(), displayMode, timeZoneId, dateOrder, webhooks);
 			_cacheExpiresAt = now + CacheTtl;
 			_cacheLoadedAt = record?.UpdatedAtUtc ?? DateTimeOffset.MinValue;
+		}
+	}
+
+	private static OutgoingWebhookSettings MergeOutgoingWebhooks(AdvancedSettingsRecord? record)
+	{
+		var enabled = record?.NotificationsEnabled ?? false;
+		var urls = ParseUrlsJson(record?.NotificationsWebhookUrlsJson);
+		var events = (OutgoingWebhookEvents)(record?.NotificationsEventsMask ?? 0);
+
+		// Defensive: clamp to known flags.
+		var allowed = OutgoingWebhookEvents.Likes
+			| OutgoingWebhookEvents.Matches
+			| OutgoingWebhookEvents.RoomCreated
+			| OutgoingWebhookEvents.Login
+			| OutgoingWebhookEvents.UserCreated
+			| OutgoingWebhookEvents.AuthFailures;
+		events &= allowed;
+
+		return new OutgoingWebhookSettings(enabled, urls, events);
+	}
+
+	private static IReadOnlyList<string> ParseUrlsJson(string? json)
+	{
+		if (string.IsNullOrWhiteSpace(json))
+		{
+			return Array.Empty<string>();
+		}
+
+		try
+		{
+			var parsed = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
+			if (parsed is null || parsed.Count == 0)
+			{
+				return Array.Empty<string>();
+			}
+
+			return parsed
+				.Select(x => (x ?? string.Empty).Trim())
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList();
+		}
+		catch
+		{
+			return Array.Empty<string>();
 		}
 	}
 

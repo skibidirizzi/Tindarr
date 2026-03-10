@@ -34,7 +34,7 @@ public sealed class MatchingEngine : IMatchingEngine
 		var normalizedMinUsers = minUsers;
 		if (normalizedMinUsers > 0)
 		{
-			normalizedMinUsers = Math.Clamp(normalizedMinUsers, 1, 50);
+			normalizedMinUsers = Math.Clamp(normalizedMinUsers, 2, 50);
 		}
 		else if (minUserPercent is null)
 		{

@@ -1,8 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Tindarr.Application.Abstractions.Notifications;
 using Tindarr.Application.Abstractions.Domain;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Interactions;
+using Tindarr.Application.Options;
 using Tindarr.Domain.Common;
 
 namespace Tindarr.Workers.Jobs;
@@ -13,7 +15,8 @@ namespace Tindarr.Workers.Jobs;
 /// </summary>
 public sealed class MatchComputationWorker(
 	IServiceScopeFactory scopeFactory,
-	ILogger<MatchComputationWorker> logger) : PeriodicBackgroundService(logger)
+	ILogger<MatchComputationWorker> logger,
+	IOutgoingWebhookNotifier webhooks) : PeriodicBackgroundService(logger)
 {
 	private const string MatchSystemUserId = "match";
 
@@ -98,6 +101,16 @@ public sealed class MatchComputationWorker(
 				if (created)
 				{
 					enqueued++;
+					webhooks.TryNotify(
+						OutgoingWebhookEvents.Matches,
+						"tindarr.match.found",
+						new
+						{
+							scope = new { serviceType = tmdbScope.ServiceType.ToString().ToLowerInvariant(), serverId = tmdbScope.ServerId },
+							tmdbId,
+							radarr = new { serverId = radarrScope.ServerId }
+						},
+						now);
 				}
 			}
 

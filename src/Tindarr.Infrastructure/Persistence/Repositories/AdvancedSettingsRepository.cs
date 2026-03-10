@@ -34,6 +34,9 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 				CleanupIntervalMinutes = upsert.CleanupIntervalMinutes,
 				CleanupPurgeGuestUsers = upsert.CleanupPurgeGuestUsers,
 				CleanupGuestUserMaxAgeHours = upsert.CleanupGuestUserMaxAgeHours,
+				NotificationsEnabled = upsert.NotificationsEnabled,
+				NotificationsWebhookUrlsJson = upsert.NotificationsWebhookUrlsJson,
+				NotificationsEventsMask = upsert.NotificationsEventsMask,
 				TmdbApiKey = upsert.TmdbApiKey,
 				TmdbReadAccessToken = upsert.TmdbReadAccessToken,
 				DateTimeDisplayMode = upsert.DateTimeDisplayMode,
@@ -52,6 +55,9 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupIntervalMinutes = upsert.CleanupIntervalMinutes;
 			entity.CleanupPurgeGuestUsers = upsert.CleanupPurgeGuestUsers;
 			entity.CleanupGuestUserMaxAgeHours = upsert.CleanupGuestUserMaxAgeHours;
+			entity.NotificationsEnabled = upsert.NotificationsEnabled;
+			entity.NotificationsWebhookUrlsJson = upsert.NotificationsWebhookUrlsJson;
+			entity.NotificationsEventsMask = upsert.NotificationsEventsMask;
 			entity.TmdbApiKey = upsert.TmdbApiKey;
 			entity.TmdbReadAccessToken = upsert.TmdbReadAccessToken;
 			entity.DateTimeDisplayMode = upsert.DateTimeDisplayMode;
@@ -69,6 +75,9 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupIntervalMinutes,
 			entity.CleanupPurgeGuestUsers,
 			entity.CleanupGuestUserMaxAgeHours,
+			entity.NotificationsEnabled,
+			entity.NotificationsWebhookUrlsJson,
+			entity.NotificationsEventsMask,
 			entity.TmdbApiKey,
 			entity.TmdbReadAccessToken,
 			entity.DateTimeDisplayMode,
@@ -87,6 +96,9 @@ public sealed class AdvancedSettingsRepository(TindarrDbContext db) : IAdvancedS
 			entity.CleanupIntervalMinutes,
 			entity.CleanupPurgeGuestUsers,
 			entity.CleanupGuestUserMaxAgeHours,
+			entity.NotificationsEnabled,
+			entity.NotificationsWebhookUrlsJson,
+			entity.NotificationsEventsMask,
 			entity.TmdbApiKey,
 			entity.TmdbReadAccessToken,
 			entity.DateTimeDisplayMode,

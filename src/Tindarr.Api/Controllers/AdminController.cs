@@ -2,11 +2,12 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Notifications;
 using Tindarr.Application.Abstractions.Ops;
-using Tindarr.Application.Interfaces.Interactions;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Options;
@@ -15,6 +16,7 @@ using Tindarr.Contracts.Interactions;
 using Tindarr.Contracts.Users;
 using Tindarr.Domain.Common;
 using Tindarr.Domain.Interactions;
+using Tindarr.Infrastructure.Persistence;
 
 namespace Tindarr.Api.Controllers;
 
@@ -23,7 +25,7 @@ namespace Tindarr.Api.Controllers;
 [Route("api/v1/admin")]
 public sealed class AdminController(
 	IUserRepository users,
-	IInteractionStore interactionStore,
+	TindarrDbContext db,
 	IJoinAddressSettingsRepository joinAddressSettings,
 	ICastingSettingsRepository castingSettings,
 	IServiceSettingsRepository serviceSettings,
@@ -34,7 +36,8 @@ public sealed class AdminController(
 	IEffectiveRegistrationOptions effectiveRegistration,
 	IRegistrationSettingsRepository registrationSettings,
 	Tindarr.Infrastructure.Casting.CastingSessionStore castingSessionStore,
-	IConsoleOutputCapture consoleOutputCapture) : ControllerBase
+	IConsoleOutputCapture consoleOutputCapture,
+	IOutgoingWebhookNotifier webhooks) : ControllerBase
 {
 	private static readonly AdvancedSettingsApiRateLimitDto ApiRateLimitDefaults = new(
 		Enabled: true,
@@ -46,6 +49,17 @@ public sealed class AdminController(
 		IntervalMinutes: (int)TimeSpan.FromHours(6).TotalMinutes,
 		PurgeGuestUsers: true,
 		GuestUserMaxAgeHours: (int)TimeSpan.FromDays(1).TotalHours);
+
+	private static readonly AdvancedSettingsNotificationsDto NotificationsDefaults = new(
+		Enabled: false,
+		WebhookUrls: Array.Empty<string>(),
+		Events: new AdvancedSettingsNotificationsEventsDto(
+			Likes: false,
+			Matches: false,
+			RoomCreated: false,
+			Login: false,
+			UserCreated: false,
+			AuthFailures: false));
 
 	private static readonly AdvancedSettingsDisplayDto DisplayDefaults = new(
 		DateTimeDisplayMode: "locale",
@@ -100,6 +114,7 @@ public sealed class AdminController(
 	{
 		var api = effectiveAdvancedSettings.GetApiRateLimitOptions();
 		var cleanup = effectiveAdvancedSettings.GetCleanupOptions();
+		var webhooks = effectiveAdvancedSettings.GetOutgoingWebhookSettings();
 		var hasTmdbApiKey = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbApiKey());
 		var hasTmdbReadAccessToken = !string.IsNullOrWhiteSpace(effectiveAdvancedSettings.GetEffectiveTmdbReadAccessToken());
 		var dateTimeDisplayMode = effectiveAdvancedSettings.GetDateTimeDisplayMode();
@@ -115,6 +130,17 @@ public sealed class AdminController(
 				cleanup.PurgeGuestUsers,
 				(int)cleanup.GuestUserMaxAge.TotalHours),
 			CleanupDefaults,
+			Notifications: new AdvancedSettingsNotificationsDto(
+				webhooks.Enabled,
+				webhooks.Urls,
+				new AdvancedSettingsNotificationsEventsDto(
+					Likes: webhooks.Events.HasFlag(OutgoingWebhookEvents.Likes),
+					Matches: webhooks.Events.HasFlag(OutgoingWebhookEvents.Matches),
+					RoomCreated: webhooks.Events.HasFlag(OutgoingWebhookEvents.RoomCreated),
+					Login: webhooks.Events.HasFlag(OutgoingWebhookEvents.Login),
+					UserCreated: webhooks.Events.HasFlag(OutgoingWebhookEvents.UserCreated),
+					AuthFailures: webhooks.Events.HasFlag(OutgoingWebhookEvents.AuthFailures))),
+			NotificationsDefaults,
 			Tmdb: new AdvancedSettingsTmdbDto(hasTmdbApiKey, hasTmdbReadAccessToken),
 			Display: new AdvancedSettingsDisplayDto(dateTimeDisplayMode, timeZoneId, dateOrder),
 			DisplayDefaults);
@@ -174,6 +200,49 @@ public sealed class AdminController(
 			dateOrder = v;
 		}
 
+		bool? notificationsEnabledForUpsert = null;
+		string? notificationsWebhookUrlsJsonForUpsert = null;
+		int? notificationsEventsMaskForUpsert = null;
+		if (request.NotificationsSet == true)
+		{
+			notificationsEnabledForUpsert = request.NotificationsEnabled ?? false;
+			var urls = (request.NotificationsWebhookUrls ?? Array.Empty<string>())
+				.Select(x => (x ?? string.Empty).Trim())
+				.Where(x => !string.IsNullOrWhiteSpace(x))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList();
+
+			if (urls.Count > 20)
+			{
+				return BadRequest("At most 20 webhook URLs are allowed.");
+			}
+
+			foreach (var url in urls)
+			{
+				if (url.Length > 2048)
+				{
+					return BadRequest("Webhook URL must be at most 2048 characters.");
+				}
+				if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+				{
+					return BadRequest("Webhook URL must be an absolute http/https URL.");
+				}
+			}
+
+			notificationsWebhookUrlsJsonForUpsert = urls.Count == 0
+				? null
+				: JsonSerializer.Serialize(urls);
+
+			OutgoingWebhookEvents mask = OutgoingWebhookEvents.None;
+			if (request.NotificationsEventLikes == true) mask |= OutgoingWebhookEvents.Likes;
+			if (request.NotificationsEventMatches == true) mask |= OutgoingWebhookEvents.Matches;
+			if (request.NotificationsEventRoomCreated == true) mask |= OutgoingWebhookEvents.RoomCreated;
+			if (request.NotificationsEventLogin == true) mask |= OutgoingWebhookEvents.Login;
+			if (request.NotificationsEventUserCreated == true) mask |= OutgoingWebhookEvents.UserCreated;
+			if (request.NotificationsEventAuthFailures == true) mask |= OutgoingWebhookEvents.AuthFailures;
+			notificationsEventsMaskForUpsert = (int)mask;
+		}
+
 		// Only update TmdbApiKey when client explicitly sets it (TmdbApiKeySet == true); otherwise keep existing.
 		string? tmdbApiKeyForUpsert = request.TmdbApiKeySet == true
 			? (string.IsNullOrWhiteSpace(request.TmdbApiKey) ? null : request.TmdbApiKey!.Trim())
@@ -183,7 +252,12 @@ public sealed class AdminController(
 			? (string.IsNullOrWhiteSpace(request.TmdbReadAccessToken) ? null : request.TmdbReadAccessToken!.Trim())
 			: null;
 		AdvancedSettingsRecord? existingRecord = null;
-		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true || tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true || dateTimeDisplayMode is null || timeZoneId is null || dateOrder is null)
+		if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true
+			|| tmdbReadAccessTokenForUpsert is null && request.TmdbReadAccessTokenSet != true
+			|| dateTimeDisplayMode is null
+			|| timeZoneId is null
+			|| dateOrder is null
+			|| request.NotificationsSet != true)
 		{
 			existingRecord = await advancedSettings.GetAsync(cancellationToken).ConfigureAwait(false);
 			if (tmdbApiKeyForUpsert is null && request.TmdbApiKeySet != true)
@@ -206,6 +280,12 @@ public sealed class AdminController(
 			{
 				dateOrder = existingRecord?.DateOrder;
 			}
+			if (request.NotificationsSet != true)
+			{
+				notificationsEnabledForUpsert = existingRecord?.NotificationsEnabled;
+				notificationsWebhookUrlsJsonForUpsert = existingRecord?.NotificationsWebhookUrlsJson;
+				notificationsEventsMaskForUpsert = existingRecord?.NotificationsEventsMask;
+			}
 		}
 
 		var upsert = new AdvancedSettingsUpsert(
@@ -216,6 +296,9 @@ public sealed class AdminController(
 			request.CleanupIntervalMinutes,
 			request.CleanupPurgeGuestUsers,
 			request.CleanupGuestUserMaxAgeHours,
+			notificationsEnabledForUpsert,
+			notificationsWebhookUrlsJsonForUpsert,
+			notificationsEventsMaskForUpsert,
 			tmdbApiKeyForUpsert,
 			tmdbReadAccessTokenForUpsert,
 			dateTimeDisplayMode,
@@ -628,6 +711,19 @@ public sealed class AdminController(
 		await users.SetRolesAsync(id, roles, cancellationToken);
 		var finalRoles = await users.GetRolesAsync(id, cancellationToken);
 
+		webhooks.TryNotify(
+			OutgoingWebhookEvents.UserCreated,
+			"tindarr.user.created",
+			new
+			{
+				userId = id,
+				displayName,
+				roles = finalRoles,
+				createdByUserId = User.GetUserId(),
+				createdAtUtc = now
+			},
+			now);
+
 		return Ok(new UserDto(id, displayName, now, finalRoles.ToList(), HasPassword: true));
 	}
 
@@ -709,10 +805,11 @@ public sealed class AdminController(
 		[FromQuery] string? serverId,
 		[FromQuery] SwipeActionDto? action,
 		[FromQuery] int? tmdbId,
+		[FromQuery] DateTimeOffset? sinceUtc,
 		[FromQuery] int limit = 200,
 		CancellationToken cancellationToken = default)
 	{
-		limit = Math.Clamp(limit, 1, 500);
+		limit = Math.Clamp(limit, 1, 5000);
 
 		ServiceScope? scope = null;
 		if (!string.IsNullOrWhiteSpace(serviceType) || !string.IsNullOrWhiteSpace(serverId))
@@ -724,22 +821,80 @@ public sealed class AdminController(
 		}
 
 		InteractionAction? mappedAction = action is null ? null : MapAction(action.Value);
-		var items = await interactionStore.SearchAsync(
-			string.IsNullOrWhiteSpace(userId) ? null : userId.Trim().ToLowerInvariant(),
-			scope,
-			mappedAction,
-			tmdbId,
-			limit,
-			cancellationToken);
+
+		var query = db.Interactions.AsNoTracking().AsQueryable();
+
+		var normalizedUserId = string.IsNullOrWhiteSpace(userId) ? null : userId.Trim().ToLowerInvariant();
+		if (!string.IsNullOrWhiteSpace(normalizedUserId))
+		{
+			query = query.Where(x => x.UserId == normalizedUserId);
+		}
+
+		if (scope is not null)
+		{
+			query = query.Where(x => x.ServiceType == scope.ServiceType && x.ServerId == scope.ServerId);
+		}
+
+		if (mappedAction is not null)
+		{
+			query = query.Where(x => x.Action == mappedAction.Value);
+		}
+
+		if (tmdbId is not null)
+		{
+			query = query.Where(x => x.TmdbId == tmdbId.Value);
+		}
+
+		if (sinceUtc is not null)
+		{
+			query = query.Where(x => x.CreatedAtUtc >= sinceUtc.Value);
+		}
+
+		var items = await query
+			.OrderByDescending(x => x.Id)
+			.Take(limit)
+			.ToListAsync(cancellationToken);
 
 		return Ok(new AdminInteractionSearchResponse(
 			items.Select(x => new AdminInteractionDto(
+				x.Id,
 				x.UserId,
-				x.Scope.ServiceType.ToString().ToLowerInvariant(),
-				x.Scope.ServerId,
+				x.ServiceType.ToString().ToLowerInvariant(),
+				x.ServerId,
 				x.TmdbId,
 				MapAction(x.Action),
 				x.CreatedAtUtc)).ToList()));
+	}
+
+	[HttpDelete("interactions/{id:long}")]
+	public async Task<IActionResult> DeleteInteraction([FromRoute] long id, CancellationToken cancellationToken)
+	{
+		var deleted = await db.Interactions
+			.Where(x => x.Id == id)
+			.ExecuteDeleteAsync(cancellationToken);
+
+		return deleted == 0 ? NotFound() : NoContent();
+	}
+
+	[HttpPost("interactions/delete")]
+	public async Task<IActionResult> DeleteInteractions([FromBody] AdminDeleteInteractionsRequest request, CancellationToken cancellationToken)
+	{
+		var ids = request.Ids
+			.Where(x => x > 0)
+			.Distinct()
+			.Take(5000)
+			.ToArray();
+
+		if (ids.Length == 0)
+		{
+			return BadRequest("Ids is required.");
+		}
+
+		await db.Interactions
+			.Where(x => ids.Contains(x.Id))
+			.ExecuteDeleteAsync(cancellationToken);
+
+		return NoContent();
 	}
 
 	private static InteractionAction MapAction(SwipeActionDto action)

@@ -10,6 +10,12 @@ public sealed class AdvancedSettingsEntity
 	public int? CleanupIntervalMinutes { get; set; }
 	public bool? CleanupPurgeGuestUsers { get; set; }
 	public int? CleanupGuestUserMaxAgeHours { get; set; }
+	/// <summary>Outgoing webhook notifications enabled. Null = default (disabled).</summary>
+	public bool? NotificationsEnabled { get; set; }
+	/// <summary>JSON array of webhook URLs. Null/empty = none.</summary>
+	public string? NotificationsWebhookUrlsJson { get; set; }
+	/// <summary>Bitmask of enabled outgoing webhook events. Null/0 = none.</summary>
+	public int? NotificationsEventsMask { get; set; }
 	/// <summary>TMDB API key (v3). When set, overrides Tmdb:ApiKey / TMDB_API_KEY. Never returned to clients.</summary>
 	public string? TmdbApiKey { get; set; }
 	/// <summary>TMDB Read Access Token (Bearer). When set, overrides Tmdb:ReadAccessToken. Never returned to clients.</summary>

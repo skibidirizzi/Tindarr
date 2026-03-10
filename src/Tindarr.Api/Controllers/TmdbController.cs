@@ -353,8 +353,8 @@ public sealed class TmdbController(
 		var cards = await swipeDeckService.GetDeckAsync(userId, scope!, limit, cancellationToken);
 
 		return Ok(new SwipeDeckResponse(
-			scope.ServiceType.ToString().ToLowerInvariant(),
-			scope.ServerId,
+			scope!.ServiceType.ToString().ToLowerInvariant(),
+			scope!.ServerId,
 			cards.Select(Map).ToList()));
 	}
 
@@ -365,18 +365,60 @@ public sealed class TmdbController(
 		[FromRoute] int tmdbId,
 		CancellationToken cancellationToken = default)
 	{
+		// Prefer live TMDB details when possible.
+		var details = await tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken);
+		if (details is not null)
+		{
+			return Ok(details);
+		}
+
+		// Fallback: if TMDB credentials are missing (or TMDB is unavailable), serve cached details
+		// from the local metadata store so UI can still render posters/backdrops.
+		var stored = await metadataStore.GetMovieAsync(tmdbId, cancellationToken);
+		if (stored is not null)
+		{
+			var settings = await metadataStore.GetSettingsAsync(cancellationToken);
+			return Ok(new MovieDetailsDto(
+				TmdbId: stored.TmdbId,
+				Title: stored.Title,
+				Overview: stored.Overview,
+				PosterUrl: BuildImageUrl(settings, tmdbOptions.Value.ImageBaseUrl, stored.PosterPath, tmdbOptions.Value.PosterSize),
+				BackdropUrl: BuildImageUrl(settings, tmdbOptions.Value.ImageBaseUrl, stored.BackdropPath, tmdbOptions.Value.BackdropSize),
+				ReleaseDate: stored.ReleaseDate,
+				ReleaseYear: stored.ReleaseYear,
+				MpaaRating: stored.MpaaRating,
+				Rating: stored.Rating,
+				VoteCount: stored.VoteCount,
+				Genres: stored.Genres,
+				Regions: stored.Regions,
+				OriginalLanguage: stored.OriginalLanguage,
+				RuntimeMinutes: stored.RuntimeMinutes));
+		}
+
 		if (!effectiveAdvancedSettings.HasEffectiveTmdbCredentials())
 		{
-			return StatusCode(StatusCodes.Status503ServiceUnavailable, "TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken).");
+			return StatusCode(StatusCodes.Status503ServiceUnavailable,
+				"TMDB is not configured (missing Tmdb__ApiKey or Tmdb__ReadAccessToken), and no cached movie details were found.");
 		}
 
-		var details = await tmdbClient.GetMovieDetailsAsync(tmdbId, cancellationToken);
-		if (details is null)
+		return NotFound();
+	}
+
+	private static string? BuildImageUrl(TmdbMetadataSettings settings, string imageBaseUrl, string? path, string size)
+	{
+		if (string.IsNullOrWhiteSpace(path))
 		{
-			return NotFound();
+			return null;
 		}
 
-		return Ok(details);
+		var normalizedPath = path.Trim().TrimStart('/');
+		var normalizedSize = (size ?? "original").Trim().Trim('/');
+		if (settings.PosterMode == TmdbPosterMode.LocalProxy && settings.ImageCacheMaxMb > 0)
+		{
+			return $"/api/v1/tmdb/images/{normalizedSize}/{normalizedPath}";
+		}
+		var baseUrl = (imageBaseUrl ?? string.Empty).TrimEnd('/');
+		return $"{baseUrl}/{normalizedSize}/{normalizedPath}";
 	}
 
 	[Authorize(Policy = Policies.AdminOnly)]

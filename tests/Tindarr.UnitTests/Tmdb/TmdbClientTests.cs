@@ -527,7 +527,15 @@ public sealed class TmdbClientTests
 
 		public string GetDateOrder() => "locale";
 
+		public OutgoingWebhookSettings GetOutgoingWebhookSettings() =>
+			new OutgoingWebhookSettings(
+				Enabled: false,
+				Urls: Array.Empty<string>(),
+				Events: OutgoingWebhookEvents.None);
+
 		public void Invalidate() { }
+
+		public void SignalSettingsUpdated(DateTimeOffset dbUpdatedAtUtc) { }
 	}
 }
 

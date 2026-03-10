@@ -1,16 +1,18 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Tindarr.Application.Abstractions.Notifications;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Features.Auth;
 using Tindarr.Application.Interfaces.Auth;
+using Tindarr.Application.Options;
 using Tindarr.Contracts.Auth;
 
 namespace Tindarr.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/auth")]
-public sealed class AuthController(IAuthService authService, ICurrentUser currentUser) : ControllerBase
+public sealed class AuthController(IAuthService authService, ICurrentUser currentUser, IOutgoingWebhookNotifier webhooks) : ControllerBase
 {
 	[HttpPost("guest")]
 	[AllowAnonymous]
@@ -43,6 +45,16 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 		try
 		{
 			var session = await authService.RegisterAsync(request.UserId, request.DisplayName, request.Password, cancellationToken);
+			webhooks.TryNotify(
+				OutgoingWebhookEvents.UserCreated,
+				"tindarr.user.created",
+				new
+				{
+					userId = session.UserId,
+					displayName = session.DisplayName,
+					roles = session.Roles,
+					pendingApproval = session.PendingApproval
+				});
 			return Ok(Map(session));
 		}
 		catch (ArgumentException ex)
@@ -62,6 +74,15 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 		try
 		{
 			var session = await authService.LoginAsync(request.UserId, request.Password, cancellationToken);
+			webhooks.TryNotify(
+				OutgoingWebhookEvents.Login,
+				"tindarr.auth.login",
+				new
+				{
+					userId = session.UserId,
+					displayName = session.DisplayName,
+					roles = session.Roles
+				});
 			return Ok(Map(session));
 		}
 		catch (ArgumentException ex)
@@ -70,6 +91,15 @@ public sealed class AuthController(IAuthService authService, ICurrentUser curren
 		}
 		catch (InvalidOperationException ex)
 		{
+			webhooks.TryNotify(
+				OutgoingWebhookEvents.AuthFailures,
+				"tindarr.auth.failure",
+				new
+				{
+					operation = "login",
+					userId = request.UserId,
+					message = ex.Message
+				});
 			return BadRequest(new { message = ex.Message });
 		}
 	}

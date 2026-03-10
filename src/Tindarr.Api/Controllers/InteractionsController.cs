@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Notifications;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Interfaces.Interactions;
+using Tindarr.Application.Options;
 using Tindarr.Contracts.Interactions;
 using Tindarr.Domain.Common;
 using Tindarr.Domain.Interactions;
@@ -15,7 +17,8 @@ namespace Tindarr.Api.Controllers;
 public sealed class InteractionsController(
 	IInteractionService interactionService,
 	IRadarrPendingAddRepository radarrPendingAdds,
-	IServiceSettingsRepository settingsRepo) : ControllerBase
+	IServiceSettingsRepository settingsRepo,
+	IOutgoingWebhookNotifier webhooks) : ControllerBase
 {
 	[HttpGet]
 	public async Task<ActionResult<InteractionListResponse>> List(
@@ -72,6 +75,22 @@ public sealed class InteractionsController(
 		var action = MapAction(request.Action);
 		var userId = User.GetUserId();
 		var interaction = await interactionService.AddAsync(userId, scope!, request.TmdbId, action, cancellationToken);
+
+		if (action is InteractionAction.Like or InteractionAction.Superlike)
+		{
+			webhooks.TryNotify(
+				OutgoingWebhookEvents.Likes,
+				"tindarr.like",
+				new
+				{
+					userId,
+					scope = new { serviceType = scope!.ServiceType.ToString().ToLowerInvariant(), serverId = scope!.ServerId },
+					tmdbId = interaction.TmdbId,
+					action = interaction.Action,
+					createdAtUtc = interaction.CreatedAtUtc
+				},
+				interaction.CreatedAtUtc);
+		}
 
 		if (scope!.ServiceType == ServiceType.Tmdb && action == InteractionAction.Superlike && isSuperlikePrivileged)
 		{

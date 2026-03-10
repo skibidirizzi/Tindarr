@@ -9,9 +9,24 @@ public sealed record AdvancedSettingsDto(
 	AdvancedSettingsApiRateLimitDto ApiRateLimitDefaults,
 	AdvancedSettingsCleanupDto Cleanup,
 	AdvancedSettingsCleanupDto CleanupDefaults,
+	AdvancedSettingsNotificationsDto Notifications,
+	AdvancedSettingsNotificationsDto NotificationsDefaults,
 	AdvancedSettingsTmdbDto Tmdb,
 	AdvancedSettingsDisplayDto Display,
 	AdvancedSettingsDisplayDto DisplayDefaults);
+
+public sealed record AdvancedSettingsNotificationsDto(
+	bool Enabled,
+	IReadOnlyList<string> WebhookUrls,
+	AdvancedSettingsNotificationsEventsDto Events);
+
+public sealed record AdvancedSettingsNotificationsEventsDto(
+	bool Likes,
+	bool Matches,
+	bool RoomCreated,
+	bool Login,
+	bool UserCreated,
+	bool AuthFailures);
 
 /// <summary>
 /// UI display preferences (e.g. date/time format, time zone, date order). Readable by any authenticated user via settings/display.

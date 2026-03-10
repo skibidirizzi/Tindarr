@@ -166,6 +166,14 @@ builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
 builder.Services.AddHttpClient<IJellyfinClient, JellyfinClient>();
 builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
 
+builder.Services.AddSingleton<Tindarr.Infrastructure.Notifications.OutgoingWebhookQueue>();
+builder.Services.AddSingleton<Tindarr.Application.Abstractions.Notifications.IOutgoingWebhookNotifier, Tindarr.Infrastructure.Notifications.OutgoingWebhookNotifier>();
+builder.Services.AddHttpClient(Tindarr.Workers.Jobs.OutgoingWebhookDeliveryWorker.HttpClientName, c =>
+{
+	c.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.OutgoingWebhookDeliveryWorker>();
+
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ITmdbCache>(sp =>
 {
