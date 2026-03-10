@@ -279,6 +279,9 @@ public sealed class CastingControllerSessionLifecycleTests
 				Members: []));
 		}
 
+		public Task<IReadOnlyList<RoomState>> ListAsync(bool openOnly, CancellationToken cancellationToken)
+			=> Task.FromResult<IReadOnlyList<RoomState>>([]);
+
 		public Task<IReadOnlyList<SwipeCard>> GetSwipeDeckAsync(string roomId, string userId, int limit, CancellationToken cancellationToken)
 			=> throw new NotImplementedException();
 

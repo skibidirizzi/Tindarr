@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="Tindarr" Language="1033" Version="1.2.2" Manufacturer="Tindarr" UpgradeCode="B7E9E7E5-9A2C-4E8B-9F1D-3C5E7E9A2B4D">
+  <Product Id="*" Name="Tindarr" Language="1033" Version="1.3.0" Manufacturer="Tindarr" UpgradeCode="B7E9E7E5-9A2C-4E8B-9F1D-3C5E7E9A2B4D">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" InstallPrivileges="elevated" Description="Tindarr Web API and UI" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of Tindarr is already installed." />
@@ -43,6 +43,14 @@
 
     <!-- Post-install: write port to port.txt (install dir + ProgramData\Tindarr), optionally run batch files elevated. -->
     <Binary Id="PostInstallVbs" SourceFile="TindarrPostInstall.vbs" />
+
+    <!-- Init defaults (UI + silent): read existing port/service/firewall state and set properties. -->
+    <CustomAction Id="InitFromExisting" BinaryKey="PostInstallVbs" VBScriptCall="InitFromExisting" Execute="immediate" Return="ignore" />
+
+    <!-- Upgrade safety: stop the service to avoid locked files. -->
+    <CustomAction Id="StopServiceOnUpgradeInstall" BinaryKey="PostInstallVbs" VBScriptCall="StopService" Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="StopServiceOnUpgradeUninstall" BinaryKey="PostInstallVbs" VBScriptCall="StopService" Execute="deferred" Impersonate="no" Return="ignore" />
+
     <CustomAction Id="SetPostInstallData" Property="PostInstall" Value="[INSTALLDIR]|[PORT_PROPERTY]|[INSTALL_SERVICE]|[OPEN_PORTS]|[CommonAppDataFolder]" />
     <CustomAction Id="PostInstall" BinaryKey="PostInstallVbs" VBScriptCall="PostInstall" Execute="deferred" Impersonate="no" Return="check" />
 
@@ -52,10 +60,13 @@
 
     <!-- SetPostInstallData must run before deferred phase so PostInstall receives CustomActionData. -->
     <InstallExecuteSequence>
-      <Custom Action="SetPostInstallData" After="CostFinalize">NOT Installed</Custom>
+      <Custom Action="InitFromExisting" After="CostFinalize">NOT Installed</Custom>
+      <Custom Action="SetPostInstallData" After="InitFromExisting">NOT Installed</Custom>
+      <Custom Action="StopServiceOnUpgradeInstall" After="InstallInitialize">WIX_UPGRADE_DETECTED</Custom>
       <Custom Action="PostInstall" After="InstallFiles">NOT Installed</Custom>
-      <Custom Action="SetUninstallData" Before="RemoveFiles">REMOVE~="ALL"</Custom>
-      <Custom Action="PostUninstall" After="SetUninstallData">REMOVE~="ALL"</Custom>
+      <Custom Action="StopServiceOnUpgradeUninstall" Before="RemoveFiles">UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="SetUninstallData" Before="RemoveFiles">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="PostUninstall" After="SetUninstallData">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
     </InstallExecuteSequence>
 
     <UIRef Id="WixUI_Tindarr" />

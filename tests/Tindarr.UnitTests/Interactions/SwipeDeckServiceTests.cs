@@ -14,10 +14,10 @@ public sealed class SwipeDeckServiceTests
 		var scope = ServiceScope.TryCreate("plex", "server1", out var s) ? s! : throw new Exception("scope");
 
 		var source = new StubSource([
-			new SwipeCard(1, "A", null, null, null, null, null),
-			new SwipeCard(2, "B", null, null, null, null, null),
-			new SwipeCard(3, "C", null, null, null, null, null),
-			new SwipeCard(4, "D", null, null, null, null, null)
+			new SwipeCard(1, "A", null, null, null, null, null, null),
+			new SwipeCard(2, "B", null, null, null, null, null, null),
+			new SwipeCard(3, "C", null, null, null, null, null, null),
+			new SwipeCard(4, "D", null, null, null, null, null, null)
 		]);
 
 		var store = new StubStore(interacted: [2, 3]);
@@ -69,6 +69,11 @@ public sealed class SwipeDeckServiceTests
 	private sealed class StubLibraryCache : ILibraryCacheRepository
 	{
 		public Task<IReadOnlyCollection<int>> GetTmdbIdsAsync(ServiceScope scope, CancellationToken cancellationToken)
+		{
+			return Task.FromResult<IReadOnlyCollection<int>>(Array.Empty<int>());
+		}
+
+		public Task<IReadOnlyCollection<int>> GetTmdbIdsForServiceTypeAsync(ServiceType serviceType, CancellationToken cancellationToken)
 		{
 			return Task.FromResult<IReadOnlyCollection<int>>(Array.Empty<int>());
 		}

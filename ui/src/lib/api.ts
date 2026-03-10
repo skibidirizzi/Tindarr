@@ -802,6 +802,34 @@ class ApiClient {
     )
   }
 
+  async searchAdminInteractions(request: {
+    userId?: string
+    serviceType?: string
+    serverId?: string
+    action?: 'Like' | 'Nope' | 'Skip' | 'Superlike'
+    tmdbId?: number
+    sinceUtc?: string
+    limit?: number
+  }): Promise<AdminInteractionSearchResponse> {
+    const params = new URLSearchParams()
+    if (request.userId) params.set('userId', request.userId)
+    if (request.serviceType) params.set('serviceType', request.serviceType)
+    if (request.serverId) params.set('serverId', request.serverId)
+    if (request.action) params.set('action', request.action)
+    if (request.tmdbId != null) params.set('tmdbId', String(request.tmdbId))
+    if (request.sinceUtc) params.set('sinceUtc', request.sinceUtc)
+    params.set('limit', String(Math.max(1, Math.min(5000, request.limit ?? 200))))
+    return this.request<AdminInteractionSearchResponse>(`/api/v1/admin/interactions?${params}`)
+  }
+
+  async deleteAdminInteraction(id: number): Promise<void> {
+    await this.delete(`/api/v1/admin/interactions/${id}`)
+  }
+
+  async deleteAdminInteractions(ids: number[]): Promise<void> {
+    await this.post('/api/v1/admin/interactions/delete', { ids })
+  }
+
   // Radarr (admin): all endpoints require query params serviceType=radarr & serverId
   private radarrParams(serviceType: string, serverId: string): string {
     return `serviceType=${encodeURIComponent(serviceType)}&serverId=${encodeURIComponent(serverId)}`
@@ -1355,6 +1383,20 @@ export interface AdminUserDto {
   roles: string[]
   hasPassword: boolean
 }
+
+export interface AdminInteractionDto {
+  id: number
+  userId: string
+  serviceType: string
+  serverId: string
+  tmdbId: number
+  action: 'Like' | 'Nope' | 'Skip' | 'Superlike'
+  createdAtUtc: string
+}
+
+export interface AdminInteractionSearchResponse {
+  items: AdminInteractionDto[]
+}
 export interface AdminCreateUserRequest {
   userId: string
   displayName: string
@@ -1423,11 +1465,26 @@ export interface AdvancedSettingsCleanupDto {
   purgeGuestUsers: boolean
   guestUserMaxAgeHours: number
 }
+export interface AdvancedSettingsNotificationsEventsDto {
+  likes: boolean
+  matches: boolean
+  roomCreated: boolean
+  login: boolean
+  userCreated: boolean
+  authFailures: boolean
+}
+export interface AdvancedSettingsNotificationsDto {
+  enabled: boolean
+  webhookUrls: string[]
+  events: AdvancedSettingsNotificationsEventsDto
+}
 export interface AdvancedSettingsDto {
   apiRateLimit: AdvancedSettingsApiRateLimitDto
   apiRateLimitDefaults: AdvancedSettingsApiRateLimitDto
   cleanup: AdvancedSettingsCleanupDto
   cleanupDefaults: AdvancedSettingsCleanupDto
+  notifications: AdvancedSettingsNotificationsDto
+  notificationsDefaults: AdvancedSettingsNotificationsDto
   tmdb: { hasTmdbApiKey: boolean; hasTmdbReadAccessToken: boolean }
   display: { dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string }
   displayDefaults: { dateTimeDisplayMode: string; timeZoneId: string; dateOrder: string }
@@ -1443,6 +1500,15 @@ export interface UpdateAdvancedSettingsRequest {
   cleanupIntervalMinutes?: number | null
   cleanupPurgeGuestUsers?: boolean | null
   cleanupGuestUserMaxAgeHours?: number | null
+  notificationsSet?: boolean | null
+  notificationsEnabled?: boolean | null
+  notificationsWebhookUrls?: string[] | null
+  notificationsEventLikes?: boolean | null
+  notificationsEventMatches?: boolean | null
+  notificationsEventRoomCreated?: boolean | null
+  notificationsEventLogin?: boolean | null
+  notificationsEventUserCreated?: boolean | null
+  notificationsEventAuthFailures?: boolean | null
   tmdbApiKeySet?: boolean | null
   tmdbApiKey?: string | null
   tmdbReadAccessTokenSet?: boolean | null

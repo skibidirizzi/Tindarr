@@ -14,7 +14,7 @@ public sealed class PlexOptions
 
 	public string Device { get; init; } = "Tindarr";
 
-	public string Version { get; init; } = "1.2.2";
+	public string Version { get; init; } = "1.3.0";
 
 	// Optional shared secret for Plex webhook ingestion.
 	// If set, callers must provide it via X-Tindarr-Webhook-Token header or ?token= query.

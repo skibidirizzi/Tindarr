@@ -43,6 +43,11 @@ public interface IEffectiveAdvancedSettings
 	string GetDateOrder();
 
 	/// <summary>
+	/// Outgoing webhook notification settings (DB overrides merged with defaults).
+	/// </summary>
+	OutgoingWebhookSettings GetOutgoingWebhookSettings();
+
+	/// <summary>
 	/// Call after updating advanced settings so next get uses fresh values.
 	/// </summary>
 	void Invalidate();

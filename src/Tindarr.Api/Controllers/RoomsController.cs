@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Tindarr.Api.Auth;
+using Tindarr.Application.Abstractions.Notifications;
 using Tindarr.Application.Abstractions.Persistence;
 using Tindarr.Application.Abstractions.Security;
 using Tindarr.Application.Interfaces.Ops;
@@ -23,7 +24,8 @@ public sealed class RoomsController(
 	IBaseUrlResolver baseUrlResolver,
 	IJoinAddressSettingsRepository joinAddressSettings,
 	IOptions<BaseUrlOptions> baseUrlOptions,
-	ILogger<RoomsController> logger) : ControllerBase
+	ILogger<RoomsController> logger,
+	IOutgoingWebhookNotifier webhooks) : ControllerBase
 {
 	[HttpPost]
 	public async Task<ActionResult<CreateRoomResponse>> Create([FromBody] CreateRoomRequest request, CancellationToken cancellationToken)
@@ -37,6 +39,19 @@ public sealed class RoomsController(
 		try
 		{
 			var room = await roomService.CreateAsync(userId, scope!, request.RoomName, cancellationToken);
+			webhooks.TryNotify(
+				OutgoingWebhookEvents.RoomCreated,
+				"tindarr.room.created",
+				new
+				{
+					roomId = room.RoomId,
+					ownerUserId = room.OwnerUserId,
+					createdByUserId = userId,
+					scope = new { serviceType = scope!.ServiceType.ToString().ToLowerInvariant(), serverId = scope!.ServerId },
+					roomName = request.RoomName,
+					createdAtUtc = room.CreatedAtUtc
+				},
+				room.CreatedAtUtc);
 			return Ok(new CreateRoomResponse(
 				room.RoomId,
 				room.OwnerUserId,
@@ -284,6 +299,21 @@ public sealed class RoomsController(
 		{
 			var action = MapAction(request.Action);
 			var interaction = await roomService.AddInteractionAsync(roomId, userId, request.TmdbId, action, cancellationToken);
+			if (action == InteractionAction.Like)
+			{
+				webhooks.TryNotify(
+					OutgoingWebhookEvents.Likes,
+					"tindarr.like",
+					new
+					{
+						roomId,
+						userId,
+						tmdbId = interaction.TmdbId,
+						action = interaction.Action,
+						createdAtUtc = interaction.CreatedAtUtc
+					},
+					interaction.CreatedAtUtc);
+			}
 			return Ok(new RoomSwipeResponse(interaction.TmdbId, MapAction(interaction.Action), interaction.CreatedAtUtc.ToString("O")));
 		}
 		catch (InvalidOperationException ex)

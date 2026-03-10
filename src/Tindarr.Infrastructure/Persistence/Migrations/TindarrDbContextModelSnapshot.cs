@@ -82,6 +82,15 @@ namespace Tindarr.Infrastructure.Persistence.Migrations
                     b.Property<string>("DateTimeDisplayMode")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool?>("NotificationsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("NotificationsEventsMask")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("NotificationsWebhookUrlsJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("TmdbApiKey")
                         .HasColumnType("TEXT");
 

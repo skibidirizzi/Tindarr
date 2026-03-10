@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import TmdbAttribution from '../components/TmdbAttribution'
+import AdminUserInteractionsModal from '../components/AdminUserInteractionsModal'
 import {
   apiClient,
   type AdminUserDto,
+  type AdminInteractionDto,
   type AdminUpdateCheckResponse,
   type JoinAddressSettingsDto,
   type CastingSettingsDto,
@@ -101,11 +103,20 @@ interface QualityProfile {
   name: string
 }
 
+function buildTmdbImageUrl(size: string, path: string | null): string | null {
+  if (!path) return null
+  const normalizedSize = (size || 'original').trim().replace(/^\/+|\/+$/g, '')
+  const normalizedPath = path.trim().replace(/^\/+/, '')
+  if (!normalizedPath) return null
+  // Use backend proxy endpoint; it serves cached images in LocalProxy mode and redirects to TMDB otherwise.
+  return `/api/v1/tmdb/images/${normalizedSize}/${normalizedPath}`
+}
+
 export default function AdminConsole() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const [selectedService, setSelectedService] = useState<string | null>('tindarr')
-  const [tindarrTab, setTindarrTab] = useState<'users' | 'rooms' | 'db' | 'casting' | 'advanced' | 'console'>('users')
+  const [tindarrTab, setTindarrTab] = useState<'users' | 'interactions' | 'rooms' | 'db' | 'casting' | 'advanced' | 'console'>('users')
 
   const servicePills = [
     { id: 'tindarr', label: 'Tindarr' },
@@ -183,6 +194,21 @@ export default function AdminConsole() {
   // Tindarr tabs state
   const [adminUsers, setAdminUsers] = useState<AdminUserDto[]>([])
   const [adminUsersLoading, setAdminUsersLoading] = useState(false)
+
+  const [recentInteractionsByUserId, setRecentInteractionsByUserId] = useState<Record<string, AdminInteractionDto[]>>({})
+  const [recentInteractionsLoading, setRecentInteractionsLoading] = useState(false)
+  const [recentInteractionsError, setRecentInteractionsError] = useState<string | null>(null)
+
+  const refreshRecentInteractionsForUser = useCallback(async (uid: string) => {
+    try {
+      const r = await apiClient.searchAdminInteractions({ userId: uid, limit: 5 })
+      setRecentInteractionsByUserId((prev) => ({ ...prev, [uid]: r.items ?? [] }))
+    } catch {
+      // Keep existing list if refresh fails.
+    }
+  }, [])
+  const [interactionsModalUser, setInteractionsModalUser] = useState<{ userId: string; displayName: string } | null>(null)
+
   const [joinAddress, setJoinAddress] = useState<JoinAddressSettingsDto | null>(null)
   const [joinAddressLoading, setJoinAddressLoading] = useState(false)
   const [castingSettings, setCastingSettings] = useState<CastingSettingsDto | null>(null)
@@ -194,6 +220,9 @@ export default function AdminConsole() {
   const [dbViewMode, setDbViewMode] = useState<'table' | 'gallery'>('table')
   const [dbMovies, setDbMovies] = useState<AdminDbMovieListResponse | null>(null)
   const [dbMoviesLoading, setDbMoviesLoading] = useState(false)
+  const [dbMoviesAppending, setDbMoviesAppending] = useState(false)
+  const dbMoviesScopeKeyRef = useRef<string | null>(null)
+  const dbLoadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
   const [dbPopulateLoading, setDbPopulateLoading] = useState(false)
   const [dbPopulateMessage, setDbPopulateMessage] = useState<string | null>(null)
   const [dbPopulateStatus, setDbPopulateStatus] = useState<PopulateStatusDto | null>(null)
@@ -262,6 +291,42 @@ export default function AdminConsole() {
         .then(([list, reg]) => { setAdminUsers(list); setRegistrationSettings(reg); setAdminUsersLoading(false) })
         .catch(() => setAdminUsersLoading(false))
     }
+    if (tindarrTab === 'interactions') {
+      setAdminUsersLoading(true)
+      setRecentInteractionsLoading(true)
+      setRecentInteractionsError(null)
+      apiClient
+        .listAdminUsers()
+        .then(async (list) => {
+          setAdminUsers(list)
+          const settled = await Promise.allSettled(
+            list.map(async (u) => {
+              const r = await apiClient.searchAdminInteractions({ userId: u.userId, limit: 5 })
+              return [u.userId, r.items ?? []] as const
+            })
+          )
+
+          const map: Record<string, AdminInteractionDto[]> = {}
+          let hadFailure = false
+          for (const res of settled) {
+            if (res.status === 'fulfilled') {
+              map[res.value[0]] = res.value[1]
+            } else {
+              hadFailure = true
+            }
+          }
+          setRecentInteractionsByUserId(map)
+          if (hadFailure) setRecentInteractionsError('Some users failed to load interactions.')
+        })
+        .catch((err) => {
+          setRecentInteractionsByUserId({})
+          setRecentInteractionsError(err instanceof Error ? err.message : 'Failed to load interactions')
+        })
+        .finally(() => {
+          setAdminUsersLoading(false)
+          setRecentInteractionsLoading(false)
+        })
+    }
     if (tindarrTab === 'rooms') {
       setJoinAddressLoading(true)
       apiClient.getJoinAddressSettings().then((s) => { setJoinAddress(s); setJoinAddressLoading(false) }).catch(() => setJoinAddressLoading(false))
@@ -291,6 +356,46 @@ export default function AdminConsole() {
   useEffect(() => {
     if (tindarrTab === 'db' && dbScopes.length > 0 && !dbScope) setDbScope({ serviceType: dbScopes[0].serviceType, serverId: dbScopes[0].serverId })
   }, [tindarrTab, dbScopes, dbScope])
+
+  useEffect(() => {
+    dbMoviesScopeKeyRef.current = dbScope ? `${dbScope.serviceType}:${dbScope.serverId}` : null
+  }, [dbScope?.serviceType, dbScope?.serverId])
+
+  const loadMoreDbMovies = useCallback(() => {
+    if (!dbScope || !dbMovies || !dbMovies.hasMore) return
+    if (dbMoviesLoading || dbMoviesAppending) return
+
+    const scopeKey = `${dbScope.serviceType}:${dbScope.serverId}`
+    setDbMoviesAppending(true)
+    apiClient
+      .getAdminDbMovies(dbScope.serviceType, dbScope.serverId, dbMovies.nextSkip, 50)
+      .then((r) => {
+        if (dbMoviesScopeKeyRef.current !== scopeKey) return
+        setDbMovies((prev) => (prev ? { ...r, items: [...prev.items, ...r.items] } : r))
+      })
+      .finally(() => {
+        setDbMoviesAppending(false)
+      })
+  }, [dbScope, dbMovies, dbMoviesAppending, dbMoviesLoading])
+
+  useEffect(() => {
+    const sentinel = dbLoadMoreSentinelRef.current
+    if (!sentinel) return
+    if (!dbMovies?.hasMore) return
+    if (dbMoviesLoading || dbMoviesAppending) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          loadMoreDbMovies()
+        }
+      },
+      { root: null, threshold: 0.1 }
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [dbMovies?.hasMore, dbMovies?.nextSkip, dbMoviesLoading, dbMoviesAppending, loadMoreDbMovies])
 
   // Fetch Radarr settings and match settings when Radarr pill is selected or serverId changes
   useEffect(() => {
@@ -1154,7 +1259,7 @@ export default function AdminConsole() {
         {/* Tindarr sub-tabs (when Tindarr pill is selected) */}
         {selectedService === 'tindarr' && (
           <div className="mb-8 flex gap-4 border-b border-gray-700 overflow-x-auto">
-            {(['users', 'rooms', 'db', 'casting', 'advanced', 'console'] as const).map((tab) => (
+            {(['users', 'interactions', 'rooms', 'db', 'casting', 'advanced', 'console'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => { setTindarrTab(tab); setTindarrMessage(null) }}
@@ -1162,7 +1267,7 @@ export default function AdminConsole() {
                   tindarrTab === tab ? 'border-b-2 border-pink-500 text-pink-500' : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
-                {tab === 'users' ? 'User Management' : tab === 'rooms' ? 'Rooms' : tab === 'db' ? 'DB' : tab === 'casting' ? 'Casting' : tab === 'advanced' ? 'Advanced' : 'Console'}
+                {tab === 'users' ? 'User Management' : tab === 'interactions' ? 'User interactions' : tab === 'rooms' ? 'Rooms' : tab === 'db' ? 'DB' : tab === 'casting' ? 'Casting' : tab === 'advanced' ? 'Advanced' : 'Console'}
               </button>
             ))}
           </div>
@@ -1367,6 +1472,100 @@ export default function AdminConsole() {
           </div>
         )}
 
+        {/* Tindarr: User interactions */}
+        {selectedService === 'tindarr' && tindarrTab === 'interactions' && (
+          <div className="space-y-6">
+            {recentInteractionsError && (
+              <div className="rounded-lg bg-red-500/10 px-4 py-3 text-red-400">
+                {recentInteractionsError}
+              </div>
+            )}
+            <div className="rounded-lg bg-gray-800 overflow-hidden">
+              <h3 className="text-lg font-bold text-white p-4 border-b border-gray-700">
+                User interactions
+              </h3>
+              {recentInteractionsLoading ? (
+                <div className="p-8 text-center text-gray-400">Loading...</div>
+              ) : adminUsers.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">No users.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-gray-300">
+                    <thead className="bg-gray-900 text-gray-200">
+                      <tr>
+                        <th className="px-4 py-3">User</th>
+                        <th className="px-4 py-3">Recent (5)</th>
+                        <th className="px-4 py-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminUsers.map((u) => {
+                        const recent = recentInteractionsByUserId[u.userId] ?? []
+                        return (
+                          <tr key={u.userId} className="border-t border-gray-700">
+                            <td className="px-4 py-3">
+                              <div className="text-white">{u.displayName}</div>
+                              <div className="text-xs text-gray-500 font-mono">{u.userId}</div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {recent.length === 0 ? (
+                                <span className="text-gray-500">—</span>
+                              ) : (
+                                <div className="space-y-1">
+                                  {recent.slice(0, 5).map((it, idx) => (
+                                    <div
+                                      key={it.id ?? idx}
+                                      className="text-xs text-gray-400"
+                                    >
+                                      <span className="text-gray-300">
+                                        {new Date(it.createdAtUtc).toLocaleString()}
+                                      </span>
+                                      <span className="ml-2 text-pink-300">{it.action}</span>
+                                      <span className="ml-2 font-mono text-gray-200">{it.tmdbId}</span>
+                                      <span className="ml-2 text-gray-500">
+                                        {it.serviceType}:{it.serverId}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setInteractionsModalUser({
+                                    userId: u.userId,
+                                    displayName: u.displayName || u.userId,
+                                  })
+                                }
+                                className="rounded bg-pink-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-pink-700"
+                              >
+                                View all
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <AdminUserInteractionsModal
+          isOpen={interactionsModalUser !== null}
+          userId={interactionsModalUser?.userId ?? ''}
+          displayName={interactionsModalUser?.displayName ?? ''}
+          onClose={() => setInteractionsModalUser(null)}
+          onInteractionsChanged={() => {
+            const uid = interactionsModalUser?.userId
+            if (uid) void refreshRecentInteractionsForUser(uid)
+          }}
+        />
+
         {/* Tindarr: Rooms */}
         {selectedService === 'tindarr' && tindarrTab === 'rooms' && (
           <div className="space-y-6">
@@ -1566,24 +1765,57 @@ export default function AdminConsole() {
                   </table>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-4">
-                    {dbMovies.items.map((m) => (
-                      <div key={m.tmdbId} className="rounded bg-gray-700 p-2 text-center">
-                        <p className="font-mono text-xs text-gray-400">{m.tmdbId}</p>
-                        <p className="text-white text-sm truncate" title={m.title}>{m.title}</p>
-                        <p className="text-xs text-gray-500">{m.releaseYear ?? '—'}</p>
-                      </div>
-                    ))}
+                    {dbMovies.items.map((m) => {
+                      const posterUrl = buildTmdbImageUrl('w342', m.posterPath)
+                      return (
+                        <div key={m.tmdbId} className="rounded bg-gray-700 overflow-hidden">
+                          <div className="relative aspect-[2/3] w-full bg-gray-800">
+                            {posterUrl ? (
+                              <img
+                                src={posterUrl}
+                                alt={m.title}
+                                loading="lazy"
+                                decoding="async"
+                                onError={(e) => {
+                                  // Avoid infinite error loops; keep layout + overlay text.
+                                  const img = e.currentTarget
+                                  img.onerror = null
+                                  img.style.display = 'none'
+                                }}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center p-2 text-center text-xs text-gray-500">
+                                No poster
+                              </div>
+                            )}
+                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2">
+                              <p className="text-white text-sm font-semibold truncate" title={m.title}>{m.title}</p>
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs text-gray-300">{m.releaseYear ?? '—'}</p>
+                                <p className="font-mono text-[10px] text-gray-300">{m.tmdbId}</p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               )}
+              {dbMoviesAppending && <p className="mt-4 text-gray-400 text-sm">Loading more…</p>}
               {dbMovies && dbMovies.hasMore && (
-                <button
-                  type="button"
-                  onClick={() => dbScope && apiClient.getAdminDbMovies(dbScope.serviceType, dbScope.serverId, dbMovies!.nextSkip, 50).then((r) => setDbMovies((prev) => prev ? { ...r, items: [...prev.items, ...r.items] } : r))}
-                  className="mt-4 text-pink-400 text-sm"
-                >
-                  Load more
-                </button>
+                <div className="mt-4">
+                  <div ref={dbLoadMoreSentinelRef} className="h-1" />
+                  <button
+                    type="button"
+                    onClick={loadMoreDbMovies}
+                    disabled={dbMoviesAppending}
+                    className="text-pink-400 text-sm disabled:opacity-60"
+                  >
+                    Load more
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -1820,6 +2052,104 @@ export default function AdminConsole() {
                 </div>
               )}
             </div>
+
+            <div className="rounded-lg bg-gray-800 p-6">
+              <h3 className="text-lg font-bold text-white mb-4">Notifications</h3>
+              <p className="text-gray-400 text-sm mb-2">Post outgoing webhooks when selected events occur.</p>
+              {advancedLoading ? <p className="text-gray-400">Loading...</p> : advancedSettings && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-white">
+                      <input
+                        type="checkbox"
+                        checked={advancedSettings.notifications.enabled}
+                        onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, enabled: e.target.checked } } : null)}
+                        className="rounded"
+                      />
+                      Enable webhooks
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-1">Webhook URLs</label>
+                    <textarea
+                      rows={4}
+                      value={advancedSettings.notifications.webhookUrls.join('\n')}
+                      onChange={(e) => {
+                        const urls = e.target.value
+                          .split(/\r?\n/)
+                          .map((x) => x.trim())
+                          .filter((x) => x.length > 0)
+                        setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, webhookUrls: urls } } : null)
+                      }}
+                      className="w-full rounded bg-gray-700 px-3 py-2 text-white text-sm"
+                      placeholder="https://example.com/webhook\nhttps://another.example/webhook"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">One URL per line.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-400 mb-2">Events</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.likes}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, likes: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        Likes
+                      </label>
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.matches}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, matches: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        Matches
+                      </label>
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.roomCreated}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, roomCreated: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        Room creation
+                      </label>
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.login}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, login: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        Login events
+                      </label>
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.userCreated}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, userCreated: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        User creation
+                      </label>
+                      <label className="flex items-center gap-2 text-white">
+                        <input
+                          type="checkbox"
+                          checked={advancedSettings.notifications.events.authFailures}
+                          onChange={(e) => setAdvancedSettings((s) => s ? { ...s, notifications: { ...s.notifications, events: { ...s.notifications.events, authFailures: e.target.checked } } } : null)}
+                          className="rounded"
+                        />
+                        Auth failures
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               disabled={!advancedSettings || advancedLoading}
@@ -1830,6 +2160,16 @@ export default function AdminConsole() {
                     apiRateLimitEnabled: advancedSettings.apiRateLimit.enabled,
                     apiRateLimitPermitLimit: advancedSettings.apiRateLimit.permitLimit,
                     apiRateLimitWindowMinutes: advancedSettings.apiRateLimit.windowMinutes,
+
+                    notificationsSet: true,
+                    notificationsEnabled: advancedSettings.notifications.enabled,
+                    notificationsWebhookUrls: advancedSettings.notifications.webhookUrls,
+                    notificationsEventLikes: advancedSettings.notifications.events.likes,
+                    notificationsEventMatches: advancedSettings.notifications.events.matches,
+                    notificationsEventRoomCreated: advancedSettings.notifications.events.roomCreated,
+                    notificationsEventLogin: advancedSettings.notifications.events.login,
+                    notificationsEventUserCreated: advancedSettings.notifications.events.userCreated,
+                    notificationsEventAuthFailures: advancedSettings.notifications.events.authFailures,
                   })
                   setTindarrMessage({ type: 'success', text: 'Advanced settings saved' })
                 } catch (err) {

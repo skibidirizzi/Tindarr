@@ -483,6 +483,14 @@ builder.Services.AddHttpClient<IPlexLibraryClient, PlexLibraryClient>();
 builder.Services.AddHttpClient<IJellyfinClient, JellyfinClient>();
 builder.Services.AddHttpClient<IEmbyClient, EmbyClient>();
 
+builder.Services.AddSingleton<Tindarr.Infrastructure.Notifications.OutgoingWebhookQueue>();
+builder.Services.AddSingleton<Tindarr.Application.Abstractions.Notifications.IOutgoingWebhookNotifier, Tindarr.Infrastructure.Notifications.OutgoingWebhookNotifier>();
+builder.Services.AddHttpClient(Tindarr.Workers.Jobs.OutgoingWebhookDeliveryWorker.HttpClientName, c =>
+{
+	c.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHostedService<Tindarr.Workers.Jobs.OutgoingWebhookDeliveryWorker>();
+
 builder.Services.AddSingleton<Tindarr.Api.Services.IPlexLibrarySyncJobService, Tindarr.Api.Services.PlexLibrarySyncJobService>();
 
 builder.Services.AddHttpClient<PlexPlaybackProvider>();
@@ -614,6 +622,33 @@ UpdatedAtUtc TEXT NOT NULL)");
 		try
 		{
 			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN TmdbReadAccessToken TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN NotificationsEnabled INTEGER NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN NotificationsWebhookUrlsJson TEXT NULL");
+		}
+		catch
+		{
+			// Column may already exist; ignore.
+		}
+
+		try
+		{
+			dbContext.Database.ExecuteSqlRaw("ALTER TABLE AdvancedSettings ADD COLUMN NotificationsEventsMask INTEGER NULL");
 		}
 		catch
 		{

@@ -8,15 +8,15 @@
 
 [Setup]
 AppName=Tindarr
-AppVersion=1.2.2
-AppVerName=Tindarr 1.2.2
+AppVersion=1.3.0
+AppVerName=Tindarr 1.3.0
 AppPublisher=SkibidiRizzi
 DefaultDirName={autopf}\Tindarr
 DefaultGroupName=Tindarr
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 OutputDir=..\..\dist
-OutputBaseFilename=Tindarr-1.2.2-setup
+OutputBaseFilename=Tindarr-1.3.0-setup
 SetupIconFile=..\..\artifacts\tindarr.ico
 WizardImageFile=..\..\artifacts\tindarrsidebanner.png
 WizardSmallImageFile=..\..\artifacts\tindarrcropped.png
@@ -25,7 +25,7 @@ SolidCompression=yes
 WizardStyle=modern
 LicenseFile=wix\License.rtf
 InfoBeforeFile=
-UninstallDisplayIcon={app}\Tindarr.Api.exe
+UninstallDisplayIcon={app}\tindarr.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -33,6 +33,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 ; Published API output (all files from SourceDir)
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; App icon for Add/Remove Programs (DisplayIcon)
+Source: "..\..\artifacts\tindarr.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Batch files for firewall and service (run elevated when options checked)
 Source: "..\add-firewall-rules.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\install-service.bat"; DestDir: "{app}"; Flags: ignoreversion
@@ -46,6 +48,92 @@ Filename: "{app}\uninstall-service.bat"; Parameters: ""; StatusMsg: "Stopping Ti
 var
   PortPage: TInputQueryWizardPage;
   OptionsPage: TInputOptionWizardPage;
+  WasServiceRunning: Boolean;
+
+function ReadExistingPort(): String;
+var
+  PortFilePath: String;
+  S: AnsiString;
+  SText: String;
+  P: Integer;
+begin
+  Result := '';
+  PortFilePath := ExpandConstant('{commonappdata}') + '\Tindarr\port.txt';
+  if FileExists(PortFilePath) then
+  begin
+    if LoadStringFromFile(PortFilePath, S) then
+    begin
+      SText := Trim(String(S));
+      P := StrToIntDef(SText, 0);
+      if (P >= 1) and (P <= 65535) then
+        Result := IntToStr(P);
+    end;
+  end;
+end;
+
+function ExecAndCapture(const Params: String; var Output: String): Integer;
+var
+  ResultCode: Integer;
+  TempFile: String;
+  TempOut: AnsiString;
+begin
+  Output := '';
+  TempFile := ExpandConstant('{tmp}') + '\tindarr-cmd-out.txt';
+  DeleteFile(TempFile);
+  Exec(ExpandConstant('{cmd}'), '/c ' + Params + ' > "' + TempFile + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if FileExists(TempFile) then
+  begin
+    if LoadStringFromFile(TempFile, TempOut) then
+      Output := String(TempOut);
+  end;
+  Result := ResultCode;
+end;
+
+function ServiceExists(const ServiceName: String): Boolean;
+var
+  OutText: String;
+begin
+  Result := ExecAndCapture('sc query "' + ServiceName + '"', OutText) = 0;
+end;
+
+function ServiceIsRunning(const ServiceName: String): Boolean;
+var
+  OutText: String;
+begin
+  Result := False;
+  if ExecAndCapture('sc query "' + ServiceName + '"', OutText) <> 0 then
+    Exit;
+  if Pos('RUNNING', Uppercase(OutText)) > 0 then
+    Result := True;
+end;
+
+procedure StopServiceIfRunning(const ServiceName: String);
+var
+  OutText: String;
+  ResultCode: Integer;
+  I: Integer;
+begin
+  if not ServiceIsRunning(ServiceName) then
+    Exit;
+
+  ExecAndCapture('sc stop "' + ServiceName + '"', OutText);
+
+  { Wait up to ~30s for stop }
+  for I := 0 to 60 do
+  begin
+    Sleep(500);
+    ResultCode := ExecAndCapture('sc query "' + ServiceName + '"', OutText);
+    if (ResultCode <> 0) or (Pos('RUNNING', Uppercase(OutText)) = 0) then
+      Break;
+  end;
+end;
+
+procedure StartServiceBestEffort(const ServiceName: String);
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'), '/c sc start "' + ServiceName + '" >nul 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
 
 function InitializeSetup(): Boolean;
 var
@@ -73,13 +161,19 @@ begin
 end;
 
 procedure InitializeWizard;
+var
+  ExistingPort: String;
 begin
   PortPage := CreateInputQueryPage(wpSelectDir,
     'Port and options',
     'Set the port for the merged UI and API.',
     'Port is saved to port.txt. The API reads from Program Data\Tindarr\port.txt.');
   PortPage.Add('Port:', False);
-  PortPage.Values[0] := '6565';
+  ExistingPort := ReadExistingPort();
+  if ExistingPort <> '' then
+    PortPage.Values[0] := ExistingPort
+  else
+    PortPage.Values[0] := '6565';
 
   OptionsPage := CreateInputOptionPage(PortPage.ID,
     'Port and options',
@@ -88,6 +182,21 @@ begin
     False, False);
   OptionsPage.Add('Install Tindarr as a service?');
   OptionsPage.Add('Open ports for Tindarr to be accessed via LAN or WAN.');
+
+  { Best-effort defaults based on existing install state }
+  if ServiceExists('TindarrApi') then
+    OptionsPage.Values[0] := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  WasServiceRunning := False;
+  if ServiceIsRunning('TindarrApi') then
+  begin
+    WasServiceRunning := True;
+    StopServiceIfRunning('TindarrApi');
+  end;
+  Result := '';
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -132,5 +241,9 @@ begin
       if ResultCode <> 0 then
         SuppressibleMsgBox('Installing Tindarr as a Windows service failed (exit code ' + IntToStr(ResultCode) + '). See ' + AppDir + 'install-service.log for details, or run install-service.bat from the install folder as Administrator.', mbError, MB_OK, IDOK);
     end;
+
+    { If service was running before install/upgrade, bring it back up even if user didn't re-check install-service. }
+    if WasServiceRunning then
+      StartServiceBestEffort('TindarrApi');
   end;
 end;
