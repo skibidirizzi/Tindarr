@@ -23,9 +23,9 @@ public partial class AddNotificationsToAdvancedSettings : Migration
 
 	protected override void Up(MigrationBuilder migrationBuilder)
 	{
-		if (TryAddColumnViaConnection("NotificationsEnabled", "INTEGER NULL")
-			& TryAddColumnViaConnection("NotificationsWebhookUrlsJson", "TEXT NULL")
-			& TryAddColumnViaConnection("NotificationsEventsMask", "INTEGER NULL"))
+		if (TryAddColumnViaConnection("NotificationsEnabled")
+			& TryAddColumnViaConnection("NotificationsWebhookUrlsJson")
+			& TryAddColumnViaConnection("NotificationsEventsMask"))
 		{
 			return;
 		}
@@ -49,10 +49,18 @@ public partial class AddNotificationsToAdvancedSettings : Migration
 			nullable: true);
 	}
 
-	private bool TryAddColumnViaConnection(string columnName, string columnDef)
+	private bool TryAddColumnViaConnection(string columnName)
 	{
 		if (_connection?.DbConnection is not SqliteConnection sqlite)
 			return false;
+
+		var sql = columnName switch
+		{
+			"NotificationsEnabled" => "ALTER TABLE AdvancedSettings ADD COLUMN NotificationsEnabled INTEGER NULL;",
+			"NotificationsWebhookUrlsJson" => "ALTER TABLE AdvancedSettings ADD COLUMN NotificationsWebhookUrlsJson TEXT NULL;",
+			"NotificationsEventsMask" => "ALTER TABLE AdvancedSettings ADD COLUMN NotificationsEventsMask INTEGER NULL;",
+			_ => throw new InvalidOperationException($"Unexpected column name: {columnName}")
+		};
 
 		var wasOpen = sqlite.State == System.Data.ConnectionState.Open;
 		if (!wasOpen)
@@ -61,7 +69,7 @@ public partial class AddNotificationsToAdvancedSettings : Migration
 		try
 		{
 			using var cmd = sqlite.CreateCommand();
-			cmd.CommandText = $"ALTER TABLE AdvancedSettings ADD COLUMN {columnName} {columnDef};";
+			cmd.CommandText = sql;
 			cmd.ExecuteNonQuery();
 			return true;
 		}

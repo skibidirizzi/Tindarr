@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Tindarr.Application.Common;
 using Tindarr.Infrastructure.Notifications;
 
 namespace Tindarr.Workers.Jobs;
@@ -32,7 +33,7 @@ public sealed class OutgoingWebhookDeliveryWorker(
 				try
 				{
 					using var req = new HttpRequestMessage(HttpMethod.Post, url);
-					req.Headers.UserAgent.Add(new ProductInfoHeaderValue("Tindarr", "1"));
+					req.Headers.UserAgent.Add(new ProductInfoHeaderValue("Tindarr", TindarrVersion.Current.ToString(3)));
 					req.Headers.TryAddWithoutValidation("X-Tindarr-Event", message.EventType);
 					req.Content = new StringContent(message.BodyJson, Encoding.UTF8, "application/json");
 

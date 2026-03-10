@@ -18,20 +18,42 @@ type TimelinePreset = '24h' | '7d' | '30d' | 'all'
 
 const DETAIL_BATCH_SIZE = 10
 const DETAIL_FETCH_LIMIT = 200
+const DETAIL_BATCH_CONCURRENCY = 3
 
 async function fetchDetailsBatched(
   tmdbIds: number[],
-  batchSize: number
+  batchSize: number,
+  maxConcurrentBatches: number
 ): Promise<Map<number, MovieDetailsDto | null>> {
   const map = new Map<number, MovieDetailsDto | null>()
+
+  const batches: number[][] = []
   for (let i = 0; i < tmdbIds.length; i += batchSize) {
-    const batch = tmdbIds.slice(i, i + batchSize)
+    batches.push(tmdbIds.slice(i, i + batchSize))
+  }
+
+  let nextBatchIndex = 0
+  const workerCount = Math.min(maxConcurrentBatches, batches.length)
+
+  async function runBatch(batch: number[]): Promise<void> {
     const results = await Promise.allSettled(batch.map((id) => apiClient.getMovieDetails(id)))
     batch.forEach((id, j) => {
       const r = results[j]
       map.set(id, r?.status === 'fulfilled' ? r.value : null)
     })
   }
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const index = nextBatchIndex
+        nextBatchIndex += 1
+        if (index >= batches.length) return
+        await runBatch(batches[index])
+      }
+    })
+  )
+
   return map
 }
 
@@ -131,7 +153,7 @@ export default function AdminUserInteractionsModal({
     let cancelled = false
     ;(async () => {
       const unique = Array.from(new Set(items.map((i) => i.tmdbId))).slice(0, DETAIL_FETCH_LIMIT)
-      const map = await fetchDetailsBatched(unique, DETAIL_BATCH_SIZE)
+      const map = await fetchDetailsBatched(unique, DETAIL_BATCH_SIZE, DETAIL_BATCH_CONCURRENCY)
       if (!cancelled) setDetailsMap(map)
     })()
 
